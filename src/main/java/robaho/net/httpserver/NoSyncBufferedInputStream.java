@@ -10,7 +10,9 @@ import java.io.OutputStream;
  */
 public class NoSyncBufferedInputStream extends FilterInputStream {
 
-    protected byte[] buf = new byte[1024];
+    /** 16KB: large enough that a typical response (headers + small body) is
+     * written with a single flush, small enough for many connections */
+    protected byte[] buf = new byte[16384];
 
     /**
      * The index one greater than the index of the last valid byte in
@@ -257,6 +259,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
 
     @Override
     public long transferTo(OutputStream out) throws IOException {
+        ensureOpen();
         int avail = count - pos;
         if (avail > 0) {
             out.write(buf,pos,count-pos);

@@ -47,7 +47,10 @@ class ChunkedInputStream extends LeftOverInputStream {
 
     private int numeric(char[] arr, int nchars) throws IOException {
         assert arr.length >= nchars;
-        int len = 0;
+        // accumulate in a long and reject overflow: without this, a 15 digit
+        // hex chunk length silently overflows int and produces a negative
+        // remaining count (IndexOutOfBoundsException instead of a clean error)
+        long len = 0;
         for (int i = 0; i < nchars; i++) {
             char c = arr[i];
             int val = 0;
@@ -61,8 +64,11 @@ class ChunkedInputStream extends LeftOverInputStream {
                 throw new IOException("invalid chunk length");
             }
             len = len * 16 + val;
+            if (len > Integer.MAX_VALUE) {
+                throw new IOException("invalid chunk length (overflow)");
+            }
         }
-        return len;
+        return (int) len;
     }
 
     /*
@@ -115,7 +121,7 @@ class ChunkedInputStream extends LeftOverInputStream {
             remaining = readChunkHeader();
             if (remaining == 0) {
                 eof = true;
-                consumeCRLF();
+                consumeTrailer();
                 return -1;
             }
             needToReadHeader = false;
@@ -146,6 +152,42 @@ class ChunkedInputStream extends LeftOverInputStream {
         if (c != LF) {
             throw new IOException("invalid chunk end");
         }
+    }
+
+    /**
+     * consume the line following the final zero-length chunk: either a plain
+     * CRLF, or trailer field lines terminated by an empty line
+     * (RFC 7230 section 4.1.2). The trailer contents are discarded.
+     */
+    private void consumeTrailer() throws IOException {
+        int maxTrailerLines = 100;
+        while (maxTrailerLines-- > 0) {
+            boolean sawCR = false;
+            boolean emptyLine = true;
+            int c;
+            while ((c = in.read()) != -1) {
+                if (sawCR) {
+                    if (c == LF) {
+                        break; /* end of line */
+                    }
+                    throw new IOException("bare CR in chunk trailer");
+                }
+                if (c == CR) {
+                    sawCR = true;
+                } else if (c == LF) {
+                    break; /* bare LF accepted as line terminator */
+                } else {
+                    emptyLine = false;
+                }
+            }
+            if (c == -1) {
+                throw new IOException("end of stream reading chunk trailer");
+            }
+            if (emptyLine) {
+                return; /* end of trailers (covers the plain CRLF case) */
+            }
+        }
+        throw new IOException("too many chunk trailer lines");
     }
 
     /**

@@ -42,16 +42,25 @@ import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.List;
 
+import robaho.net.httpserver.ServerConfig;
+
 public class WebSocketFrame {
 
     public static final Charset TEXT_CHARSET = Charset.forName("UTF-8");
 
     public static String binary2Text(byte[] payload) throws CharacterCodingException {
-        return new String(payload, WebSocketFrame.TEXT_CHARSET);
+        return binary2Text(payload, 0, payload.length);
     }
 
     public static String binary2Text(byte[] payload, int offset, int length) throws CharacterCodingException {
-        return new String(payload, offset, length, WebSocketFrame.TEXT_CHARSET);
+        // String(byte[], UTF_8) silently replaces malformed sequences with
+        // U+FFFD and never throws - use a strict decoder so invalid UTF-8
+        // text payloads are rejected with 1007 (RFC 6455 8.1)
+        return TEXT_CHARSET.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(payload, offset, length))
+                .toString();
     }
 
     private static int checkedRead(int read) throws IOException {
@@ -265,6 +274,13 @@ public class WebSocketFrame {
             this._payloadLength = (int) _payloadLength;
         }
 
+        // bound the frame size before the payload buffer is allocated
+        if (this._payloadLength > ServerConfig.getMaxWebSocketFrameSize()) {
+            throw new WebSocketException(CloseCode.MessageTooBig,
+                    "Frame payload of " + this._payloadLength + " bytes exceeds the configured maximum of "
+                            + ServerConfig.getMaxWebSocketFrameSize() + " bytes.");
+        }
+
         if (this.opCode.isControlFrame()) {
             if (this._payloadLength > 125) {
                 throw new WebSocketException(CloseCode.ProtocolError, "Control frame with payload length > 125 bytes.");
@@ -346,12 +362,12 @@ public class WebSocketFrame {
             out.write(this._payloadLength);
         } else {
             out.write(isMasked() ? 0xFF : 127);
-            out.write(this._payloadLength >>> 56 & 0); // integer only
-                                                       // contains
-            // 31 bit
-            out.write(this._payloadLength >>> 48 & 0);
-            out.write(this._payloadLength >>> 40 & 0);
-            out.write(this._payloadLength >>> 32 & 0);
+            // _payloadLength is an int (max 31 bits), so the top 4 of the 8
+            // length bytes are always zero
+            out.write(0);
+            out.write(0);
+            out.write(0);
+            out.write(0);
             out.write(this._payloadLength >>> 24);
             out.write(this._payloadLength >>> 16);
             out.write(this._payloadLength >>> 8);

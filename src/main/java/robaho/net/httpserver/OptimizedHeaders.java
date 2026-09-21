@@ -1,15 +1,15 @@
 package robaho.net.httpserver;
 
 import java.util.AbstractMap;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
-import java.util.stream.Collectors;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 
 import com.sun.net.httpserver.Headers;
 
@@ -125,14 +125,48 @@ public class OptimizedHeaders extends Headers {
 
     @Override
     public Collection<List<String>> values() {
-        return entrySet().stream().map(e -> e.getValue()).collect(Collectors.toSet());
+        // a List, not a Set: two headers whose value lists are equal must
+        // both be retained (toSet() silently dropped duplicates)
+        List<List<String>> result = new ArrayList<>();
+        forEach((k,v) -> result.add(v));
+        return result;
    }
+
+    /** cached lazy view over the live entries; avoids rebuilding a full
+     * HashSet of copied entries on every entrySet() call */
+    private Set<Map.Entry<String, List<String>>> entrySetView;
 
     @Override
     public Set<Map.Entry<String, List<String>>> entrySet() {
-        Set<Map.Entry<String,List<String>>> set = new HashSet();
-        forEach((k,v) -> set.add(new AbstractMap.SimpleEntry<>(k,v)));
-        return set;
+        if (entrySetView == null) {
+            entrySetView = new AbstractSet<>() {
+                @Override
+                public java.util.Iterator<Map.Entry<String, List<String>>> iterator() {
+                    // single value entries are exposed as mutable lists so
+                    // consumers (e.g. Headers.putAll followed by add) can
+                    // modify them - same contract as forEach()
+                    var source = map.entryIterator();
+                    return new java.util.Iterator<>() {
+                        @Override
+                        public boolean hasNext() {
+                            return source.hasNext();
+                        }
+                        @Override
+                        public Map.Entry<String, List<String>> next() {
+                            var e = source.next();
+                            var v = e.getValue();
+                            return new AbstractMap.SimpleEntry<>(e.getKey(),
+                                    v instanceof String s ? new ArrayList<>(List.of(s)) : (List<String>) v);
+                        }
+                    };
+                }
+                @Override
+                public int size() {
+                    return OptimizedHeaders.this.size();
+                }
+            };
+        }
+        return entrySetView;
     }
 
     @Override
@@ -147,6 +181,8 @@ public class OptimizedHeaders extends Headers {
 
     @Override
     public void forEach(BiConsumer<? super String,? super List<String>> action) {
-        map.forEach((k,v) -> action.accept(k, (v instanceof String s) ? List.of(s) : (List<String>)v));
+        // the lists must be mutable: consumers of entrySet()/forEach() (e.g.
+        // Headers.putAll followed by add()) modify the returned lists
+        map.forEach((k,v) -> action.accept(k, (v instanceof String s) ? new ArrayList<>(List.of(s)) : (List<String>)v));
     }
 }

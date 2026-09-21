@@ -8,13 +8,20 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
 import robaho.net.httpserver.Code;
-import robaho.net.httpserver.Utils;
 
 public abstract class WebSocketHandler implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         Headers headers = exchange.getRequestHeaders();
+
+        // the handshake must be a GET request (RFC 6455 4.2.1). a null method
+        // (e.g. from a stubbed exchange) is not rejected.
+        String requestMethod = exchange.getRequestMethod();
+        if (requestMethod != null && !"GET".equalsIgnoreCase(requestMethod)) {
+            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1l);
+            return;
+        }
 
         if (!isWebsocketRequested(headers)) {
             exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1l);
@@ -43,9 +50,17 @@ public abstract class WebSocketHandler implements HttpHandler {
             return;
         }
 
-        if (headers.containsKey(Util.HEADER_WEBSOCKET_PROTOCOL)) {
-            exchange.getResponseHeaders().add(Util.HEADER_WEBSOCKET_PROTOCOL,
-                    headers.getFirst(Util.HEADER_WEBSOCKET_PROTOCOL).split(",")[0]);
+        // only echo a sub protocol this handler actually supports; echoing an
+        // unsupported one would make the client believe it was negotiated
+        String requestedProtocol = headers.getFirst(Util.HEADER_WEBSOCKET_PROTOCOL);
+        if (requestedProtocol != null) {
+            for (String candidate : requestedProtocol.split(",")) {
+                String accepted = supportsProtocol(candidate.trim());
+                if (accepted != null) {
+                    exchange.getResponseHeaders().add(Util.HEADER_WEBSOCKET_PROTOCOL, accepted);
+                    break;
+                }
+            }
         }
 
         exchange.getResponseHeaders().add(Util.HEADER_UPGRADE, Util.HEADER_UPGRADE_VALUE);
@@ -57,10 +72,30 @@ public abstract class WebSocketHandler implements HttpHandler {
         webSocket.readWebsocket();
     }
 
+    /**
+     * override to declare support for a requested websocket sub protocol.
+     *
+     * @param protocol a protocol name requested by the client (already trimmed)
+     * @return the protocol name to confirm (may normalize case), or null if not supported
+     */
+    protected String supportsProtocol(String protocol) {
+        return null;
+    }
+
     public static boolean isWebsocketRequested(Headers headers) {
-        // check if Upgrade connection
+        // the Connection header is a comma separated token list: "X-UpgradeFoo"
+        // must not match an "Upgrade" token
         var values = headers.get(Util.HEADER_CONNECTION);
-        if(values==null || values.stream().filter(s -> Utils.containsIgnoreCase(s, Util.HEADER_CONNECTION_VALUE)).findAny().isEmpty()) return false;
+        if (values == null) {
+            return false;
+        }
+        boolean connectionUpgrade = values.stream()
+                .flatMap(v -> java.util.Arrays.stream(v.split(",")))
+                .map(String::trim)
+                .anyMatch(s -> Util.HEADER_CONNECTION_VALUE.equalsIgnoreCase(s));
+        if (!connectionUpgrade) {
+            return false;
+        }
         // check for proper upgrade type
         String upgrade = headers.getFirst(Util.HEADER_UPGRADE);
         return Util.HEADER_UPGRADE_VALUE.equalsIgnoreCase(upgrade);

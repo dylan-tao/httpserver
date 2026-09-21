@@ -26,6 +26,8 @@
 package robaho.net.httpserver;
 
 import java.io.*;
+import java.lang.System.Logger.Level;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /**
@@ -55,6 +57,11 @@ class ChunkedOutputStream extends FilterOutputStream {
     private int count = 0;
     final private byte[] buf = new byte[CHUNK_SIZE + OFFSET + 2];
     ExchangeImpl t;
+
+    /* header of a full size chunk, for the zero copy large write path */
+    private static final byte[] FULL_CHUNK_HEADER =
+            (Integer.toHexString(CHUNK_SIZE) + "\r\n").getBytes(StandardCharsets.ISO_8859_1);
+    private static final byte[] CRNL_BYTES = "\r\n".getBytes(StandardCharsets.ISO_8859_1);
 
     ChunkedOutputStream(ExchangeImpl t, OutputStream src) {
         super(src);
@@ -89,11 +96,13 @@ class ChunkedOutputStream extends FilterOutputStream {
             len -= remain;
             off += remain;
             while (len >= CHUNK_SIZE) {
-                System.arraycopy(b, off, buf, OFFSET, CHUNK_SIZE);
+                // full size chunks are written directly from the caller's
+                // buffer, avoiding a copy through the internal buffer
+                out.write(FULL_CHUNK_HEADER);
+                out.write(b, off, CHUNK_SIZE);
+                out.write(CRNL_BYTES);
                 len -= CHUNK_SIZE;
                 off += CHUNK_SIZE;
-                count = CHUNK_SIZE;
-                writeChunk();
             }
         }
         if (len > 0) {
@@ -132,22 +141,27 @@ class ChunkedOutputStream extends FilterOutputStream {
         if (closed) {
             return;
         }
-        if (count > 0) {
-            writeChunk();
-        }
         try {
+            if (count > 0) {
+                writeChunk();
+            }
             /* write an empty chunk */
             writeChunk();
             out.flush();
-            LeftOverInputStream is = t.getOriginalInputStream();
-            if (!is.isClosed()) {
-                is.close();
-            }
             /* some clients close the connection before empty chunk is sent */
         } catch (IOException e) {
-
+            // make the failure visible instead of silently swallowing it
+            t.getServerImpl().getLogger().log(Level.DEBUG, "error writing final chunk", e);
         } finally {
             closed = true;
+            LeftOverInputStream is = t.getOriginalInputStream();
+            if (is != null && !is.isClosed()) {
+                try {
+                    is.close();
+                } catch (IOException e) {
+                    t.getServerImpl().getLogger().log(Level.DEBUG, "error draining request stream", e);
+                }
+            }
         }
     }
 

@@ -44,12 +44,17 @@ class Request {
     private final OutputStream os;
 
     private final String requestLine;
+    /** the protocol token of the request line, cached to avoid a substring
+     * allocation on every getProtocol() call */
+    private final String protocol;
 
     Request(InputStream rawInputStream, OutputStream rawout) throws IOException {
         is = rawInputStream;
         os = rawout;
 
         requestLine = readRequestLine();
+        int lastSpace = requestLine.lastIndexOf(' ');
+        protocol = lastSpace >= 0 ? requestLine.substring(lastSpace + 1) : "";
     }
 
     public InputStream inputStream() {
@@ -58,6 +63,11 @@ class Request {
 
     public OutputStream outputStream() {
         return os;
+    }
+
+    /** the protocol token from the request line, e.g. "HTTP/1.1" */
+    public String protocol() {
+        return protocol;
     }
 
     static class PushbackStream {
@@ -94,7 +104,7 @@ class Request {
         boolean gotCR = false;
         while (true) {
             int c;
-            
+
             try {
                 c = is.read();
             } catch(IOException e) {
@@ -105,6 +115,9 @@ class Request {
             if (c == -1) {
                 lineBuf.count=0;
                 return false;
+            }
+            if (lineBuf.count >= ServerConfig.getMaxReqLineSize()) {
+                throw new IOException("request line too long (limit " + ServerConfig.getMaxReqLineSize() + " bytes)");
             }
             if (gotCR) {
                 if (c == LF) {
@@ -193,18 +206,28 @@ class Request {
         boolean prevCR = false;
         boolean sol = true;
         int c;
+        int headerCount = 0;
 
         while((c=pbs.read())!=-1) {
             if(c==CR) { prevCR = true; }
-            else if(c==LF && prevCR) {
+            else if(c==LF) {
+                // a bare LF is accepted as a line terminator (RFC 9112 2.2);
+                // a preceding CR (if any) is consumed as part of the CRLF
                 if(key.isEmpty() && value.isEmpty()) break;
                 if(sol) {
+                    if (++headerCount > ServerConfig.getMaxReqHeaders()) {
+                        throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
+                    }
                     hdrs.add(trimmed(key),trimmed(value));
                     break;
                 }
                 prevCR=false;
                 sol=true;
             } else {
+                if(prevCR) {
+                    // a CR not followed by LF is a malformed header line
+                    throw new IOException("bare CR in header line");
+                }
                 if(sol && (c==' ' || c=='\t')) {
                     pbs.skipWhitespace();
                     current=value;
@@ -212,6 +235,9 @@ class Request {
                 } else {
                     if(sol) {
                         if(!key.isEmpty() || !value.isEmpty()) {
+                            if (++headerCount > ServerConfig.getMaxReqHeaders()) {
+                                throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
+                            }
                             hdrs.add(trimmed(key),trimmed(value));
                         }
                         current=key;
@@ -221,6 +247,9 @@ class Request {
                         current=value;
                         pbs.skipWhitespace();
                     } else {
+                        if (current.count >= ServerConfig.getMaxReqLineSize()) {
+                            throw new IOException("header line too long (limit " + ServerConfig.getMaxReqLineSize() + " bytes)");
+                        }
                         if(current==key) {
                             key.append((char)(current.count==0 ? Character.toUpperCase(c) : Character.toLowerCase(c)));
                         } else {

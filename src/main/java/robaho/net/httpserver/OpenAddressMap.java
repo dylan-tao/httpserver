@@ -3,6 +3,10 @@ package robaho.net.httpserver;
 import java.util.Arrays;
 import java.util.function.BiConsumer;
 
+/**
+ * an open addressing hash map. NOT thread safe - intended for single
+ * threaded or externally synchronized use.
+ */
 public class OpenAddressMap<K,V> {
 
     private static class Entry<K,V> {
@@ -21,8 +25,10 @@ public class OpenAddressMap<K,V> {
     private Entry[] entries;
 
     private static int hash(int hash) {
-        return hash;
-        // return hash ^ (hash>>>16);
+        // spread the high bits into the low bits: String.hashCode keeps most
+        // information in the high bits, while the table mask only looks at
+        // the low bits - without this, clustered keys degrade to linear scans
+        return hash ^ (hash >>> 16);
     }
 
     public OpenAddressMap(int capacity) {
@@ -53,7 +59,7 @@ public class OpenAddressMap<K,V> {
             if (entry.key.equals(key)) {
                 Object oldValue = entry.value;
                 entry.value = value;
-                if (value == null) {
+                if (value == null && oldValue != null) {
                     size--;
                 }
                 return (V)oldValue;
@@ -65,18 +71,26 @@ public class OpenAddressMap<K,V> {
                 resize();
                 index = hash(key.hashCode()) & mask;
                 start = index;
+                // the table was replaced, so a tombstone index from the old
+                // table must not be reused (it could hold a live entry now)
+                sentinel = -1;
             }
+        }
+        if (value == null) {
+            // removing a key that is not present creates no entry
+            return null;
         }
         entries[sentinel==-1 ? index : sentinel] = new Entry(key, value);
         size++;
-        if(sentinel!=-1) used++;
+        if(sentinel==-1) used++;
         return null;
     }
 
     private void resize() {
         OpenAddressMap newMap = new OpenAddressMap(capacity << 1);
         for (var entry : entries) {
-            if (entry != null) {
+            if (entry != null && entry.value != null) {
+                // tombstones are dropped on resize
                 newMap.put(entry.key, entry.value);
             }
         }
@@ -137,6 +151,30 @@ public class OpenAddressMap<K,V> {
     }
     public Iterable<K> keys() {
         return () -> new KeyIterator();
+    }
+
+    /** iterate live (non tombstone) entries without building an intermediate collection */
+    java.util.Iterator<java.util.Map.Entry<K,V>> entryIterator() {
+        return new java.util.Iterator<>() {
+            private int index = 0;
+
+            @Override
+            public boolean hasNext() {
+                while (index < entries.length) {
+                    if (entries[index] != null && entries[index].value != null) {
+                        return true;
+                    }
+                    index++;
+                }
+                return false;
+            }
+
+            @Override
+            public java.util.Map.Entry<K,V> next() {
+                Entry entry = entries[index++];
+                return new java.util.AbstractMap.SimpleEntry<>((K) entry.key, (V) entry.value);
+            }
+        };
     }
 
     private class KeyIterator implements java.util.Iterator<K> {

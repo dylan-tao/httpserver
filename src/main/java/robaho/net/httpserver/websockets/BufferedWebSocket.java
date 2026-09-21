@@ -20,7 +20,13 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     private static ExecutorService executor;
 
-    private final LinkedBlockingQueue<WebSocketFrame> queue = new LinkedBlockingQueue<>();
+    /** bounds the queue so a fast producer cannot exhaust memory */
+    private static final int MAX_PENDING_FRAMES = 1024;
+
+    /** wakes the drain task so it can exit when the connection closes */
+    private static final WebSocketFrame POISON_PILL = new WebSocketFrame(OpCode.Close, true, new byte[0]);
+
+    private final LinkedBlockingQueue<WebSocketFrame> queue = new LinkedBlockingQueue<>(MAX_PENDING_FRAMES);
     private final AtomicInteger pending = new AtomicInteger();
 
     private synchronized static ExecutorService getExecutor() {
@@ -63,7 +69,15 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     @Override
     void doClose(CloseCode code, String reason, boolean initiatedByRemote) {
-        future.cancel(true);
+        // do NOT cancel the drain task outright: a queued CloseFrame may still
+        // need to be written. enqueue a poison pill behind it and give the
+        // drain task a moment to flush before the streams are closed.
+        queue.offer(POISON_PILL);
+        try {
+            future.get(2, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception ignored) {
+            future.cancel(true);
+        }
         super.doClose(code, reason, initiatedByRemote);
     }
 
@@ -71,12 +85,15 @@ public abstract class BufferedWebSocket extends WebSocket {
         try {
             while (true) {
                 var frame = queue.take();
+                if (frame == POISON_PILL) {
+                    return;
+                }
                 super.sendFrame(frame);
                 pending.decrementAndGet();
             }
         } catch (IOException ex) {
             onException(ex);
-            doClose(CloseCode.InvalidFramePayloadData, ex.toString(), false);
+            doClose(CloseCode.AbnormalClosure, ex.toString(), false);
         } catch (InterruptedException ex) {
         }
     }
@@ -84,7 +101,14 @@ public abstract class BufferedWebSocket extends WebSocket {
     @Override
     public void sendFrame(WebSocketFrame frame) throws IOException {
         pending.incrementAndGet();
-        queue.add(frame);
+        try {
+            // put() blocks when the queue is full, providing backpressure
+            // against a producer that outpaces the consumer
+            queue.put(frame);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while queueing frame", ex);
+        }
     }
 
     public int pending() {

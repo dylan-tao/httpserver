@@ -32,7 +32,7 @@ import com.sun.net.httpserver.*;
 
 public class HttpServerImpl extends HttpServer {
 
-    ServerImpl server;
+    final ServerImpl server;
 
     HttpServerImpl() throws IOException {
         this(new InetSocketAddress(80), 0);

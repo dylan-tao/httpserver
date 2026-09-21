@@ -96,12 +96,11 @@ class FixedLengthOutputStream extends FilterOutputStream {
             }
         }
 
-        // if after reading the rest of the known input for this request, there is
-        // more input available, http pipelining is in effect, so avoid flush, since
-        // it will be flushed after processing the next request
-        if(is.getRawInputStream().available()==0) {
-            flush();
-        }
+        // always flush: the available() heuristic left responses stuck in the
+        // socket buffer whenever pipelined bytes were already in flight while
+        // the client was still waiting for this response (e.g. an unread
+        // request body). the next response flush covers the pipelining case.
+        flush();
 
     }
 }

@@ -10,6 +10,16 @@ class ActivityTimer {
     private static volatile long now = System.currentTimeMillis();
     private static volatile String dateAndTime = formatDate();
 
+    private static final java.util.Timer TIMER = new java.util.Timer("httpserver-activity-timer", true);
+
+    static {
+        // the cached clock is shared by ALL server instances; it is driven by
+        // its own daemon timer so it keeps ticking independent of any single
+        // server's lifecycle (previously it was scheduled per server instance,
+        // and the clock froze for everyone once the last instance stopped)
+        TIMER.schedule(createTask(), 750, 750);
+    }
+
     private static String formatDate() {
         var now = Instant.now();
         var datetime = now.atOffset(ZoneOffset.UTC);

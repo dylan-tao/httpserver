@@ -98,8 +98,12 @@ public class HTTP2Connection {
         localSettings.set(new SettingParameter(SettingIdentifier.SETTINGS_MAX_FRAME_SIZE, ServerConfig.http2MaxFrameSize()));
         localSettings.set(new SettingParameter(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE, ServerConfig.http2InitialWindowSize()));
 
-        if (ServerConfig.http2MaxConcurrentStreams() != -1) {
-            localSettings.set(new SettingParameter(SettingIdentifier.SETTINGS_MAX_CONCURRENT_STREAMS, ServerConfig.http2MaxConcurrentStreams()));
+        // enforce the stream limit from the start: previously it was only
+        // assigned when the client's SETTINGS ack arrived, so a client that
+        // never acked could open unlimited streams
+        maxConcurrentStreams = ServerConfig.http2MaxConcurrentStreams();
+        if (maxConcurrentStreams != -1) {
+            localSettings.set(new SettingParameter(SettingIdentifier.SETTINGS_MAX_CONCURRENT_STREAMS, maxConcurrentStreams));
         }
         logger.log(Level.DEBUG, "opened http2 connection " + httpConnection + ", max concurrent streams " + ServerConfig.http2MaxConcurrentStreams());
     }
@@ -174,7 +178,9 @@ public class HTTP2Connection {
     public boolean hasProperPreface() throws IOException {
         String preface_match = (httpConnection.isSSL()) ? PREFACE : PARTIAL_PREFACE;
         byte[] preface = new byte[preface_match.length()];
-        inputStream.read(preface);
+        // a single read() may return short when the preface is segmented by
+        // the transport; readFully loops until the whole preface arrived
+        readFully(inputStream, preface);
         String prefaceStr = new String(preface, 0, preface.length);
         return prefaceStr.equals(preface_match);
     }
@@ -196,6 +202,7 @@ public class HTTP2Connection {
     private void processFrames() throws Exception {
         boolean inHeaders = false;
         int openStreamId = 0;
+        int headerBlockBytes = 0;
 
         List<byte[]> headerBlockFragments = new ArrayList();
 
@@ -214,10 +221,8 @@ public class HTTP2Connection {
             switch (frame.getHeader().getType()) {
                 case SETTINGS:
                     if (frame.getHeader().getFlags().contains(FrameFlag.ACK)) {
-                        if (ServerConfig.http2MaxConcurrentStreams() != -1) {
-                            // cannot set this until it's been acked
-                            maxConcurrentStreams = http2Streams.size() + ServerConfig.http2MaxConcurrentStreams();
-                        }
+                        // the limit is already enforced from construction; the ack
+                        // needs no further action
                         continue;
                     } else {
                         updateRemoteSettings((SettingsFrame) frame);
@@ -256,7 +261,13 @@ public class HTTP2Connection {
                     break;
                 case DATA:
                     DataFrame dataFrame = (DataFrame) frame;
-                    if (receiveWindow.addAndGet(-dataFrame.body.length) < connectionWindowSize/10) {
+                    // flow control accounting uses the full frame payload length
+                    // (including any PADDED bytes), not the stripped body (RFC 7540 6.9)
+                    if (receiveWindow.addAndGet(-frame.getHeader().getLength()) < 0) {
+                        // the peer sent beyond the connection flow control window
+                        throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "connection flow control window exceeded");
+                    }
+                    if (receiveWindow.get() < connectionWindowSize/10) {
                         sendWindowUpdate();
                     }
                     if (inHeaders) {
@@ -272,13 +283,36 @@ public class HTTP2Connection {
                     }
                     var stream = http2Streams.get(streamId);
                     if (stream != null) {
-                        if (!stream.isOpen() || stream.isHalfClosed()) {
-                            throw new HTTP2Exception(HTTP2ErrorCode.STREAM_CLOSED, "HEADERS frame received on already closed stream");
-                        } else {
-                            throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received on already established stream");
+                        if (stream.isOpen() && !stream.isHalfClosed()) {
+                            // HEADERS following DATA on an open stream is a trailer
+                            // (RFC 7540 8.1.2.3): consume it and discard the contents
+                            HeadersFrame trailerFrame = (HeadersFrame) frame;
+                            headerBlockBytes += trailerFrame.getHeaderBlock().length;
+                            if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
+                                throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
+                            }
+                            headerBlockFragments.add(trailerFrame.getHeaderBlock());
+                            if (!trailerFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                                inHeaders = true;
+                                openStreamId = streamId;
+                                continue;
+                            }
+                            headerBlockFragments.clear();
+                            headerBlockBytes = 0;
+                            stream.receiveTrailer(trailerFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM));
+                            continue;
                         }
+                        // HEADERS on a closed or half closed stream is a stream error
+                        // (RFC 7540 5.1): reset the stream, not the connection
+                        sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
+                        continue;
                     }
                     HeadersFrame headersFrame = (HeadersFrame) frame;
+                    headerBlockBytes += headersFrame.getHeaderBlock().length;
+                    if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
+                        // CONTINUATION flood protection
+                        throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
+                    }
                     headerBlockFragments.add(headersFrame.getHeaderBlock());
                     if (!headersFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
                         inHeaders = true;
@@ -294,6 +328,11 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "CONTINUATION frame received on closed stream");
                     }
                     ContinuationFrame continuationFrame = (ContinuationFrame) frame;
+                    headerBlockBytes += continuationFrame.getHeaderBlock().length;
+                    if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
+                        // CONTINUATION flood protection
+                        throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
+                    }
                     headerBlockFragments.add(continuationFrame.getHeaderBlock());
                     if (!continuationFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
                         continue;
@@ -310,9 +349,9 @@ public class HTTP2Connection {
                     continue;
                 case RST_STREAM:
                     ResetStreamFrame resetFrame = (ResetStreamFrame) frame;
-                    if (resetFrame.errorCode == HTTP2ErrorCode.NO_ERROR) {
-                        continue;
-                    }
+                    // any RST_STREAM (including NO_ERROR and codes the enum
+                    // does not know) must close the stream: the peer considers
+                    // it cancelled
                     if (streamId == 0) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame received on stream 0");
                     }
@@ -333,7 +372,12 @@ public class HTTP2Connection {
             } else if (lastSeenStreamId < streamId) {
                 int currentSize = http2Streams.size();
                 if (maxConcurrentStreams != -1 && currentSize >= maxConcurrentStreams) {
-                    throw new HTTP2Exception(HTTP2ErrorCode.REFUSED_STREAM);
+                    // stream level error: refuse this single stream, not the
+                    // whole connection (RFC 7540 5.1.2)
+                    sendResetStream(HTTP2ErrorCode.REFUSED_STREAM, streamId);
+                    headerBlockFragments.clear();
+                    headerBlockBytes = 0;
+                    continue;
                 }
                 highNumberStreams = Math.max(highNumberStreams, currentSize);
                 byte[] headerBlock = Utils.combineByteArrays(headerBlockFragments);
@@ -351,18 +395,18 @@ public class HTTP2Connection {
                     }
                 }
                 headerBlockFragments.clear();
+                headerBlockBytes = 0;
                 inHeaders = false;
                 targetStream = new HTTP2Stream(streamId, this, requestHeaders, handler);
                 http2Streams.put(streamId, targetStream);
                 lastSeenStreamId = streamId;
             } else {
                 if (streamId <= lastSeenStreamId) {
-                    if(frame.getHeader().getType()==FrameType.WINDOW_UPDATE) {
-                        // must accept window update even if stream is closed
-                        logger.log(Level.TRACE,() -> "received WINDOW_UPDATE on closed stream "+streamId);
-                        continue;
-                    }
-                    throw new HTTP2Exception(HTTP2ErrorCode.STREAM_CLOSED, "frame "+frame.getHeader().getType()+ ", length "+ frame.getHeader().getLength()+", stream " + streamId + " is closed");
+                    // frames arriving for a stream we have already closed
+                    // (e.g. DATA in flight when the stream was reset) are
+                    // ignored (RFC 7540 5.1, closed state)
+                    logger.log(Level.TRACE,() -> "received "+frame.getHeader().getType()+" on closed stream "+streamId);
+                    continue;
                 }
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,  "frame "+frame.getHeader().getType()+", stream "+streamId+" not in order");
             }

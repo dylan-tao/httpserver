@@ -54,6 +54,15 @@ public class ServerConfig {
     private static final int DEFAULT_HTTP2_INITIAL_WINDOW_SIZE = 65535;
     private static final int DEFAULT_HTTP2_CONNECTION_WINDOW_SIZE = 65535;
     private static final int DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS = -1; // use -1 for no limit
+    // maximum total size of a received HTTP/2 header block (HEADERS + CONTINUATIONs)
+    private static final int DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE = 128 * 1024;
+    // maximum size of a single HTTP/1.1 request line or header line
+    private static final int DEFAULT_MAX_REQ_LINE_SIZE = 64 * 1024;
+    // maximum websocket frame / message sizes
+    private static final int DEFAULT_MAX_WS_FRAME_SIZE = 64 * 1024 * 1024;
+    private static final int DEFAULT_MAX_WS_MESSAGE_SIZE = 64 * 1024 * 1024;
+    // maximum duration in seconds for the TLS handshake to complete
+    private static final long DEFAULT_SSL_HANDSHAKE_TIMEOUT_SECS = 30;
 
     private static long idleTimerScheduleMillis;
     private static long idleIntervalMillis;
@@ -83,6 +92,11 @@ public class ServerConfig {
     private static int http2ConnectionWindowSize;
     private static int http2MaxConcurrentStreams;
     private static boolean http2DisableFlushDelay;
+    private static int http2MaxHeaderBlockSize;
+    private static int maxReqLineSize;
+    private static int maxWebSocketFrameSize;
+    private static int maxWebSocketMessageSize;
+    private static long sslHandshakeTimeoutMillis;
 
     static {
         java.security.AccessController.doPrivileged(
@@ -148,6 +162,31 @@ public class ServerConfig {
 
                         http2MaxConcurrentStreams = Integer.getInteger(pkg + ".http2MaxConcurrentStreams", DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS);
                         http2DisableFlushDelay = Boolean.getBoolean(pkg + ".http2DisableFlushDelay");
+
+                        http2MaxHeaderBlockSize = Integer.getInteger(pkg + ".http2MaxHeaderBlockSize", DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE);
+                        if (http2MaxHeaderBlockSize <= 0) {
+                            http2MaxHeaderBlockSize = DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE;
+                        }
+
+                        maxReqLineSize = Integer.getInteger(pkg + ".maxReqLineSize", DEFAULT_MAX_REQ_LINE_SIZE);
+                        if (maxReqLineSize <= 0) {
+                            maxReqLineSize = DEFAULT_MAX_REQ_LINE_SIZE;
+                        }
+
+                        maxWebSocketFrameSize = Integer.getInteger(pkg + ".maxWebSocketFrameSize", DEFAULT_MAX_WS_FRAME_SIZE);
+                        if (maxWebSocketFrameSize <= 0) {
+                            maxWebSocketFrameSize = DEFAULT_MAX_WS_FRAME_SIZE;
+                        }
+
+                        maxWebSocketMessageSize = Integer.getInteger(pkg + ".maxWebSocketMessageSize", DEFAULT_MAX_WS_MESSAGE_SIZE);
+                        if (maxWebSocketMessageSize <= 0) {
+                            maxWebSocketMessageSize = DEFAULT_MAX_WS_MESSAGE_SIZE;
+                        }
+
+                        sslHandshakeTimeoutMillis = Long.getLong(pkg + ".sslHandshakeTimeout", DEFAULT_SSL_HANDSHAKE_TIMEOUT_SECS) * 1000;
+                        if (sslHandshakeTimeoutMillis <= 0) {
+                            sslHandshakeTimeoutMillis = DEFAULT_SSL_HANDSHAKE_TIMEOUT_SECS * 1000;
+                        }
 
                         return null;
                     }
@@ -267,6 +306,31 @@ public class ServerConfig {
      */
     public static boolean http2DisableFlushDelay() {
         return http2DisableFlushDelay;
+    }
+
+    /** @return the maximum total size in bytes of a received HTTP/2 header block */
+    public static int http2MaxHeaderBlockSize() {
+        return http2MaxHeaderBlockSize;
+    }
+
+    /** @return the maximum size in bytes of a single HTTP/1.1 request/header line */
+    static int getMaxReqLineSize() {
+        return maxReqLineSize;
+    }
+
+    /** @return the maximum size in bytes of a single websocket frame */
+    public static int getMaxWebSocketFrameSize() {
+        return maxWebSocketFrameSize;
+    }
+
+    /** @return the maximum size in bytes of an aggregated websocket message */
+    public static int getMaxWebSocketMessageSize() {
+        return maxWebSocketMessageSize;
+    }
+
+    /** @return the maximum duration in milliseconds for the TLS handshake to complete */
+    static long getSslHandshakeTimeoutMillis() {
+        return sslHandshakeTimeoutMillis;
     }
 
 }

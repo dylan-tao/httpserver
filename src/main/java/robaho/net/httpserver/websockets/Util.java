@@ -70,7 +70,9 @@ public class Util {
     public static String makeAcceptKey(String key) throws NoSuchAlgorithmException {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
         String text = key + Util.WEBSOCKET_KEY_MAGIC;
-        md.update(text.getBytes(), 0, text.length());
+        // the key and magic are ASCII; hashing the char count instead of the
+        // byte count truncates the input when non-ASCII characters appear
+        md.update(text.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         byte[] sha1hash = md.digest();
         return encodeBase64(sha1hash);
     }
@@ -78,8 +80,9 @@ public class Util {
     private static final String CONTENT_TYPE = "Content-type";
 
     public static void sendResponseHeaders(HttpExchange exchange, int code, String reason) throws IOException {
-        var bytes = reason.getBytes();
-        exchange.getRequestHeaders().set(CONTENT_TYPE, "text/plain");
+        var bytes = reason.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        // the content type describes the RESPONSE, not the request
+        exchange.getResponseHeaders().set(CONTENT_TYPE, "text/plain");
         exchange.sendResponseHeaders(code, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.getRequestBody().close();

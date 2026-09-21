@@ -114,37 +114,27 @@ public class HttpConnection {
         }
         closed = true;
 
-        if (socket != null) {
-            if(requestCount.get()==0) {
-                logger.log(Level.WARNING, "closing connection: remote "+socket.getRemoteSocketAddress() + " with 0 requests");
-            } else {
-                logger.log(Level.TRACE, () -> "closing connection: remote " + socket.getRemoteSocketAddress());
-            }
+        if(requestCount.get()==0) {
+            // a client probing the port (connect + close) lands here - debug,
+            // not a warning, or TCP health checks flood the log
+            logger.log(Level.DEBUG, () -> "closing connection: remote " + socket.getRemoteSocketAddress() + " with 0 requests");
+        } else {
+            logger.log(Level.TRACE, () -> "closing connection: remote " + socket.getRemoteSocketAddress());
         }
 
         if (socket.isClosed()) {
             return;
         }
         try {
-            if (os!=null) {
-                // see issue #19, flush before closing, in case of pending data
-                os.flush();
-            }
-        } catch(IOException ex){}
-
-        try {
             /* need to ensure temporary selectors are closed */
-            if (is != null) {
-                is.close();
-            }
+            is.close();
         } catch (IOException e) {
             logger.log(Level.TRACE, "error closing input stream", e);
         }
         try {
-            if (os != null) {
-                os.flush();
-                os.close();
-            }
+            // see issue #19, flush before closing, in case of pending data
+            os.flush();
+            os.close();
         } catch (IOException e) {
             logger.log(Level.TRACE, "error closing output stream", e);
         }

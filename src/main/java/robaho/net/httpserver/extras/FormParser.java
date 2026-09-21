@@ -18,6 +18,8 @@ public class FormParser {
 
     // Sets the maximum count of accepted POST params - protection against Hash collision DOS attacks
     private static final int MAX_PARAMS = Integer.getInteger("robaho.net.httpserver.max_form_params", 1000); // 0 == no limit
+    // Sets the maximum accepted request body size in bytes - protection against memory exhaustion
+    private static final int MAX_CONTENT_LENGTH = Integer.getInteger("robaho.net.httpserver.max_form_bytes", 10 * 1024 * 1024); // 0 == no limit
 
     /**
      * @param encoding the content encoding or null for the default encoding
@@ -33,7 +35,15 @@ public class FormParser {
         ByteArrayOutputStream os = new ByteArrayOutputStream();
         byte[] buffer = new byte[1024];
         int bytesRead;
-        while ((bytesRead = is.read(buffer)) > 0) {
+        long total = 0;
+        while ((bytesRead = is.read(buffer)) != -1) {
+            if (bytesRead == 0) {
+                continue;
+            }
+            total += bytesRead;
+            if (MAX_CONTENT_LENGTH != 0 && total > MAX_CONTENT_LENGTH) {
+                throw new IOException("form content of " + total + " bytes exceeds the limit of " + MAX_CONTENT_LENGTH + " bytes");
+            }
             os.write(buffer, 0, bytesRead);
         }
 
@@ -71,17 +81,18 @@ public class FormParser {
         }
 
         // Second phase - look for _charset_ param and do the encoding
-        if (params.containsKey("_charset_")) {
-            encoding = params.get("_charset_").get(0);
+        List<String> charsetParam = params.get("_charset_");
+        if (charsetParam != null && !charsetParam.isEmpty()) {
+            encoding = charsetParam.get(0);
         }
 
-        // We're ready to decode the params
+        // We're ready to decode the params. Keys are decoded BEFORE grouping so
+        // that "a=1" and "%61=2" merge into a single entry (servlet semantics).
         Map<String, List<String>> decodedParams = new LinkedHashMap<>(params.size());
         for (var e : params.entrySet()) {
-            String key = e.getKey();
-            key = URLDecoder.decode(e.getKey(), encoding);
+            String key = decode(e.getKey(), encoding);
             for (String value : e.getValue()) {
-                String decodedValue = value == null ? null : URLDecoder.decode(value, encoding);
+                String decodedValue = value == null ? null : decode(value, encoding);
                 List<String> values = decodedParams.computeIfAbsent(key, k -> new ArrayList());
                 if (decodedValue != null) {
                     values.add(decodedValue);
@@ -89,5 +100,15 @@ public class FormParser {
             }
         }
         return decodedParams;
+    }
+
+    private static String decode(String value, String encoding) throws IOException {
+        try {
+            return URLDecoder.decode(value, encoding);
+        } catch (IllegalArgumentException e) {
+            // malformed percent encoding (e.g. "%zz"): report as a client error
+            // instead of an uncaught IllegalArgumentException
+            throw new IOException("invalid url-encoded form value: " + value, e);
+        }
     }
 }

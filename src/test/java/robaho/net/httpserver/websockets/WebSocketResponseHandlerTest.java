@@ -73,6 +73,12 @@ public class WebSocketResponseHandlerTest {
 
     private static class TestWebsocketHandler extends WebSocketHandler {
         @Override
+        protected String supportsProtocol(String protocol) {
+            // this test handler accepts any requested sub protocol
+            return protocol;
+        }
+
+        @Override
         protected WebSocket openWebSocket(HttpExchange exchange) {
             return new TestWebSocket(exchange);
         }

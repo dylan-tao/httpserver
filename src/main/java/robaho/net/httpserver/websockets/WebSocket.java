@@ -46,6 +46,8 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import com.sun.net.httpserver.HttpExchange;
 
+import robaho.net.httpserver.ServerConfig;
+
 import static java.lang.System.Logger.Level.*;
 
 public abstract class WebSocket {
@@ -60,6 +62,12 @@ public abstract class WebSocket {
     private final List<WebSocketFrame> continuousFrames = new LinkedList<WebSocketFrame>();
 
     private volatile State state = State.UNCONNECTED;
+
+    /** close info recorded when the closing handshake begins, so the read
+     * loop exit can surface the real code instead of a generic 1011 */
+    private volatile CloseCode pendingCloseCode;
+    private volatile String pendingCloseReason;
+    private volatile boolean pendingCloseByRemote;
 
     private Lock lock = new ReentrantLock();
 
@@ -115,6 +123,12 @@ public abstract class WebSocket {
         State oldState = this.state;
         this.state = State.CLOSING;
         if (oldState == State.OPEN) {
+            // record the close info: after the closing handshake completes
+            // (or the peer disappears) the read loop exits and must surface
+            // this code, not a generic internal error
+            pendingCloseCode = code;
+            pendingCloseReason = reason;
+            pendingCloseByRemote = initiatedByRemote;
             sendFrame(new CloseFrame(code, reason));
         } else {
             doClose(code, reason, initiatedByRemote);
@@ -174,6 +188,7 @@ public abstract class WebSocket {
             if (this.continuousOpCode == null) {
                 throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence was not started.");
             }
+            checkMessageSize(frame);
             this.continuousFrames.add(frame);
             onMessage(new WebSocketFrame(this.continuousOpCode, this.continuousFrames));
             this.continuousOpCode = null;
@@ -183,7 +198,20 @@ public abstract class WebSocket {
             throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence was not started.");
         } else {
             // Intermediate
+            checkMessageSize(frame);
             this.continuousFrames.add(frame);
+        }
+    }
+
+    /** reject a fragmented message whose total size exceeds the configured maximum */
+    private void checkMessageSize(WebSocketFrame frame) throws WebSocketException {
+        long total = frame.getBinaryPayload().length;
+        for (WebSocketFrame f : this.continuousFrames) {
+            total += f.getBinaryPayload().length;
+        }
+        if (total > ServerConfig.getMaxWebSocketMessageSize()) {
+            throw new WebSocketException(CloseCode.MessageTooBig,
+                    "aggregated message exceeds " + ServerConfig.getMaxWebSocketMessageSize() + " bytes");
         }
     }
 
@@ -218,7 +246,12 @@ public abstract class WebSocket {
             logger.log(DEBUG, "websocket open {0}", uri);
             onOpen();
             while (this.state == State.OPEN) {
-                handleWebsocketFrame(WebSocketFrame.read(in));
+                WebSocketFrame frame = WebSocketFrame.read(in);
+                if (!frame.isMasked()) {
+                    // all client-to-server frames must be masked (RFC 6455 5.1)
+                    throw new WebSocketException(CloseCode.ProtocolError, "client frames must be masked");
+                }
+                handleWebsocketFrame(frame);
             }
         } catch (EOFException e) {
             onException(e);
@@ -234,7 +267,13 @@ public abstract class WebSocket {
                 doClose(CloseCode.AbnormalClosure, e.toString(), false);
             }
         } finally {
-            doClose(CloseCode.InternalServerError, "Handler terminated without closing the connection.", false);
+            if (this.state == State.CLOSING && pendingCloseCode != null) {
+                // the closing handshake began (locally or remotely) but did not
+                // complete - surface the recorded close code and reason
+                doClose(pendingCloseCode, pendingCloseReason, pendingCloseByRemote);
+            } else if (this.state != State.CLOSED) {
+                doClose(CloseCode.InternalServerError, "Handler terminated without closing the connection.", false);
+            }
             logger.log(TRACE, "readWebsocket() exiting {0}", uri);
         }
     }

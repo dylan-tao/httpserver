@@ -97,6 +97,8 @@ class ContextList {
             throw new IllegalArgumentException("cannot remove element from list");
         }
         list.remove(ctx);
+        // invalidate cached lookups pointing at the removed context
+        cache.values().removeIf(c -> c == ctx);
     }
 
     public synchronized void remove(HttpContextImpl context)
@@ -104,6 +106,8 @@ class ContextList {
         for (HttpContextImpl ctx : list) {
             if (ctx.equals(context)) {
                 list.remove(ctx);
+                // invalidate cached lookups pointing at the removed context
+                cache.values().removeIf(c -> c == context);
                 return;
             }
         }

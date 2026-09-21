@@ -36,7 +36,7 @@ import com.sun.net.httpserver.HttpsServer;
 
 public class HttpsServerImpl extends HttpsServer {
 
-    ServerImpl server;
+    final ServerImpl server;
 
     HttpsServerImpl() throws IOException {
         this(new InetSocketAddress(443), 0);

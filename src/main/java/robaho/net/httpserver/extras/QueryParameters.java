@@ -11,7 +11,7 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
     /**
      * @param encoding a valid java character set name
      * @param query the query string
-     * @return a sorted map based on the order provided
+     * @return an insertion-ordered map preserving the parameter order
      * @throws UnsupportedEncodingException if the encoding or query is not
      * valid
      */
@@ -25,7 +25,9 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
             if (parts.length == 0 || parts[0].length() == 0) {
                 continue;
             }
-            qp.computeIfAbsent(parts[0], k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
+            // decode the key as well as the value, so "%61=1" and "a=1" group together
+            String key = URLDecoder.decode(parts[0], encoding);
+            qp.computeIfAbsent(key, k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
         }
         return qp;
     }

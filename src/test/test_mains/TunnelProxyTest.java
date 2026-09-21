@@ -35,7 +35,13 @@ public class TunnelProxyTest {
 
         var proxy = HttpServer.create(addr,100);
 
-        var ctx = proxy.createContext("/", new ProxyHandler());
+        var ctx = proxy.createContext("/", new ProxyHandler() {
+            @Override
+            protected boolean authorizeConnect(HttpExchange exchange) {
+                // this test exercises tunneling only; authorization is out of scope
+                return true;
+            }
+        });
 
         server1.createContext("/test", (HttpExchange exchange) -> {
             System.out.println("request headers: "+exchange.getRequestHeaders());

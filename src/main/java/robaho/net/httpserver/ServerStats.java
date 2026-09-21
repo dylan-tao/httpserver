@@ -11,11 +11,14 @@ class ServerStats {
     final AtomicLong replyErrorCount = new AtomicLong();
     final AtomicLong maxConnectionsExceededCount = new AtomicLong();
 
-    private volatile long lastStatsTime = System.currentTimeMillis();
+    private long lastStatsTime = System.currentTimeMillis();
 
-    public String stats() {
+    /** synchronized: concurrent calls must not interleave the time snapshot
+     * and the counter resets (which produced bogus requests/sec values) */
+    public synchronized String stats() {
         long now = System.currentTimeMillis();
-        double secs = (now-lastStatsTime)/1000.0;
+        // guard against division by ~0 when two calls land in the same millisecond
+        double secs = Math.max((now - lastStatsTime) / 1000.0, 0.001);
         lastStatsTime = now;
 
         long _requests = requestCount.getAndSet(0);

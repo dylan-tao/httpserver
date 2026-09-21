@@ -57,14 +57,6 @@ class ExchangeImpl {
     boolean closed;
     boolean http10 = false;
 
-    /* for formatting the Date: header */
-    private static final DateTimeFormatter FORMATTER;
-    static {
-        String pattern = "EEE, dd MMM yyyy HH:mm:ss zzz";
-        FORMATTER = DateTimeFormatter.ofPattern(pattern, Locale.US)
-                .withZone(ZoneId.of("GMT"));
-    }
-
     private static final String HEAD = "HEAD";
     private static final String CONNECT = "CONNECT";
     private static final String HEADER_CONNECTION = "Connection";
@@ -341,8 +333,8 @@ class ExchangeImpl {
     }
 
     static final Charset ISO_CHARSET = StandardCharsets.ISO_8859_1;
-    static final String colonSpace = ": ";
-    static final String CRNL = "\r\n";
+    private static final byte[] COLON_SPACE = ": ".getBytes(ISO_CHARSET);
+    private static final byte[] CRNL_BYTES = "\r\n".getBytes(ISO_CHARSET);
 
     private static void outputAscii(String s,OutputStream os) throws IOException {
         os.write(s.getBytes(ISO_CHARSET));
@@ -352,13 +344,18 @@ class ExchangeImpl {
         for (Map.Entry<String, List<String>> entry : map.entrySet()) {
             String key = entry.getKey();
             for (String val : entry.getValue()) {
+                // a CR/LF in a response header value would split the response
+                // (response splitting); refuse rather than write it through
+                if (val == null || val.indexOf('\r') >= 0 || val.indexOf('\n') >= 0) {
+                    throw new IOException("illegal response header value for " + key);
+                }
                 outputAscii(key,os);
-                outputAscii(colonSpace,os);
+                os.write(COLON_SPACE);
                 outputAscii(val,os);
-                outputAscii(CRNL,os);
+                os.write(CRNL_BYTES);
             }
         }
-        outputAscii(CRNL,os);
+        os.write(CRNL_BYTES);
     }
 
     public InetSocketAddress getRemoteAddress() {
@@ -376,9 +373,7 @@ class ExchangeImpl {
     }
 
     public String getProtocol() {
-        String reqline = req.requestLine();
-        int index = reqline.lastIndexOf(" ");
-        return reqline.substring(index + 1);
+        return req.protocol();
     }
 
     public SSLSession getSSLSession() {

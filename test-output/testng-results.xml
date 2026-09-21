@@ -1,0 +1,933 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testng-results ignored="0" total="104" passed="104" failed="0" skipped="0">
+  <reporter-output>
+  </reporter-output>
+  <suite started-at="2026-09-18T15:33:02 CST" name="Command line suite" finished-at="2026-09-18T15:33:06 CST" duration-ms="4899">
+    <groups>
+    </groups>
+    <test started-at="2026-09-18T15:33:02 CST" name="Command line test" finished-at="2026-09-18T15:33:06 CST" duration-ms="4899">
+      <class name="robaho.net.httpserver.RequestHeadersTest">
+        <test-method signature="TestDuplicateHeaders()[pri:0, instance:robaho.net.httpserver.RequestHeadersTest@2357d90a]" started-at="2026-09-18T15:33:06 CST" name="TestDuplicateHeaders" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestDuplicateHeaders -->
+        <test-method signature="TestHeaderParse()[pri:0, instance:robaho.net.httpserver.RequestHeadersTest@2357d90a]" started-at="2026-09-18T15:33:06 CST" name="TestHeaderParse" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestHeaderParse -->
+        <test-method signature="TestMultiLineHeaderParse()[pri:0, instance:robaho.net.httpserver.RequestHeadersTest@2357d90a]" started-at="2026-09-18T15:33:06 CST" name="TestMultiLineHeaderParse" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestMultiLineHeaderParse -->
+        <test-method signature="TestMultipleHeadersThenBody()[pri:0, instance:robaho.net.httpserver.RequestHeadersTest@2357d90a]" started-at="2026-09-18T15:33:06 CST" name="TestMultipleHeadersThenBody" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestMultipleHeadersThenBody -->
+        <test-method signature="TestMultipleHeaders()[pri:0, instance:robaho.net.httpserver.RequestHeadersTest@2357d90a]" started-at="2026-09-18T15:33:06 CST" name="TestMultipleHeaders" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestMultipleHeaders -->
+        <test-method signature="TestWhitespace()[pri:0, instance:robaho.net.httpserver.RequestHeadersTest@2357d90a]" started-at="2026-09-18T15:33:06 CST" name="TestWhitespace" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestWhitespace -->
+      </class> <!-- robaho.net.httpserver.RequestHeadersTest -->
+      <class name="CreateHttpServerTest">
+        <test-method signature="TestCreate()[pri:0, instance:CreateHttpServerTest@45afc369]" started-at="2026-09-18T15:33:02 CST" name="TestCreate" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestCreate -->
+        <test-method signature="TestCreateWithParameters()[pri:0, instance:CreateHttpServerTest@45afc369]" started-at="2026-09-18T15:33:02 CST" name="TestCreateWithParameters" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestCreateWithParameters -->
+      </class> <!-- CreateHttpServerTest -->
+      <class name="robaho.net.httpserver.SSLSessionTest">
+        <test-method signature="TestHasSslSession()[pri:0, instance:robaho.net.httpserver.SSLSessionTest@6328d34a]" started-at="2026-09-18T15:33:06 CST" name="TestHasSslSession" finished-at="2026-09-18T15:33:06 CST" duration-ms="106" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestHasSslSession -->
+      </class> <!-- robaho.net.httpserver.SSLSessionTest -->
+      <class name="InputNotRead">
+        <test-method signature="testCloseOutputStream()[pri:0, instance:InputNotRead@61009542]" started-at="2026-09-18T15:33:02 CST" name="testCloseOutputStream" finished-at="2026-09-18T15:33:03 CST" duration-ms="1016" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testCloseOutputStream -->
+        <test-method signature="testSendResponse()[pri:0, instance:InputNotRead@61009542]" started-at="2026-09-18T15:33:03 CST" name="testSendResponse" finished-at="2026-09-18T15:33:04 CST" duration-ms="1025" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testSendResponse -->
+      </class> <!-- InputNotRead -->
+      <class name="BasicAuthenticatorExceptionCheck">
+        <test-method signature="testAuthenticationException()[pri:0, instance:BasicAuthenticatorExceptionCheck@32464a14]" started-at="2026-09-18T15:33:02 CST" name="testAuthenticationException" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testAuthenticationException -->
+      </class> <!-- BasicAuthenticatorExceptionCheck -->
+      <class name="robaho.net.httpserver.websockets.WebSocketTest">
+        <test-method signature="testEcho()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketTest@41ee392b]" started-at="2026-09-18T15:33:06 CST" name="testEcho" finished-at="2026-09-18T15:33:06 CST" duration-ms="5" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEcho -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketTest@41ee392b]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="tearDown()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketTest@41ee392b]" started-at="2026-09-18T15:33:06 CST" name="tearDown" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- tearDown -->
+      </class> <!-- robaho.net.httpserver.websockets.WebSocketTest -->
+      <class name="robaho.net.httpserver.PipeliningStallTest">
+        <test-method signature="testSendResponse()[pri:0, instance:robaho.net.httpserver.PipeliningStallTest@7f9fcf7f]" started-at="2026-09-18T15:33:05 CST" name="testSendResponse" finished-at="2026-09-18T15:33:06 CST" duration-ms="1022" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testSendResponse -->
+      </class> <!-- robaho.net.httpserver.PipeliningStallTest -->
+      <class name="HttpContextTest">
+        <test-method signature="test()[pri:0, instance:HttpContextTest@5d20e46]" started-at="2026-09-18T15:33:02 CST" name="test" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- test -->
+        <test-method signature="testSubcontext()[pri:0, instance:HttpContextTest@5d20e46]" started-at="2026-09-18T15:33:02 CST" name="testSubcontext" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testSubcontext -->
+      </class> <!-- HttpContextTest -->
+      <class name="InputRead100Test">
+        <test-method signature="testContinue()[pri:0, instance:InputRead100Test@77e9807f]" started-at="2026-09-18T15:33:04 CST" name="testContinue" finished-at="2026-09-18T15:33:05 CST" duration-ms="1027" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testContinue -->
+      </class> <!-- InputRead100Test -->
+      <class name="HeadKeepAlive">
+        <test-method signature="test()[pri:0, instance:HeadKeepAlive@551bdc27]" started-at="2026-09-18T15:33:02 CST" name="test" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- test -->
+      </class> <!-- HeadKeepAlive -->
+      <class name="robaho.net.httpserver.websockets.MultipleWebSocketTest">
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.MultipleWebSocketTest@4c40b76e]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="2" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method signature="testEchoMultiple()[pri:0, instance:robaho.net.httpserver.websockets.MultipleWebSocketTest@4c40b76e]" started-at="2026-09-18T15:33:06 CST" name="testEchoMultiple" finished-at="2026-09-18T15:33:06 CST" duration-ms="18" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEchoMultiple -->
+        <test-method is-config="true" signature="tearDown()[pri:0, instance:robaho.net.httpserver.websockets.MultipleWebSocketTest@4c40b76e]" started-at="2026-09-18T15:33:06 CST" name="tearDown" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- tearDown -->
+      </class> <!-- robaho.net.httpserver.websockets.MultipleWebSocketTest -->
+      <class name="HttpPrincipalTest">
+        <test-method signature="testGetters()[pri:0, instance:HttpPrincipalTest@709ba3fb]" started-at="2026-09-18T15:33:02 CST" name="testGetters" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testGetters -->
+      </class> <!-- HttpPrincipalTest -->
+      <class name="robaho.net.httpserver.HttpsConfiguratorTest">
+        <test-method signature="TestConfigureCalled()[pri:0, instance:robaho.net.httpserver.HttpsConfiguratorTest@44a664f2]" started-at="2026-09-18T15:33:05 CST" name="TestConfigureCalled" finished-at="2026-09-18T15:33:05 CST" duration-ms="257" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestConfigureCalled -->
+      </class> <!-- robaho.net.httpserver.HttpsConfiguratorTest -->
+      <class name="HeadersTest">
+        <test-method signature="test1ArgConstructor()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="test1ArgConstructor" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- test1ArgConstructor -->
+        <test-method signature="test1ArgConstructorNull()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="test1ArgConstructorNull" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- test1ArgConstructorNull -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testDefaultConstructor()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testDefaultConstructor" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testDefaultConstructor -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testEqualsAndHashCode(com.sun.net.httpserver.Headers,com.sun.net.httpserver.Headers)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsAndHashCode" data-provider="headerPairs" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[Headers { {Accept-encoding=[gzip, deflate]} }]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsAndHashCode -->
+        <test-method signature="testMutableHeaders()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testMutableHeaders" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testMutableHeaders -->
+        <test-method signature="testNull()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testNull" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testNull -->
+        <test-method signature="testEqualsMap()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testEqualsMap" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testEqualsMap -->
+        <test-method signature="testNullResponseHeaders(java.lang.String,java.util.List)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testNullResponseHeaders" data-provider="responseHeaders" finished-at="2026-09-18T15:33:02 CST" duration-ms="6" status="PASS">
+          <params>
+            <param index="0">
+              <value is-null="true"/>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[[Bar]]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testNullResponseHeaders -->
+        <test-method signature="testNullResponseHeaders(java.lang.String,java.util.List)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testNullResponseHeaders" data-provider="responseHeaders" finished-at="2026-09-18T15:33:02 CST" duration-ms="4" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Foo]]>
+              </value>
+            </param>
+            <param index="1">
+              <value is-null="true"/>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testNullResponseHeaders -->
+        <test-method signature="testNullResponseHeaders(java.lang.String,java.util.List)[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testNullResponseHeaders" data-provider="responseHeaders" finished-at="2026-09-18T15:33:02 CST" duration-ms="5" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[Foo]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[[null]]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testNullResponseHeaders -->
+        <test-method signature="testOf()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testOf" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testOf -->
+        <test-method signature="testOfEmpty()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testOfEmpty" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testOfEmpty -->
+        <test-method signature="testOfNull()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testOfNull" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testOfNull -->
+        <test-method signature="testOfMultipleValues()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testOfMultipleValues" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testOfMultipleValues -->
+        <test-method signature="testPutAll()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testPutAll" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testPutAll -->
+        <test-method signature="testOfNumberOfElements()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testOfNumberOfElements" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testOfNumberOfElements -->
+        <test-method signature="testReplaceAll()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testReplaceAll" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testReplaceAll -->
+        <test-method signature="testToString()[pri:0, instance:HeadersTest@7364985f]" started-at="2026-09-18T15:33:02 CST" name="testToString" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testToString -->
+      </class> <!-- HeadersTest -->
+      <class name="robaho.net.httpserver.extras.MultipartFormParserTest">
+        <test-method signature="testBinary()[pri:0, instance:robaho.net.httpserver.extras.MultipartFormParserTest@15bb6bea]" started-at="2026-09-18T15:33:06 CST" name="testBinary" finished-at="2026-09-18T15:33:06 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testBinary -->
+        <test-method signature="testFiles()[pri:0, instance:robaho.net.httpserver.extras.MultipartFormParserTest@15bb6bea]" started-at="2026-09-18T15:33:06 CST" name="testFiles" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testFiles -->
+        <test-method signature="testFormSample()[pri:0, instance:robaho.net.httpserver.extras.MultipartFormParserTest@15bb6bea]" started-at="2026-09-18T15:33:06 CST" name="testFormSample" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testFormSample -->
+        <test-method signature="testMultiFileFormSample()[pri:0, instance:robaho.net.httpserver.extras.MultipartFormParserTest@15bb6bea]" started-at="2026-09-18T15:33:06 CST" name="testMultiFileFormSample" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testMultiFileFormSample -->
+      </class> <!-- robaho.net.httpserver.extras.MultipartFormParserTest -->
+      <class name="BasicAuthenticatorRealm">
+        <test-method signature="testHttpClient()[pri:0, instance:BasicAuthenticatorRealm@d6da883]" started-at="2026-09-18T15:33:02 CST" name="testHttpClient" finished-at="2026-09-18T15:33:02 CST" duration-ms="207" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testHttpClient -->
+        <test-method signature="testHttpClientAuthenticated()[pri:0, instance:BasicAuthenticatorRealm@d6da883]" started-at="2026-09-18T15:33:02 CST" name="testHttpClientAuthenticated" finished-at="2026-09-18T15:33:02 CST" duration-ms="9" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testHttpClientAuthenticated -->
+        <test-method signature="testURLConnection()[pri:0, instance:BasicAuthenticatorRealm@d6da883]" started-at="2026-09-18T15:33:02 CST" name="testURLConnection" finished-at="2026-09-18T15:33:02 CST" duration-ms="8" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testURLConnection -->
+        <test-method signature="testURLConnectionAuthenticated()[pri:0, instance:BasicAuthenticatorRealm@d6da883]" started-at="2026-09-18T15:33:02 CST" name="testURLConnectionAuthenticated" finished-at="2026-09-18T15:33:02 CST" duration-ms="5" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testURLConnectionAuthenticated -->
+      </class> <!-- BasicAuthenticatorRealm -->
+      <class name="FilterTest">
+        <test-method is-config="true" signature="setup()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="setup" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setup -->
+        <test-method signature="testAdaptRequest()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testAdaptRequest" finished-at="2026-09-18T15:33:02 CST" duration-ms="6" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testAdaptRequest -->
+        <test-method signature="testAfterHandler()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testAfterHandler" finished-at="2026-09-18T15:33:02 CST" duration-ms="8" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testAfterHandler -->
+        <test-method signature="testAfterHandlerRepeated()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testAfterHandlerRepeated" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testAfterHandlerRepeated -->
+        <test-method signature="testAfterHandlerSendResponse()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testAfterHandlerSendResponse" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testAfterHandlerSendResponse -->
+        <test-method signature="testBeforeAndAfterHandler()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testBeforeAndAfterHandler" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testBeforeAndAfterHandler -->
+        <test-method signature="testBeforeHandler()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testBeforeHandler" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testBeforeHandler -->
+        <test-method signature="testBeforeHandlerRepeated()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testBeforeHandlerRepeated" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testBeforeHandlerRepeated -->
+        <test-method signature="testBeforeHandlerSendResponse()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testBeforeHandlerSendResponse" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testBeforeHandlerSendResponse -->
+        <test-method signature="testDescription()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testDescription" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testDescription -->
+        <test-method signature="testException(com.sun.net.httpserver.Filter,java.lang.Class)[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testException" data-provider="throwingFilters" finished-at="2026-09-18T15:33:02 CST" duration-ms="8" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[com.sun.net.httpserver.Filter$1@3fc9504b]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[class java.io.IOException]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testException -->
+        <test-method signature="testException(com.sun.net.httpserver.Filter,java.lang.Class)[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testException" data-provider="throwingFilters" finished-at="2026-09-18T15:33:02 CST" duration-ms="4" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[com.sun.net.httpserver.Filter$1@2e6a5539]]>
+              </value>
+            </param>
+            <param index="1">
+              <value>
+                <![CDATA[class java.io.IOException]]>
+              </value>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testException -->
+        <test-method signature="testException(com.sun.net.httpserver.Filter,java.lang.Class)[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testException" data-provider="throwingFilters" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[com.sun.net.httpserver.Filter$2@65a15628]]>
+              </value>
+            </param>
+            <param index="1">
+              <value is-null="true"/>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testException -->
+        <test-method signature="testException(com.sun.net.httpserver.Filter,java.lang.Class)[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testException" data-provider="throwingFilters" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <params>
+            <param index="0">
+              <value>
+                <![CDATA[com.sun.net.httpserver.Filter$2@6d025197]]>
+              </value>
+            </param>
+            <param index="1">
+              <value is-null="true"/>
+            </param>
+          </params>
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testException -->
+        <test-method signature="testInspectRequest()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testInspectRequest" finished-at="2026-09-18T15:33:02 CST" duration-ms="2" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testInspectRequest -->
+        <test-method signature="testNull()[pri:0, instance:FilterTest@dd3b207]" started-at="2026-09-18T15:33:02 CST" name="testNull" finished-at="2026-09-18T15:33:02 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testNull -->
+      </class> <!-- FilterTest -->
+      <class name="DateFormatterTest">
+        <test-method is-config="true" signature="setUp()[pri:0, instance:DateFormatterTest@3c0a50da]" started-at="2026-09-18T15:33:02 CST" name="setUp" finished-at="2026-09-18T15:33:02 CST" duration-ms="22" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method signature="testDateFormat()[pri:0, instance:DateFormatterTest@3c0a50da]" started-at="2026-09-18T15:33:02 CST" name="testDateFormat" finished-at="2026-09-18T15:33:02 CST" duration-ms="21" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testDateFormat -->
+        <test-method is-config="true" signature="cleanUp()[pri:0, instance:DateFormatterTest@3c0a50da]" started-at="2026-09-18T15:33:06 CST" name="cleanUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- cleanUp -->
+      </class> <!-- DateFormatterTest -->
+      <class name="ZeroLengthOutputStream">
+        <test-method signature="test()[pri:0, instance:ZeroLengthOutputStream@7f77e91b]" started-at="2026-09-18T15:33:05 CST" name="test" finished-at="2026-09-18T15:33:05 CST" duration-ms="4" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- test -->
+      </class> <!-- ZeroLengthOutputStream -->
+      <class name="robaho.net.httpserver.StringUtilsTest">
+        <test-method signature="TestContainsIgnoreCase()[pri:0, instance:robaho.net.httpserver.StringUtilsTest@145eaa29]" started-at="2026-09-18T15:33:06 CST" name="TestContainsIgnoreCase" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- TestContainsIgnoreCase -->
+      </class> <!-- robaho.net.httpserver.StringUtilsTest -->
+      <class name="ExchangeAttributeTest">
+        <test-method is-config="true" signature="setup()[pri:0, instance:ExchangeAttributeTest@78a2da20]" started-at="2026-09-18T15:33:02 CST" name="setup" finished-at="2026-09-18T15:33:02 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setup -->
+        <test-method signature="testExchangeAttributes()[pri:0, instance:ExchangeAttributeTest@78a2da20]" started-at="2026-09-18T15:33:02 CST" name="testExchangeAttributes" finished-at="2026-09-18T15:33:02 CST" duration-ms="3" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testExchangeAttributes -->
+      </class> <!-- ExchangeAttributeTest -->
+      <class name="robaho.net.httpserver.websockets.WebSocketResponseHandlerTest">
+        <test-method signature="testConnectionHeaderHandlesKeepAlive_FixingFirefoxConnectIssue()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testConnectionHeaderHandlesKeepAlive_FixingFirefoxConnectIssue" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testConnectionHeaderHandlesKeepAlive_FixingFirefoxConnectIssue -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method signature="testHandshakeReturnsResponseWithExpectedHeaders()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testHandshakeReturnsResponseWithExpectedHeaders" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testHandshakeReturnsResponseWithExpectedHeaders -->
+        <test-method signature="testIsMasked()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testIsMasked" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testIsMasked -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method signature="testMissingKeyReturnsErrorResponse()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testMissingKeyReturnsErrorResponse" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testMissingKeyReturnsErrorResponse -->
+        <test-method signature="testSetMaskingKeyThrowsExceptionMaskingKeyLengthIsNotFour()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testSetMaskingKeyThrowsExceptionMaskingKeyLengthIsNotFour" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testSetMaskingKeyThrowsExceptionMaskingKeyLengthIsNotFour -->
+        <test-method signature="testWriteWhenMasked()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWriteWhenMasked" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWriteWhenMasked -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method signature="testWriteWhenNotMasked()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWriteWhenNotMasked" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWriteWhenNotMasked -->
+        <test-method signature="testWriteWhenMaskedPayloadLengthGreaterThan125()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWriteWhenMaskedPayloadLengthGreaterThan125" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWriteWhenMaskedPayloadLengthGreaterThan125 -->
+        <test-method signature="testWriteWhenNotMaskedPayloadLengthGreaterThan125()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWriteWhenNotMaskedPayloadLengthGreaterThan125" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWriteWhenNotMaskedPayloadLengthGreaterThan125 -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method signature="testWrongConnectionHeaderReturnsNullResponse()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWrongConnectionHeaderReturnsNullResponse" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWrongConnectionHeaderReturnsNullResponse -->
+        <test-method signature="testWrongWebsocketVersionReturnsErrorResponse()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWrongWebsocketVersionReturnsErrorResponse" finished-at="2026-09-18T15:33:06 CST" duration-ms="1" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWrongWebsocketVersionReturnsErrorResponse -->
+        <test-method signature="testWriteWhenNotMaskedPayloadLengthGreaterThan65535()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWriteWhenNotMaskedPayloadLengthGreaterThan65535" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWriteWhenNotMaskedPayloadLengthGreaterThan65535 -->
+        <test-method signature="testWrongUpgradeHeaderReturnsNullResponse()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="testWrongUpgradeHeaderReturnsNullResponse" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- testWrongUpgradeHeaderReturnsNullResponse -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+        <test-method is-config="true" signature="setUp()[pri:0, instance:robaho.net.httpserver.websockets.WebSocketResponseHandlerTest@2ea6137]" started-at="2026-09-18T15:33:06 CST" name="setUp" finished-at="2026-09-18T15:33:06 CST" duration-ms="0" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- setUp -->
+      </class> <!-- robaho.net.httpserver.websockets.WebSocketResponseHandlerTest -->
+      <class name="ExceptionKeepAlive">
+        <test-method signature="test()[pri:0, instance:ExceptionKeepAlive@23a5fd2]" started-at="2026-09-18T15:33:02 CST" name="test" finished-at="2026-09-18T15:33:02 CST" duration-ms="4" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method> <!-- test -->
+      </class> <!-- ExceptionKeepAlive -->
+    </test> <!-- Command line test -->
+  </suite> <!-- Command line suite -->
+</testng-results>

@@ -34,12 +34,15 @@ package robaho.net.httpserver.websockets;
  */
 
 import java.nio.charset.CharacterCodingException;
+import java.util.Arrays;
 
 public class CloseFrame extends WebSocketFrame {
 
     private static byte[] generatePayload(CloseCode code, String closeReason) throws CharacterCodingException {
         if (code != null) {
             byte[] reasonBytes = text2Binary(closeReason);
+            // a control frame payload is limited to 125 bytes (2 code + 123 reason)
+            reasonBytes = truncateToValidUtf8(reasonBytes, 123);
             byte[] payload = new byte[reasonBytes.length + 2];
             payload[0] = (byte) (code.getValue() >> 8 & 0xFF);
             payload[1] = (byte) (code.getValue() & 0xFF);
@@ -48,6 +51,23 @@ public class CloseFrame extends WebSocketFrame {
         } else {
             return new byte[0];
         }
+    }
+
+    /** truncate to at most limit bytes without cutting inside a multi byte UTF-8 sequence */
+    private static byte[] truncateToValidUtf8(byte[] bytes, int limit) {
+        if (bytes.length <= limit) {
+            return bytes;
+        }
+        byte[] truncated = Arrays.copyOf(bytes, limit);
+        // strip trailing continuation bytes (10xxxxxx) of a cut sequence
+        while (truncated.length > 0 && (truncated[truncated.length - 1] & 0xC0) == 0x80) {
+            truncated = Arrays.copyOf(truncated, truncated.length - 1);
+        }
+        // a leading byte (11xxxxxx) left without its continuation bytes is also invalid
+        if (truncated.length > 0 && (truncated[truncated.length - 1] & 0x80) != 0) {
+            truncated = Arrays.copyOf(truncated, truncated.length - 1);
+        }
+        return truncated;
     }
 
     private CloseCode _closeCode;

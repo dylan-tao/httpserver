@@ -39,6 +39,11 @@ public class WindowUpdateFrame extends BaseFrame {
         if(frame.windowSizeIncrement==0) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"window size increment == 0");
         }
+        if(frame.windowSizeIncrement < 0) {
+            // the increment is a 31-bit unsigned value: the reserved high bit
+            // set (seen as a negative int) must be rejected (RFC 7540 6.9)
+            throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR,"invalid window size increment");
+        }
         return frame;
 	}
 

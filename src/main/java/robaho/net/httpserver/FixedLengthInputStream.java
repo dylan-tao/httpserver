@@ -62,6 +62,12 @@ class FixedLengthInputStream extends LeftOverInputStream {
         return n;
     }
 
+    @Override
+    protected boolean atEof() {
+        // a fully known length that has been consumed is eof without a read
+        return remaining == 0;
+    }
+
     public int available() throws IOException {
         if (eof) {
             return 0;

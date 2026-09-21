@@ -11,7 +11,7 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
     /**
      * The internal buffer where data is stored. sized for virtual threads.
      */
-    protected byte[] buf = new byte[1024];
+    protected byte[] buf;
 
     /**
      * The number of valid bytes in the buffer. This value is always
@@ -22,7 +22,17 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
     protected int count;
 
     public NoSyncBufferedOutputStream(OutputStream out) {
+        // 16KB: large enough that a typical response is written with a
+        // single flush, small enough for many connections
+        this(out, 16384);
+    }
+
+    public NoSyncBufferedOutputStream(OutputStream out, int size) {
         super(out);
+        if (size <= 0) {
+            throw new IllegalArgumentException("buffer size " + size);
+        }
+        this.buf = new byte[size];
     }
 
     /** Flush the internal buffer */

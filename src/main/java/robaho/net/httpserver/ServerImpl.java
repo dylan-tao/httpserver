@@ -38,8 +38,6 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -83,6 +81,9 @@ class ServerImpl {
     private final ServerSocket socket;
 
     private final Set<HttpConnection> allConnections = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    /** O(1) live connection count: deriving it from allConnections.size()
+     * walks the whole backing map on every accept */
+    private final java.util.concurrent.atomic.AtomicInteger connectionCount = new java.util.concurrent.atomic.AtomicInteger();
     private volatile boolean finished = false;
     private boolean bound = false;
     private boolean started = false;
@@ -129,11 +130,10 @@ class ServerImpl {
 
         socket = new ServerSocket();
 
-        this.logger = System.getLogger("robaho.net.httpserver."+System.identityHashCode(this));
-        java.util.logging.Logger.getLogger(this.logger.getName()).setFilter((LogRecord record) -> {
-            record.setMessage("["+protocol+":"+socket.getLocalPort()+"] "+record.getMessage());
-            return true;
-        });
+        // a single shared logger: per-instance logger names (identityHashCode)
+        // accumulate in the LogManager forever when servers are created and
+        // stopped repeatedly
+        this.logger = System.getLogger("robaho.net.httpserver");
 
         https = protocol.equalsIgnoreCase("https");
         contexts = new ContextList();
@@ -145,7 +145,8 @@ class ServerImpl {
         dispatcher = new Dispatcher();
         timer = new Timer("connection-cleaner", true);
         timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
-        timer.schedule(ActivityTimer.createTask(),750,750);
+        // note: the shared ActivityTimer clock runs on its own daemon timer
+        // (see ActivityTimer) so it survives this server instance
         timer.schedule(Http2Exchange.createTask(),1000,1000);
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
@@ -159,9 +160,9 @@ class ServerImpl {
     private class StatsHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            var output = 
+            var output =
                 (
-                "Active Connections: "+allConnections.size()+"\n" +
+                "Active Connections: "+connectionCount.get()+"\n" +
                 stats.stats()+
                 http2Stats.stats()
                 ).getBytes();
@@ -201,6 +202,9 @@ class ServerImpl {
     public void start() {
         if (!bound || started || finished) {
             throw new IllegalStateException("server in wrong state");
+        }
+        if (https && httpsConfig == null) {
+            throw new IllegalStateException("no HttpsConfigurator set on HttpsServer");
         }
         if (executor == null) {
             executor = new DefaultExecutor();
@@ -268,12 +272,21 @@ class ServerImpl {
         }
         long latest = System.currentTimeMillis() + delay * 1000;
         while (System.currentTimeMillis() < latest) {
-            delay();
+            // sleep the remaining interval (in coarse steps) instead of a
+            // fixed yield+sleep that overshoots the deadline
+            long remaining = latest - System.currentTimeMillis();
+            try {
+                Thread.sleep(Math.min(remaining, 200));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
         }
         for (HttpConnection c : allConnections) {
             c.close();
         }
         allConnections.clear();
+        connectionCount.set(0);
         timer.cancel();
 
         if (dispatcherThread != null && dispatcherThread != Thread.currentThread()) {
@@ -324,14 +337,10 @@ class ServerImpl {
         logger.log(Level.DEBUG, "context removed: " + context.getPath());
     }
 
-    @SuppressWarnings("removal")
     public InetSocketAddress getAddress() {
-        return AccessController.doPrivileged(
-                new PrivilegedAction<InetSocketAddress>() {
-                    public InetSocketAddress run() {
-                return (InetSocketAddress) socket.getLocalSocketAddress();
-            }
-        });
+        // no AccessController.doPrivileged: the socket is owned by this
+        // instance and reading its local address needs no privileges
+        return (InetSocketAddress) socket.getLocalSocketAddress();
     }
 
     /**
@@ -371,7 +380,7 @@ class ServerImpl {
                 logger.log(Level.TRACE, "accepted connection: " + s.toString());
             }
             stats.connectionCount.incrementAndGet();
-            if (MAX_CONNECTIONS > 0 && allConnections.size() >= MAX_CONNECTIONS) {
+            if (MAX_CONNECTIONS > 0 && connectionCount.get() >= MAX_CONNECTIONS) {
                 // we've hit max limit of current open connections, so we go
                 // ahead and close this connection without processing it
                 try {
@@ -403,8 +412,14 @@ class ServerImpl {
                         return "http/1.1";
                     }
                 });
-                // the following forces the SSL handshake to complete in order to determine the negotiated protocol
-                var session = sslSocket.getSession();
+                // the following forces the SSL handshake to complete in order to determine the negotiated protocol.
+                // the handshake is bounded so a stalled client cannot hold the connection thread indefinitely
+                sslSocket.setSoTimeout((int) ServerConfig.getSslHandshakeTimeoutMillis());
+                try {
+                    sslSocket.getSession();
+                } finally {
+                    sslSocket.setSoTimeout(0);
+                }
                 if ("h2".equals(sslSocket.getApplicationProtocol())) {
                     logger.log(Level.DEBUG, () -> "http2 connection "+sslSocket.toString());
                     http2 = true;
@@ -417,6 +432,7 @@ class ServerImpl {
             HttpConnection c = new HttpConnection(s);
             try {
                 allConnections.add(c);
+                connectionCount.incrementAndGet();
 
                 if (http2) {
                     Http2Exchange t = new Http2Exchange(protocol, c);
@@ -440,7 +456,9 @@ class ServerImpl {
     private void closeConnection(HttpConnection conn) {
         logger.log(Level.TRACE, () -> "closing connection: " + conn.toString());
         conn.close();
-        allConnections.remove(conn);
+        if (allConnections.remove(conn)) {
+            connectionCount.decrementAndGet();
+        }
     }
 
     /* used to link to 2 or more Filter.Chains together */
@@ -491,8 +509,17 @@ class ServerImpl {
                     for(var exchange : allHttp2Exchanges) {
                         if(exchange.connection.lastActivityTime + 1000 < now) {
                             try {
+                                // the ping write refreshes lastActivityTime via the
+                                // activity timer stream; restore it afterwards so a
+                                // dead connection still appears idle to the cleaner
+                                var before = exchange.connection.lastActivityTime;
                                 exchange.http2.sendPing();
+                                exchange.connection.lastActivityTime = before;
                             } catch (IOException ex) {
+                                // ping failed - the connection is dead. closing the
+                                // socket unblocks the reader thread, whose finally
+                                // block performs the full cleanup
+                                exchange.connection.close();
                             }
                         }
                     }
@@ -557,6 +584,16 @@ class ServerImpl {
                 throw new IOException("Invalid HTTP/2 headers: missing :authority or :path");
             }
 
+            // the query string is part of :path in HTTP/2 (RFC 7540 8.1.2.3);
+            // there is no :query pseudo header, so split it off if present
+            if (query == null) {
+                int q = path.indexOf('?');
+                if (q >= 0) {
+                    query = path.substring(q + 1);
+                    path = path.substring(0, q);
+                }
+            }
+
             request.set("Host",authority);
 
             URI uri;
@@ -598,12 +635,11 @@ class ServerImpl {
             final Filter.Chain uc = new Filter.Chain(uf, new LinkHandler(sc));
 
             try {
-                if (https) {
-                    uc.doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
-                } else {
-                    uc.doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
-                }
+                uc.doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
             } catch (IOException e) {
+                // common with clients breaking connections; the stream is
+                // closed by the performRequest finally block
+                logger.log(Level.DEBUG, "io exception on stream " + stream, e);
             } catch (Exception e) {
                 logger.log(Level.WARNING, "Dispatcher Exception on "+stream, e);
                 stats.handleExceptionCount.incrementAndGet();
@@ -674,8 +710,15 @@ class ServerImpl {
 
             connection.inRequest = false;
 
-            Request req = new Request(rawin, rawout);
-            final String requestLine = req.requestLine();
+            Request req;
+            final String requestLine;
+            try {
+                req = new Request(rawin, rawout);
+                requestLine = req.requestLine();
+            } catch (IOException e) {
+                reject(Code.HTTP_BAD_REQUEST, "-", "Request line too long");
+                return;
+            }
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
                 logger.log(Level.DEBUG,"found http2 request on non-SSL assuming prior knowledge");
@@ -721,7 +764,13 @@ class ServerImpl {
             }
             start = space + 1;
             String version = requestLine.substring(start);
-            Headers headers = req.headers();
+            Headers headers;
+            try {
+                headers = req.headers();
+            } catch (IOException e) {
+                reject(Code.HTTP_BAD_REQUEST, requestLine, "Malformed header line");
+                return;
+            }
 
             /* check key for illegal characters, impossible since Headers class validates on mutation */
             // for (var k : headers.keySet()) {
@@ -755,6 +804,13 @@ class ServerImpl {
             } else {
                 headerValue = headers.getFirst("Content-length");
                 if (headerValue != null) {
+                    // RFC 7230 5.3: Content-Length is 1*DIGIT only - the JDK's
+                    // parseLong also accepts a leading '+' or '-'
+                    if (!isDigits(headerValue)) {
+                        reject(Code.HTTP_BAD_REQUEST,
+                                requestLine, "Illegal Content-length value");
+                        return;
+                    }
                     try {
                         clen = Long.parseLong(headerValue);
                     } catch (NumberFormatException e2) {
@@ -843,8 +899,13 @@ class ServerImpl {
             if (tx.close) {
                 closeConnection(connection);
             } else {
-                // logger.log(Level.INFO,"flushing response");
-                // tx.getResponseBody().flush();
+                LeftOverInputStream is = tx.getOriginalInputStream();
+                if (is == null || !is.isEOF()) {
+                    // the request body was not fully consumed (or the connection
+                    // was upgraded), so the connection cannot be safely reused
+                    logger.log(Level.DEBUG, "connection not at EOF after exchange, closing");
+                    closeConnection(connection);
+                }
                 tx = null;
             }
         }
@@ -906,14 +967,6 @@ class ServerImpl {
         logger.log(Level.DEBUG, () -> "reply "+ r + " [" + code + Code.msg(code) + "] (" + (text!=null ? text : "") + ")");
     }
 
-    void delay() {
-        Thread.yield();
-        try {
-            Thread.sleep(200);
-        } catch (InterruptedException e) {
-        }
-    }
-
     HttpServer getWrapper() {
         return wrapper;
     }
@@ -931,6 +984,7 @@ class ServerImpl {
             for (var c : allConnections) {
                 if (c.drainingAt != 0 && now- c.drainingAt >= IDLE_INTERVAL / 2) {
                     closeConnection(c);
+                    continue;
                 }
                 if (now- c.lastActivityTime >= IDLE_INTERVAL && !c.inRequest) {
                     logger.log(Level.DEBUG, "closing idle connection");
@@ -949,6 +1003,20 @@ class ServerImpl {
             // close idle connections if over limit
             // idle.stream().limit(Math.max(idle.size() - MAX_IDLE_CONNECTIONS, 0)).forEach(c -> closeConnection(c));
         }
+    }
+
+    /** returns true when s consists only of ASCII digits (1*DIGIT, RFC 7230) */
+    private static boolean isDigits(String s) {
+        if (s.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

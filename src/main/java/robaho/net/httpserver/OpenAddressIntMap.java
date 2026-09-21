@@ -54,7 +54,7 @@ public class OpenAddressIntMap<T> {
             if (entry.key==key) {
                 T oldValue = (T)entry.value;
                 entry.value = value;
-                if(value==null) {
+                if(value==null && oldValue!=null) {
                     size--;
                 }
                 return oldValue;
@@ -74,7 +74,7 @@ public class OpenAddressIntMap<T> {
         }
         entries[sentinel==-1 ? index : sentinel] = new Entry(key, value);
         size++;
-        if(sentinel!=-1) used++;
+        if(sentinel==-1) used++;
         return null;
     }
 
@@ -92,7 +92,9 @@ public class OpenAddressIntMap<T> {
         this.used = newMap.used;
     }
 
-    public T get(int key) {
+    /** synchronized to match put/resize: concurrent readers could otherwise
+     * observe a torn view of entries/mask while resize replaces them */
+    public synchronized T get(int key) {
         int index = key & mask;
         int start = index;
         Entry entry;
@@ -123,7 +125,7 @@ public class OpenAddressIntMap<T> {
         used=0;
     }
 
-    public Iterable<T> values() {
+    public synchronized Iterable<T> values() {
         List<T> result = new ArrayList<>();
         for (Entry entry : entries) {
             if (entry != null && entry.value != null) {
@@ -133,10 +135,11 @@ public class OpenAddressIntMap<T> {
         return Collections.unmodifiableList(result);
     }
 
-    public <T2> Set<Map.Entry<Integer, T2>> entrySet(Function<T, T2> valueMapper) {
+    public synchronized <T2> Set<Map.Entry<Integer, T2>> entrySet(Function<T, T2> valueMapper) {
         Set<Map.Entry<Integer, T2>> result = new HashSet<>();
         for (Entry entry : entries) {
-            if (entry != null) {
+            // Map.entry forbids null values, so tombstones must be skipped
+            if (entry != null && entry.value != null) {
                 result.add(Map.entry(entry.key, valueMapper != null ? valueMapper.apply((T)entry.value) : (T2) entry.value));
             }
         }

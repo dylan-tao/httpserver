@@ -44,8 +44,8 @@ import java.io.EOFException;
 abstract class LeftOverInputStream extends FilterInputStream {
     final ExchangeImpl t;
     final ServerImpl server;
-    protected boolean closed = false;
-    protected boolean eof = false;
+    protected volatile boolean closed = false;
+    protected volatile boolean eof = false;
     byte[] one = new byte[1];
 
     public LeftOverInputStream(ExchangeImpl t, InputStream src) {
@@ -54,7 +54,9 @@ abstract class LeftOverInputStream extends FilterInputStream {
         this.server = t.getServerImpl();
     }
 
-    public void close() throws IOException {
+    /** synchronized to match read(): a concurrent close (e.g. from a timeout
+     * task) must not interleave with a read and corrupt stream state */
+    public synchronized void close() throws IOException {
         if (closed) {
             return;
         }
@@ -68,7 +70,19 @@ abstract class LeftOverInputStream extends FilterInputStream {
         return closed;
     }
 
+    /** returns true if all expected bytes have been read (or drained) */
+    public boolean isEOF() {
+        return eof;
+    }
+
     protected abstract int readImpl(byte[] b, int off, int len) throws IOException;
+
+    /** returns true if the stream is already at eof without reading. the
+     * default reflects the last readImpl result; subclasses with a known
+     * length can detect eof without any read at all. */
+    protected boolean atEof() {
+        return eof;
+    }
 
     public synchronized int read() throws IOException {
         if (closed) {
@@ -95,7 +109,11 @@ abstract class LeftOverInputStream extends FilterInputStream {
      * read and discard up to l bytes or "eof" occurs,
      * (whichever is first). Then return true if the stream
      * is at eof (ie. all bytes were read) or false if not
-     * (still bytes to be read)
+     * (still bytes to be read).
+     *
+     * Only data that has already arrived is drained (checked via available()):
+     * a blocking read here would stall the response forever when the client
+     * stops sending the rest of its body while waiting for the response.
      */
     public boolean drain(long l) throws IOException {
         try {
@@ -103,8 +121,21 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 if (server.isFinishing()) {
                     break;
                 }
+                if (atEof()) {
+                    // the stream is at eof without needing to read (e.g. a
+                    // zero length request body): readImpl would never be
+                    // called to set the flag, so check it here
+                    eof = true;
+                    return true;
+                }
+                int available = in.available();
+                if (available <= 0) {
+                    // nothing more has arrived: stop rather than block
+                    break;
+                }
                 t.connection.drainingAt = ActivityTimer.now();
-                long len = readImpl(drainBuffer, 0, drainBuffer.length);
+                int len = (int) Math.min(Math.min(drainBuffer.length, available), l);
+                len = readImpl(drainBuffer, 0, len);
                 if (len == -1) {
                     eof = true;
                     return true;

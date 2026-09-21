@@ -1,6 +1,5 @@
 package robaho.net.httpserver.extras;
 
-import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -18,6 +17,7 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import robaho.net.httpserver.NoSyncBufferedInputStream;
 import robaho.net.httpserver.NoSyncBufferedOutputStream;
 
 /**
@@ -25,6 +25,9 @@ import robaho.net.httpserver.NoSyncBufferedOutputStream;
  */
 public class MultipartFormParser {
     static final Logger logger = Logger.getLogger("robaho.net.httpserver.MultipartFormParser");
+
+    // maximum size in bytes of a non-file form field - protection against memory exhaustion
+    private static final int MAX_FIELD_SIZE = Integer.getInteger("robaho.net.httpserver.max_multipart_field_bytes", 1024 * 1024); // 0 == no limit
 
     /**
      * a multipart part.
@@ -58,9 +61,11 @@ public class MultipartFormParser {
             throw new IllegalStateException("content type does not contain boundary");
         }
 
-        String boundary = content_type.split("boundary=")[1];
+        String boundary = parseBoundary(content_type);
 
-        is = new BufferedInputStream(is);
+        // an unsynchronized buffered stream: the parser reads single bytes, and
+        // BufferedInputStream.read() is synchronized per byte
+        is = new NoSyncBufferedInputStream(is);
 
         Map<String, List<Part>> results = new HashMap<>();
 
@@ -81,7 +86,7 @@ public class MultipartFormParser {
             }
             if (c == boundaryCheck[matchCount]) {
                 matchCount++;
-                if (matchCount == boundaryCheck.length - 2) {
+                if (matchCount == boundaryCheck.length) {
                     break;
                 }
             } else {
@@ -98,10 +103,9 @@ public class MultipartFormParser {
             return results;
         }
 
-        headers.clear();
-
         while (true) {
             // read part headers until blank line
+            headers.clear();
 
             while (true) {
                 s = readLine(charset, is);
@@ -120,11 +124,11 @@ public class MultipartFormParser {
             Runnable addToResults;
             OutputStream os;
             if (meta.filename == null) {
-                var bos = new ByteArrayOutputStream();
+                var bos = new BoundedOutputStream(MAX_FIELD_SIZE);
                 os = bos;
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, null, bos.toString(charset), null));
             } else {
-                File file = Path.of(storage.toString(), meta.filename).toFile();
+                File file = Path.of(storage.toString(), sanitizeFilename(meta.filename)).toFile();
                 file.deleteOnExit();
                 os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, meta.filename, null, file));
@@ -168,12 +172,74 @@ public class MultipartFormParser {
 
     private static final Pattern optionPattern = Pattern.compile("\\s(?<key>.*)=\"(?<value>.*)\"");
 
+    /**
+     * extract the boundary parameter from a Content-Type header value,
+     * handling quoted values and parameters following it
+     * (RFC 2046 section 5.1.1)
+     */
+    private static String parseBoundary(String contentType) {
+        int idx = contentType.indexOf("boundary=");
+        if (idx < 0) {
+            throw new IllegalStateException("content type does not contain boundary");
+        }
+        int start = idx + "boundary=".length();
+        boolean quoted = start < contentType.length() && contentType.charAt(start) == '"';
+        if (quoted) {
+            start++;
+        }
+        int end = start;
+        while (end < contentType.length()) {
+            char c = contentType.charAt(end);
+            if (quoted) {
+                if (c == '"') {
+                    break;
+                }
+            } else if (c == ';' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+                break;
+            }
+            end++;
+        }
+        String boundary = contentType.substring(start, end);
+        if (boundary.isEmpty()) {
+            throw new IllegalStateException("empty boundary parameter in content type");
+        }
+        return boundary;
+    }
+
+    /**
+     * sanitize a client provided filename: the stored file uses only the final
+     * path component, so a malicious Content-Disposition cannot write outside
+     * the storage directory. The original filename is still reported in
+     * {@link Part#filename}.
+     */
+    private static String sanitizeFilename(String filename) {
+        if (filename == null) {
+            throw new IllegalArgumentException("null filename in content-disposition");
+        }
+        // normalize separators so both unix and windows style paths are handled
+        String name = filename.replace('\\', '/');
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        if (name.isEmpty() || name.equals(".") || name.equals("..")) {
+            throw new IllegalArgumentException("illegal filename in content-disposition: " + filename);
+        }
+        return name;
+    }
+
     private static PartMetadata parseHeaders(List<String> headers) {
         String name = null;
         String filename = null;
         String contentType = null;
         for (var header : headers) {
             String[] parts = header.split(":", 2);
+            if (parts.length < 2) {
+                // malformed part header line without a colon: skip it rather
+                // than failing the whole upload with an ArrayIndexOutOfBoundsException
+                logger.finer(() -> "ignoring malformed multipart part header '%s'".formatted(header));
+                continue;
+            }
             if ("content-disposition".equalsIgnoreCase(parts[0])) {
                 String[] options = parts[1].split(";");
                 for (var option : options) {
@@ -195,6 +261,40 @@ public class MultipartFormParser {
             }
         }
         return new PartMetadata(contentType, name, filename);
+    }
+
+    /** an OutputStream that fails once more than limit bytes have been written */
+    private static final class BoundedOutputStream extends OutputStream {
+        private final ByteArrayOutputStream delegate = new ByteArrayOutputStream();
+        private final long limit;
+        private long count;
+
+        BoundedOutputStream(long limit) {
+            this.limit = limit;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            check(1);
+            delegate.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            check(len);
+            delegate.write(b, off, len);
+        }
+
+        private void check(int n) throws IOException {
+            count += n;
+            if (limit != 0 && count > limit) {
+                throw new IOException("non-file form field exceeds the limit of " + limit + " bytes");
+            }
+        }
+
+        String toString(Charset charset) {
+            return delegate.toString(charset);
+        }
     }
 
     private static String readLine(Charset charset, InputStream is) throws IOException {

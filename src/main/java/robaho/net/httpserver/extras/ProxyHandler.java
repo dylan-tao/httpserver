@@ -34,7 +34,14 @@ import com.sun.net.httpserver.HttpHandler;
 public class ProxyHandler implements HttpHandler {
     public record HostPort(String server,int port,String scheme){}
 
-    private final ConcurrentMap<URI,HostPort> proxies = new ConcurrentHashMap<>();
+    /** the proxy selected for the request currently being sent on this thread.
+     * falls back to the (bounded) proxies map when the client invokes the
+     * selector on one of its own executor threads. */
+    private static final ThreadLocal<HostPort> CURRENT_PROXY = new ThreadLocal<>();
+
+    /** proxy selections keyed by URI authority - bounded by the set of distinct
+     * upstream targets rather than by full request URIs */
+    private final ConcurrentMap<String,HostPort> proxies = new ConcurrentHashMap<>();
     private final HttpClient proxyClient;
     private final Optional<HostPort> defaultProxy;
 
@@ -51,7 +58,15 @@ public class ProxyHandler implements HttpHandler {
         proxyClient = HttpClient.newBuilder().proxy(new ProxySelector(){
             @Override
             public List<Proxy> select(URI uri) {
-                var hp = proxies.get(uri);
+                var hp = CURRENT_PROXY.get();
+                if (hp == null) {
+                    hp = proxies.get(authorityOf(uri));
+                }
+                if (hp == null) {
+                    // no proxy is known for this target - connect directly
+                    // rather than failing with an NPE
+                    return List.of(Proxy.NO_PROXY);
+                }
                 return List.of(new Proxy(Proxy.Type.HTTP,new InetSocketAddress(hp.server,hp.port)));
             }
 
@@ -62,36 +77,64 @@ public class ProxyHandler implements HttpHandler {
         }).build();
     }
 
+    private static String authorityOf(URI uri) {
+        String authority = uri.getAuthority();
+        return authority != null ? authority : uri.toString();
+    }
+
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         if(exchange.getRequestMethod().equals("CONNECT")) {
             if(!authorizeConnect(exchange)) return;
             try (Socket s = SocketFactory.getDefault().createSocket()) {
                 var uri = exchange.getRequestURI();
-                var addr = new InetSocketAddress(uri.getScheme(),Integer.parseInt(uri.getSchemeSpecificPart()));
+                int port;
                 try {
-                    s.connect(addr);
+                    port = Integer.parseInt(uri.getSchemeSpecificPart());
+                } catch (NumberFormatException e) {
+                    logger.warning("invalid CONNECT target port: " + uri);
+                    exchange.sendResponseHeaders(400,-1);
+                    return;
+                }
+                var addr = new InetSocketAddress(uri.getScheme(),port);
+                try {
+                    // bound the connect attempt so a stalled upstream cannot
+                    // hold the tunnel thread indefinitely
+                    s.connect(addr, CONNECT_TIMEOUT_MILLIS);
                 } catch(Exception e) {
-                    logger.warning("failed to connect to "+addr);
-                    exchange.sendResponseHeaders(500,-1);
+                    logger.warning("failed to connect to "+addr+": "+e);
+                    exchange.sendResponseHeaders(502,-1);
                     return;
                 }
                 logger.fine("connected to "+s.getRemoteSocketAddress());
                 exchange.sendResponseHeaders(200,0);
 
-                try {
-                    exchange.getHttpContext().getServer().getExecutor().execute(() -> {
-                        try {
-                            transfer(s.getInputStream(),exchange.getResponseBody());
-                        } catch (IOException ex) {
-                            ex.printStackTrace();
-                        }
-                    });
-                    transfer(exchange.getRequestBody(),s.getOutputStream());
-                } finally {
-                    logger.fine("proxy connection to "+s.getRemoteSocketAddress()+" ended");
-                    return;
+                var executor = exchange.getHttpContext().getServer().getExecutor();
+                if (executor == null) {
+                    // no executor configured on the server: fall back rather
+                    // than failing with an NPE
+                    executor = java.util.concurrent.ForkJoinPool.commonPool();
                 }
+                // when either direction reaches EOF the remote socket is closed,
+                // which unblocks the other direction's transfer
+                executor.execute(() -> {
+                    try {
+                        transfer(s.getInputStream(),exchange.getResponseBody());
+                    } catch (IOException ex) {
+                        logger.fine("tunnel upstream->client ended: "+ex);
+                    } finally {
+                        closeQuietly(s);
+                    }
+                });
+                try {
+                    transfer(exchange.getRequestBody(),s.getOutputStream());
+                } catch (IOException ex) {
+                    logger.fine("tunnel client->upstream ended: "+ex);
+                } finally {
+                    // closing the remote socket unblocks the upstream->client transfer
+                    closeQuietly(s);
+                }
+                logger.fine("proxy connection to "+s.getRemoteSocketAddress()+" ended");
             }
         }
         var proxy = proxyTo(exchange).orElseThrow(() -> new IOException("proxy not configured for "+exchange.getRequestURI()));
@@ -103,30 +146,54 @@ public class ProxyHandler implements HttpHandler {
                 throw new IOException("invalid proxy uri ",ex);
             }
         }
-        proxies.put(uri,proxy);
+        proxies.put(authorityOf(uri),proxy);
         try {
+            CURRENT_PROXY.set(proxy);
             var response = proxyClient.send(HttpRequest.newBuilder(uri).headers(headers(exchange.getRequestHeaders())).method(exchange.getRequestMethod(),HttpRequest.BodyPublishers.ofInputStream(() -> exchange.getRequestBody())).build(),HttpResponse.BodyHandlers.ofInputStream());
             exchange.getResponseHeaders().putAll(response.headers().map());
+            // strip hop-by-hop and framing headers: this server performs its own
+            // chunked framing, so forwarding them would emit both
+            // Content-length and Transfer-encoding (RFC 7230 6.1)
+            for (String h : HOP_BY_HOP_HEADERS) {
+                exchange.getResponseHeaders().remove(h);
+            }
             exchange.sendResponseHeaders(response.statusCode(),0);
             try (var os = exchange.getResponseBody ()) {
                 transfer(response.body(),os);
             }
         } catch (InterruptedException ex) {
             throw new IOException("unable to proxy request to "+exchange.getRequestURI(),ex);
+        } finally {
+            CURRENT_PROXY.remove();
         }
     }
 
     /**
      * override to check authorization headers. if returning false,
      * the implementation must call exchange.sendResponseHeaders() with the appropriate code.
-     * 
+     *
      * @return true if the CONNECT should proceed, else false
      */
     protected boolean authorizeConnect(HttpExchange exchange) {
-        return true;
+        // deny by default: an unauthenticated CONNECT is an open relay
+        try {
+            exchange.sendResponseHeaders(403,-1);
+        } catch (IOException e) {
+            logger.warning("failed to send 403 for unauthorized CONNECT: "+e);
+        }
+        return false;
     }
 
     private static int DEFAULT_BUFFER_SIZE = 16384;
+    private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
+
+    private static void closeQuietly(Socket s) {
+        try {
+            s.close();
+        } catch (IOException ignored) {
+        }
+    }
+
     private static long transfer(InputStream in, OutputStream out) throws IOException {
         Objects.requireNonNull(out, "out");
         long transferred = 0;
@@ -146,7 +213,14 @@ public class ProxyHandler implements HttpHandler {
         return transferred;
     }
 
-    private static final Set<String> restrictedHeaders = Set.of("CONNECTION","HOST","UPGRADE","CONTENT-LENGTH");
+    /** hop-by-hop headers that must not be forwarded in either direction (RFC 7230 6.1) */
+    private static final Set<String> HOP_BY_HOP_HEADERS = Set.of(
+            "CONNECTION", "KEEP-ALIVE", "PROXY-AUTHENTICATE", "PROXY-AUTHORIZATION",
+            "TE", "TRAILER", "TRANSFER-ENCODING", "UPGRADE");
+
+    private static final Set<String> restrictedHeaders = Set.of(
+            "CONNECTION","HOST","UPGRADE","CONTENT-LENGTH","TRANSFER-ENCODING",
+            "TE","TRAILER","KEEP-ALIVE","PROXY-AUTHORIZATION");
 
     private static String[] headers(Headers headers) {
         List<String> copy = new ArrayList<>();

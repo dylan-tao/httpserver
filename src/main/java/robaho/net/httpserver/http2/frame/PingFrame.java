@@ -29,6 +29,9 @@ public class PingFrame extends BaseFrame {
     @Override
     public void writeTo(OutputStream os) throws IOException {
         getHeader().writeTo(os);
+        // a PING frame declares an 8 byte payload: omitting it would corrupt
+        // the frame stream (the header claims 8 bytes that never follow)
+        os.write(body);
     }
 
     public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {

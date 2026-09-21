@@ -3,6 +3,7 @@ package robaho.net.httpserver.http2.hpack;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 
@@ -15,6 +16,7 @@ import java.util.Map;
 import com.sun.net.httpserver.Headers;
 
 import robaho.net.httpserver.OpenAddressMap;
+import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameHeader;
 import robaho.net.httpserver.http2.Utils;
@@ -23,7 +25,12 @@ import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameType;
 
 public class HPackContext {
-    private final List<HTTP2HeaderField> dynamicTable = new ArrayList(1024);
+    /** deque: addFirst (newest, lowest index) and evict-pollLast (oldest)
+     * are both O(1), unlike an ArrayList where add(0,..) shifts the table */
+    private final ArrayDeque<HTTP2HeaderField> dynamicTable = new ArrayDeque<>(64);
+    /** current dynamic table size in bytes (RFC 7541 section 4.1) */
+    private int dynamicTableSize;
+    private int maxDynamicTableSize = 4096;
 
     public HPackContext() {
     }
@@ -32,12 +39,34 @@ public class HPackContext {
         if (index > 0 && index <= 61) {
             return RFC7541Parser.getHeaderField(index);
         } else {
-            return dynamicTable.get(index - 62);
+            // walk the deque: index 62 is the most recently added entry
+            int i = index - 62;
+            for (var field : dynamicTable) {
+                if (i-- == 0) {
+                    return field;
+                }
+            }
+            return null;
         }
     }
 
     public void addHeaderField(HTTP2HeaderField field) {
-        dynamicTable.add(0,field);
+        dynamicTable.addFirst(field);
+        dynamicTableSize += fieldSize(field);
+        evict();
+    }
+
+    /** the size of a field entry, in bytes, as defined by RFC 7541 section 4.1 */
+    private static int fieldSize(HTTP2HeaderField field) {
+        return field.name.length() + (field.value == null ? 0 : field.value.length()) + 32;
+    }
+
+    /** evict entries from the end of the table until it fits the configured maximum */
+    private void evict() {
+        while (dynamicTableSize > maxDynamicTableSize && !dynamicTable.isEmpty()) {
+            var removed = dynamicTable.pollLast();
+            dynamicTableSize -= fieldSize(removed);
+        }
     }
 
     public List<HTTP2HeaderField> decodeFieldSegments(byte[] buffer) throws HTTP2Exception {
@@ -103,7 +132,7 @@ public class HPackContext {
         index = decodeFieldName(buffer, index, headerIndex, headerField);
         index = decodeFieldValue(buffer, index, headerField);
 
-        dynamicTable.add(0,headerField);
+        addHeaderField(headerField);
 
         return index;
     }
@@ -125,9 +154,8 @@ public class HPackContext {
             throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "Dynamic table size update too large: " + size);
         }
 
-        while (dynamicTable.size() > size) {
-            dynamicTable.removeLast();
-        }
+        maxDynamicTableSize = size;
+        evict();
 
         return index;
     }
@@ -135,8 +163,12 @@ public class HPackContext {
     private int decodeFieldName(byte[] buffer, int index, int headerIndex, HTTP2HeaderField headerField) throws HTTP2Exception {
         if (headerIndex == 0) {
             boolean huffmanCode = (buffer[index] & 0x80) != 0;
-            int length = buffer[index] & 0x7F;
-            index++;
+            var pair = decodeUnsignedInteger(buffer, index, 7);
+            index = pair.index;
+            int length = pair.value;
+            if (index + length > buffer.length) {
+                throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "header field name length exceeds header block");
+            }
             byte[] valueBytes = Arrays.copyOfRange(buffer, index, index + length);
             index += length;
             String value;
@@ -165,6 +197,11 @@ public class HPackContext {
         var pair = decodeUnsignedInteger(buffer, index, 7);
         index = pair.index;
         int length = pair.value;
+        // a length beyond the end of the block would make copyOfRange allocate
+        // an attacker controlled (huge) array instead of failing
+        if (index + length > buffer.length) {
+            throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "header field value length exceeds header block");
+        }
 
         byte[] valueBytes = Arrays.copyOfRange(buffer, index, index + length);
         String value;
@@ -215,7 +252,11 @@ public class HPackContext {
         ByteArrayOutputStream fields = new ByteArrayOutputStream(256); // average http headers length is 800 bytes
 
         // ':status' is required and the only allowed outbound pseudo headers
-        fields.write(encodeHeader(":status", headers.getFirst(":status")));
+        String status = headers.getFirst(":status");
+        if (status == null) {
+            throw new IOException("response is missing the required :status pseudo header");
+        }
+        fields.write(encodeHeader(":status", status));
 
         StringBuilder sb = new StringBuilder(32);
 
@@ -239,8 +280,35 @@ public class HPackContext {
             }
         });
 
-        FrameHeader.writeTo(outputStream, fields.size(),FrameType.HEADERS,closeStream ? END_OF_HEADERS_AND_STREAM : END_OF_HEADERS, streamId);
-        fields.writeTo(outputStream);
+        writeHeaderBlock(outputStream, fields.toByteArray(), streamId, closeStream);
+    }
+
+    /**
+     * write an encoded header block, splitting it into HEADERS + CONTINUATION
+     * frames when it exceeds our advertised SETTINGS_MAX_FRAME_SIZE
+     * (RFC 7540 sections 4.3 / 6.5.2)
+     */
+    private static void writeHeaderBlock(OutputStream outputStream, byte[] block, int streamId, boolean endStream) throws IOException {
+        int maxFrameSize = ServerConfig.http2MaxFrameSize();
+        int off = 0;
+        while (true) {
+            int len = Math.min(block.length - off, maxFrameSize);
+            boolean last = off + len == block.length;
+            if (off == 0) {
+                FlagSet flags = last
+                        ? (endStream ? END_OF_HEADERS_AND_STREAM : END_OF_HEADERS)
+                        : (endStream ? FlagSet.of(FrameFlag.END_STREAM) : FrameFlag.NONE);
+                FrameHeader.writeTo(outputStream, len, FrameType.HEADERS, flags, streamId);
+            } else {
+                FlagSet flags = last ? END_OF_HEADERS : FrameFlag.NONE;
+                FrameHeader.writeTo(outputStream, len, FrameType.CONTINUATION, flags, streamId);
+            }
+            outputStream.write(block, off, len);
+            off += len;
+            if (last) {
+                return;
+            }
+        }
     }
 
     public static void writeGenericHeaderFrame(Headers headers, OutputStream outputStream, int streamId) throws IOException {
@@ -329,15 +397,24 @@ public class HPackContext {
 
     private static byte[] encodeString(byte[] value) {
         // TODO: implement huffman encoding
+        // a string literal is a 7-bit prefix integer length (with the huffman
+        // flag bit clear) followed by the raw bytes (RFC 7541 section 5.2)
         byte[] buffer = new byte[0];
-        if (value.length < 128) {
+        int length = value.length;
+        if (length < 127) {
             buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) value.length;
+            buffer[buffer.length - 1] = (byte) length;
         } else {
             buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) (value.length | 0x80);
+            buffer[buffer.length - 1] = (byte) 127;
+            int remainder = length - 127;
+            while (remainder >= 128) {
+                buffer = Arrays.copyOf(buffer, buffer.length + 1);
+                buffer[buffer.length - 1] = (byte) ((remainder & 0x7F) | 0x80);
+                remainder >>>= 7;
+            }
             buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) (value.length >> 7);
+            buffer[buffer.length - 1] = (byte) remainder;
         }
         buffer = Arrays.copyOf(buffer, buffer.length + value.length);
         System.arraycopy(value, 0, buffer, buffer.length - value.length, value.length);
@@ -375,7 +452,7 @@ class RFC7541Parser {
         "304",indexedField(11),
         "400",indexedField(12),
         "404",indexedField(13),
-        "500",indexedField(13));
+        "500",indexedField(14));
 
     private static byte[] indexedField(int index) {
         byte[] buffer = new byte[1];
@@ -449,7 +526,13 @@ class RFC7541Parser {
 
     private static final OpenAddressMap<String, Integer> STATIC_HEADER_NAME_TO_INDEX = new OpenAddressMap<>(256);
     static {
-        Arrays.stream(STATIC_HEADER_TABLE).filter(v -> v!=null).forEach(v -> STATIC_HEADER_NAME_TO_INDEX.put(v.name, Arrays.asList(STATIC_HEADER_TABLE).indexOf(v)));
+        // index by loop position: indexOf() inside the stream made this O(n^2)
+        for (int i = 1; i < STATIC_HEADER_TABLE.length; i++) {
+            var field = STATIC_HEADER_TABLE[i];
+            if (field != null) {
+                STATIC_HEADER_NAME_TO_INDEX.put(field.name, i);
+            }
+        }
     }
 
     public static Integer getIndex(String name) {

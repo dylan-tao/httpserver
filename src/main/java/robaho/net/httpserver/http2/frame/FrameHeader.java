@@ -109,17 +109,23 @@ public class FrameHeader {
     }
 	
 	public void writeTo(OutputStream os) throws IOException {
-        Utils.writeBinary(os,this.length,3);
-        os.write(this.getType().value & 0xFF);
-        os.write(flags.value());
-        Utils.writeBinary(os,this.streamIdentifier);
+        // build the 9 byte header in one array and write it once: writing it
+        // byte by byte crosses two stream layers per byte
+        byte[] header = new byte[9];
+        Utils.convertToBinary(header, 0, this.length, 3);
+        header[3] = (byte) (this.getType().value & 0xFF);
+        header[4] = (byte) flags.value();
+        Utils.convertToBinary(header, 5, this.streamIdentifier, 4);
+        os.write(header);
     }
 
     public static void writeTo(OutputStream os, int length,FrameType frameType,FlagSet flags,int streamId) throws IOException {
-        Utils.writeBinary(os,length,3);
-        os.write(frameType.value & 0xFF);
-        os.write(flags.value());
-        Utils.writeBinary(os,streamId);
+        byte[] header = new byte[9];
+        Utils.convertToBinary(header, 0, length, 3);
+        header[3] = (byte) (frameType.value & 0xFF);
+        header[4] = (byte) flags.value();
+        Utils.convertToBinary(header, 5, streamId, 4);
+        os.write(header);
     }
 
     public static byte[] encode(int length,FrameType frameType,FlagSet flags,int streamId) {
