@@ -203,6 +203,9 @@ public class HTTP2Connection {
         boolean inHeaders = false;
         int openStreamId = 0;
         int headerBlockBytes = 0;
+        // END_STREAM flag of a trailer HEADERS that is still being completed by
+        // CONTINUATION frames
+        boolean pendingTrailerEndStream = false;
 
         List<byte[]> headerBlockFragments = new ArrayList();
 
@@ -278,9 +281,10 @@ public class HTTP2Connection {
                     if (inHeaders) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received on open stream");
                     }
-                    if (streamId < lastSeenStreamId) {
-                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received out of order");
-                    }
+                    // check for an existing stream FIRST: a trailer HEADERS on an
+                    // interleaved (older, still open) stream is legal and must not
+                    // be rejected by the out-of-order guard below, which would
+                    // kill every concurrent stream with a GOAWAY
                     var stream = http2Streams.get(streamId);
                     if (stream != null) {
                         if (stream.isOpen() && !stream.isHalfClosed()) {
@@ -293,6 +297,10 @@ public class HTTP2Connection {
                             }
                             headerBlockFragments.add(trailerFrame.getHeaderBlock());
                             if (!trailerFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                                // multi frame trailer: remember the END_STREAM flag of the
+                                // HEADERS frame - it is consumed when the last CONTINUATION
+                                // completes the block
+                                pendingTrailerEndStream = trailerFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM);
                                 inHeaders = true;
                                 openStreamId = streamId;
                                 continue;
@@ -306,6 +314,10 @@ public class HTTP2Connection {
                         // (RFC 7540 5.1): reset the stream, not the connection
                         sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
                         continue;
+                    }
+                    // from here on this must be a NEW stream
+                    if (streamId < lastSeenStreamId) {
+                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received out of order");
                     }
                     HeadersFrame headersFrame = (HeadersFrame) frame;
                     headerBlockBytes += headersFrame.getHeaderBlock().length;
@@ -335,6 +347,17 @@ public class HTTP2Connection {
                     }
                     headerBlockFragments.add(continuationFrame.getHeaderBlock());
                     if (!continuationFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                        continue;
+                    }
+                    // header block complete: if the stream already exists this block
+                    // is a multi frame trailer (RFC 7540 8.1.2.3) - discard it instead
+                    // of feeding the CONTINUATION into performRequest (which would
+                    // treat it as a duplicate request and kill the connection)
+                    if (http2Streams.get(streamId) != null) {
+                        headerBlockFragments.clear();
+                        headerBlockBytes = 0;
+                        inHeaders = false;
+                        http2Streams.get(streamId).receiveTrailer(pendingTrailerEndStream);
                         continue;
                     }
                     break;

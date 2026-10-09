@@ -130,6 +130,11 @@ class Request {
             } else {
                 if (c == CR) {
                     gotCR = true;
+                } else if (c == LF) {
+                    // a bare LF terminates the line too (RFC 9112 2.2), matching
+                    // the header parser's behaviour - without this, LF-only
+                    // clients never get past the request line
+                    return true;
                 } else {
                     lineBuf.append((char)c);
                 }

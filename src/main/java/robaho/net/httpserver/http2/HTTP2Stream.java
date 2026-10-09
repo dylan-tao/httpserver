@@ -418,18 +418,25 @@ public class HTTP2Stream {
             }
         }
         @Override
-        public void close() throws IOException {
+        public synchronized void close() throws IOException {
+            // synchronized: the handler thread and the connection reader (on
+            // RST_STREAM) can race here, and the non-volatile 'closed' check
+            // alone let both through, double-decrementing requestsInProgress
             if(closed) return;
             try {
                 if(connection.isClosed()) {
                     if(headersSent.compareAndSet(false,true)) {
                         logger.log(Level.WARNING,"stream connection is closed and headers not sent on stream "+streamId);
                     }
+                    // still release the in-progress count: a leaked increment
+                    // would stop the final flush from ever firing
+                    connection.requestsInProgress.decrementAndGet();
                     return;
                 }
                 if(rstReceived) {
                     // the peer reset this stream: no further frames may be
                     // sent for it (RFC 7540 5.1, closed state)
+                    connection.requestsInProgress.decrementAndGet();
                     return;
                 }
                 writeResponseHeaders(false);

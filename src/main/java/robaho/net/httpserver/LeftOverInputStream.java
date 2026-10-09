@@ -105,17 +105,25 @@ abstract class LeftOverInputStream extends FilterInputStream {
 
     // ok to concurrently share this since the data isn't used
     private static final byte[] drainBuffer = new byte[2048];
+    /** how long drain() waits for straggling body bytes before giving up on
+     * keep-alive: a slow client still sending its body keeps the connection;
+     * a client that will never send more releases the exchange within a second */
+    private static final long MAX_DRAIN_WAIT_MILLIS = 1000;
+
     /**
      * read and discard up to l bytes or "eof" occurs,
      * (whichever is first). Then return true if the stream
      * is at eof (ie. all bytes were read) or false if not
      * (still bytes to be read).
      *
-     * Only data that has already arrived is drained (checked via available()):
-     * a blocking read here would stall the response forever when the client
-     * stops sending the rest of its body while waiting for the response.
+     * Data that has not arrived yet is waited for, bounded by
+     * MAX_DRAIN_WAIT_MILLIS: a blocking read with no bound would stall the
+     * response forever when the client stops sending its body, while giving
+     * up immediately would drop keep-alive for slow clients that are still
+     * sending a small body.
      */
     public boolean drain(long l) throws IOException {
+        final long deadline = System.currentTimeMillis() + MAX_DRAIN_WAIT_MILLIS;
         try {
             while (l > 0) {
                 if (server.isFinishing()) {
@@ -130,8 +138,19 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 }
                 int available = in.available();
                 if (available <= 0) {
-                    // nothing more has arrived: stop rather than block
-                    break;
+                    // nothing has arrived yet: wait briefly in case the rest of
+                    // the body is still in flight, then give up on this connection
+                    if (System.currentTimeMillis() >= deadline) {
+                        break;
+                    }
+                    t.connection.drainingAt = ActivityTimer.now();
+                    try {
+                        Thread.sleep(10);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    continue;
                 }
                 t.connection.drainingAt = ActivityTimer.now();
                 int len = (int) Math.min(Math.min(drainBuffer.length, available), l);

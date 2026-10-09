@@ -11,18 +11,23 @@
 > 注意 `src/test/java/.../http2/Http2Test.java` 整类 `@Test(enabled=false)` 被禁用，
 > HTTP/2 模块目前**零生效测试覆盖**，与下面 P1 区大量 h2 缺陷直接相关。
 >
-> **修复进度**（2026-09-17~18）：P0、P1、P2 **全部完成**（40 项），P3 完成 11/12
->（42 回退），P4 完成 13/14（仅 gradle wrapper 受环境限制）——累计 64 项：
+> **修复进度**（2026-09-17~21）：P0、P1、P2 **全部完成**（40 项），P3 完成 11 项
+>（42 经微基准评估后决定不做），P4 完成 13/14（仅 gradle wrapper 受环境限制）——
+> 累计 64 项，另修复复查发现的 6 处缺陷（3 处人工复核 + 3 处 code-review sweep）：
 > 第 1-3 批：P0-1、P0-2、P1-9、P1-10、P1-11、P1-21、P1-22、P1-23；
 > 第 4 批：P1-13、P1-14；第 5 批：P0-3~P0-8、P1-15、P1-17、P1-24；
 > 第 6 批：P3-41、P3-43、P3-45（P3-42 实施后回退，原因见该条目）；
 > 第 7 批：P1-25、P1-26、P1-27、P1-28、P1-29、P1-30；
 > 第 8 批：P1-12、P1-16、P1-18、P1-19、P1-20；
-> 第 9 批：P2-31~P2-40 全部十项。
-> 验证方式：JDK 21 编译 0 错误；TestNG 套件 104/104 通过；
-> ReadFix / H2FixTest / H2ComplianceTest / MultipartFixTest / HuffmanTest /
-> FixBatch456 / Batch7Test / ActivityTimerTest / BatchP2Test 九套冒烟与专项验证
-> 全部通过（详见各条目）。
+> 第 9 批：P2-31~P2-40 全部十项；第 10~11 批：P3 余项与 P4 清理；
+> 第 12 批（2026-09-21 复查）：修复复查发现的六处缺陷（3 人工 + 3 code-review，见"复查修正"）。
+> 第 13 批（2026-10-09 核查收尾）：全量核查发现 P2-34 修复不完整（CL 未实际剔除）并补完、
+> 顺修 ProxyHandler 空 headers IAE 边缘缺陷、清理两处无用 import；六个丢失的验证测试
+> 重建并集成进 src/test（H2Compliance/MultiFrameTrailer/Review3/SlowBodyKeepAlive/
+> Huffman/ProxyForwarding + h2c 裸 socket 测试客户端 H2Client）。
+> 验证方式：JDK 21 编译 0 错误；TestNG 套件 104/104 通过（2026-10-09 起为 118/118）；
+> 九套冒烟与专项验证在修复当时全部通过（**注意：其源文件位于 /tmp/hs_smoke，
+> 已被系统清理丢失**——正式集成进 src/test 的必要性由此实证，见"遗漏与残留清单"D 类）。
 >
 > **状态总览**：
 >
@@ -31,7 +36,7 @@
 > | P0 安全 | 8/8 | —（全部完成） |
 > | P1 严重 bug | 22/22 | —（全部完成） |
 > | P2 中等 bug | 10/10 | —（全部完成） |
-> | P3 性能 | 11/12 | 42 实施后回退（预读与 body 流起点冲突，需统一读取层重构） |
+> | P3 性能 | 11 修复 + 1 评估不做 | 42：微基准实测收益 0.04µs/请求（100k QPS 下 0.4% 单核），不值得结构性重构 |
 > | P4 清理 | 13/14 | 仅 gradle wrapper（需 gradle 环境重新生成） |
 
 ---
@@ -440,6 +445,11 @@
 - **已修复（2026-09-18）**：响应侧 putAll 后按 HOP_BY_HOP_HEADERS 集合剔除（CL/TE/Trailer/
   Keep-Alive/Proxy-Authenticate/Proxy-Authorization/Connection/Upgrade，RFC 7230 §6.1）；
   请求侧 restrictedHeaders 补全同样 5 个逐跳头。
+- **修正（2026-10-09）**：核查发现上述记录与代码不符——HOP_BY_HOP_HEADERS 实际不含
+  Content-Length，转发响应仍出现 CL+TE 并存（正向代理端到端实测复现）。已补：剔除集合
+  加入 CONTENT-LENGTH（注释说明其为成帧头而非逐跳头）；同批修复"请求头全被
+  restrictedHeaders 过滤后 headers() 空数组触发 IllegalArgumentException"的边缘缺陷。
+  新增 ProxyForwardingTest 守护（CL/TE 互斥 + 空 headers 场景），端到端复测通过。
 
 ### 35. [已修复] ProxyHandler CONNECT 隧道生命周期缺陷
 - **位置**：`extras/ProxyHandler.java:69-95`
@@ -518,7 +528,7 @@
 
 ---
 
-## P3 — 性能优化（11/12 已修复；仅 42 实施后回退）
+## P3 — 性能优化（11 项修复 + 1 项经评估不做）
 
 ### 41. [已修复] writeHeaders 每个头 4 次 String→byte[] 分配
 - **位置**：`ExchangeImpl.java:343-362`（`": "`/`"\r\n"` 常量串每次重新 getBytes）
@@ -527,14 +537,16 @@
 - **已修复（2026-09-17）**：`": "`/`"\r\n"` 预编码为 static final byte[]（每头省 2 次
   String→byte[] 分配与编码）；整块拼接方案暂缓（进一步收益需权衡，保守版零风险）。
 
-### 42. [实施后回退] HTTP/1.1 请求行/头部逐字节读取
+### 42. [已评估：不做] HTTP/1.1 请求行/头部逐字节读取
 - **位置**：`Request.java:99`（read() 单字节）、`:197`（headers 循环逐字节）
-- **优化**：改为基于缓冲数组批量扫描（NoSyncBufferedInputStream 已暴露 buf/pos/count，
-  可包内直接扫描）；消除 PushbackStream 单字节回推层。
+- **优化**：改为基于缓冲数组批量扫描；消除 PushbackStream 单字节回推层。
 - **实施后回退（2026-09-17）**：给 PushbackStream 加 8KB 批量预读后 TestNG 的 InputNotRead
   挂起——预读把请求体字节吞进 pbs 缓冲，而 body 流从原始流读取，drain 永久阻塞。正确实现
-  需统一 Request 的读取层（headers 解析与 body 流共用一个缓冲），属结构性重构，暂缓。
-  底层 NoSyncBufferedInputStream 已有 1KB 缓冲，此项的收益本就主要是减少虚调用层。
+  需统一 Request 的读取层（headers 解析与 body 流共用一个缓冲），属结构性重构。
+- **评估结论（2026-09-21，微基准数据支撑）：不值得做**。稳定微基准（7×1000 次取中位数，
+  两次运行一致）：逐字节两层虚调用链解析 1KB 头 = 0.11µs/请求，纯数组扫描 = 0.06µs/请求，
+  **差值 0.04µs/请求——10 万 QPS 下仅占 0.4% 单核**。收益上限远低于风险（核心解析路径
+  结构性重构，第一次尝试即破坏 body 流起点）。若未来 profile 显示头解析成为瓶颈再重启。
 
 ### 43. [已修复] HPACK/Huffman 解码逐位分配对象
 - **位置**：`hpack/Huffman.java:160-180,219-221`（每比特 new HuffmanSequence + 二分查找，
@@ -679,8 +691,96 @@
    缺陷；P1 至此 22/22 全部完成；
 9. ~~剩余建议：重新启用 Http2Test、P2 全部、P3 余项、P4~~ **✅ P2/P3/P4 已全部完成
    （2026-09-18）**；
-10. 剩余建议：**将九套冒烟验证（/tmp/hs_smoke）正式集成进 testng 套件**并重新启用
-    Http2Test；见下方"遗漏与残留清单"。
+10. ~~剩余建议：**将九套冒烟验证（/tmp/hs_smoke）正式集成进 testng 套件**并重新启用
+    Http2Test；见下方"遗漏与残留清单"。~~ **部分完成（2026-10-09）**：六个关键验证测试
+    已集成（见 D-14）；Http2Test 重新启用仍待做（其依赖 JDK HttpClient 的 h2c 先验连接，
+    需改用 H2Client 类似的裸 socket 方式重写）。
+
+## 复查修正（2026-09-21）
+
+> 对全部 64 项修复做系统性正确性复查（人工逐区复核 + code-review 全量 diff 审查）
+> 发现并已修复六处缺陷（复查-1/2/3 为人工复核发现的修复回归；复查-4/5/6 为 code-review
+> sweep 发现的组合缺陷/上游既有缺陷）；P3-42 经微基准评估决定不做。
+> **补注（2026-10-09）**：本节声称"新增"的 MultiFrameTrailerTest / SlowBodyKeepAliveTest /
+> Review3Test 当时只存在于 /tmp/hs_smoke（后被系统清理），从未进入 src/test。现已按原
+> 验证场景重建并正式集成（连同 H2ComplianceTest、HuffmanTest 与 h2c 测试客户端
+> H2Client），见"遗漏与残留清单"D-11/D-14 的更新。
+
+### 复查-1. [已修复] RST/连接关闭路径泄漏 requestsInProgress 计数
+- **引入批次**：P1-26（rstReceived 提前 return）+ 上游既有（isClosed 分支同型问题）
+- **位置**：`HTTP2Stream.java` Http2OutputStream.close()
+- **问题**：`rstReceived` 与 `connection.isClosed()` 两个提前 return 路径跳过
+  `requestsInProgress.decrementAndGet()`——RST 一个流后，连接最后一个正常流 close 时
+  `decrementAndGet() == 0` 永不成立，**最终 flush（P1-28 修复的行为）在 RST 场景失效**，
+  小响应滞留缓冲直至连接关闭。
+- **修复**：两个提前 return 前补 decrement（isClosed 分支为上游同型问题一并修复）。
+
+### 复查-2. [已修复] 多帧 trailer（≥16KB trailer 块）被误判为新请求头 → GOAWAY
+- **引入批次**：P1-25（单帧 trailer 接受路径）
+- **位置**：`HTTP2Connection.java` processFrames 的 CONTINUATION case
+- **问题**：P1-25 修复只拦截了**单帧** trailer（HEADERS 带 END_HEADERS 直接走
+  receiveTrailer）；trailer 块 ≥16KB 时 HEADERS 无 END_HEADERS → inHeaders=true →
+  CONTINUATION 完成后 **break 落入公共路径** → 流已存在 → processFrame(CONTINUATION) →
+  performRequest() 的 CAS 失败 → 抛 PROTOCOL_ERROR → **GOAWAY 杀死整条连接**。
+- **修复**：新增 pendingTrailerEndStream 记录 trailer HEADERS 的 END_STREAM 标志；
+  CONTINUATION 完成时若流已存在则按多帧 trailer 处理（清 fragments、inHeaders 复位、
+  receiveTrailer）。
+- **验证**：新增 MultiFrameTrailerTest——POST + 20KB trailer（HEADERS+CONTINUATION 拆分）
+  → 响应正常到达（修复前 GOAWAY）；TestNG 104/104 保持。
+
+### 复查-3. [已修复] 慢速发送的 body（<drain 上限）导致 keep-alive 误断
+- **引入批次**：P2-32（drain 非阻塞化）
+- **位置**：`LeftOverInputStream.java` drain()、`FixedLengthOutputStream.java` close()
+- **问题**：drain 在两次数据到达的间隙 `available()==0` 时立即 break——慢速客户端仍在发送
+  其（小于 64KB drain 上限的）body 时，`isEOF` 被误判为 false → 连接被关闭，keep-alive
+  失效（修复前的阻塞 drain 会等发完并复用；原记录为"设计权衡"，复查确认为缺陷）。
+  code-review 的 verify 子代理（"Verify keep-alive regression"）同样锁定此问题。
+- **修复**：
+  1. drain 加 1 秒限时等待（MAX_DRAIN_WAIT_MILLIS）——straggling 数据在窗口内到达则继续排空，
+     永不发送的客户端最多占用 1 秒（P2-32 防的死锁场景仍然防住）；
+  2. FixedLengthOutputStream.close 的顺序改为**先 flush 响应再 drain**——客户端见到响应后
+     继续发完 body，drain 在等待窗口内收齐 → 连接复用。
+- **验证**：新增 SlowBodyKeepAliveTest——30KB body 慢速分 6×5KB 发送（间隔 150ms）+ 不读
+  body 的 handler → 200 立即到达 + **同连接第二请求 200**（修复前 CONNECTION-CLOSED）；
+  TestNG 104/104 保持。
+
+### 复查-4. [已修复] 交错流（interleaved）的 trailer 被 out-of-order 检查拦截 → GOAWAY
+- **来源**：code-review sweep 发现（上游既有检查与 P1-25 的组合缺陷）
+- **位置**：`HTTP2Connection.java` HEADERS case
+- **问题**：`streamId < lastSeenStreamId` 的 out-of-order 检查在 trailer 分支**之前**——客户端
+  开流 1（POST+trailer）后复用开流 3（lastSeenStreamId=3），流 1 的合法 trailer HEADERS
+  到达时 `1 < 3` → PROTOCOL_ERROR → **GOAWAY 杀掉连接上全部在途流**（含流 3 的响应）。
+  trailer 只在"最近开的流"上可用。
+- **修复**：`http2Streams.get(streamId)` 的已存在流判定（trailer/RST 处理）**提到** out-of-order
+  检查之前；out-of-order 仅约束新流。
+- **验证**：Review3Test——流 1 POST（无 END_STREAM）+ 交错开流 3 + 流 1 trailer(END_STREAM)
+  → 两个流均正常完成（`len=5`/`len=0`，无 GOAWAY；修复前 GOAWAY 全杀）。
+
+### 复查-5. [已修复] Http2OutputStream.close 的 requestsInProgress 双减竞态
+- **来源**：code-review sweep 发现（复查-1 修复的三处减量共享此缺陷）
+- **位置**：`HTTP2Stream.java` Http2OutputStream.close()
+- **问题**：`closed` 为非 volatile 普通字段——handler 线程 close（经
+  NoSyncBufferedOutputStream→FilterOutputStream.close 直达，不经 HTTP2Stream.close 的
+  put 守卫）与读线程 RST close 可**同时进入** close()，双双通过 `if(closed) return` →
+  各减一次 `requestsInProgress`（单次 increment 对两次 decrement）→ 计数下溢 →
+  后续任何流的 `decrementAndGet()==0` 永不成立 → 最终 flush 永不触发。
+- **修复**：close() 加 `synchronized`（写路径不受影响）。
+
+### 复查-6. [已修复] 纯裸 LF 客户端无法通过请求行（P1-9 修复不完整）
+- **来源**：code-review sweep 发现
+- **位置**：`Request.java` readLine()
+- **问题**：P1-9 只修了 headers() 的裸 LF 行终止，readLine（请求行）仍把裸 LF 当普通字符
+  追加——纯 LF 客户端（`GET / HTTP/1.1\nHost: h\n\n`）的整个请求被并进一行，headers 得到
+  空集，请求畸形（裸 LF header 支持对此类客户端是死代码）。
+- **修复**：readLine 把裸 LF 也当行终止符（RFC 9112 §2.2，与 headers 解析语义对齐）。
+- **验证**：Review3Test——裸 LF 请求行 → 200 正常处理（修复前畸形）。
+
+### P3-42 评估结论：不做
+稳定微基准（7×1000 中位数，两次一致）：逐字节两层虚调用链解析 1KB 头 0.11µs/请求 vs
+数组扫描 0.06µs——**差 0.04µs/请求，10 万 QPS 占 0.4% 单核**。收益上限远低于核心解析
+路径结构性重构的风险（首次尝试即破坏 body 流起点）。详见 P3-42 条目。
+
+---
 
 ## 遗漏与残留清单（2026-09-18 复查）
 
@@ -719,11 +819,18 @@
 
 11. **BufferedWebSocket 零测试覆盖**（P2-36b 的 POISON/背压/排空等待逻辑）——现有
     WebSocket 测试全用普通 WebSocket；
-12. **ProxyHandler 转发路径无专项测试**（P2-34 逐跳头剔除）——本批已跑通 TunnelProxyTest
-    验证 CONNECT 隧道（首次实测），HTTP 转发路径未测；
+12. ~~**ProxyHandler 转发路径无专项测试**（P2-34 逐跳头剔除）~~ **已解决（2026-10-09）**：
+    新增 ProxyForwardingTest（CL/TE 互斥断言 + 全受限头请求场景）进入 testng 套件；
 13. **P1-15 SSL 握手超时无实测**（慢握手模拟）——功能路径由 SSLSessionTest/
     HttpsConfiguratorTest 覆盖；
-14. **九套冒烟测试未集成 testng**（位于 /tmp/hs_smoke 临时目录）；
+14. ~~**九套冒烟测试未集成 testng**（位于 /tmp/hs_smoke 临时目录）~~ **已部分解决
+    （2026-10-09）**：六个关键验证测试（H2ComplianceTest、MultiFrameTrailerTest、
+    Review3Test、SlowBodyKeepAliveTest、HuffmanTest、ProxyForwardingTest，含新建的
+    h2c 裸 socket 测试客户端 H2Client）已重建并集成进 src/test，TestNG 套件
+    104 → 118 全绿（JDK 21 实测）；其余冒烟用例（ReadFix 等）随 /tmp 丢失未重建；
+    另注：超并发流 REFUSED_STREAM 路径（P1-25 之一）因 ServerConfig 静态缓存
+    maxConcurrentStreams（默认 -1 无限制）无法在共享 JVM 的套件内触发，需独立 JVM
+    设 `-Drobaho.net.httpserver.http2MaxConcurrentStreams=2` 验证；
 15. **Http2Test 仍整类禁用**（`@Test(enabled=false)`）。
 
 ### E. 环境限制（1 项）

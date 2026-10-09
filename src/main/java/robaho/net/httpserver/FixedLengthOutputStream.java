@@ -88,6 +88,11 @@ class FixedLengthOutputStream extends FilterOutputStream {
         }
         LeftOverInputStream is = t.getOriginalInputStream();
 
+        // always flush the response first (the old available() heuristic left
+        // responses stuck in the socket buffer): the client may be waiting for
+        // this response before sending the rest of its body, which drain()
+        // then collects within its bounded wait
+        flush();
 
         if (!is.isClosed()) {
             try {
@@ -95,12 +100,6 @@ class FixedLengthOutputStream extends FilterOutputStream {
             } catch (IOException e) {
             }
         }
-
-        // always flush: the available() heuristic left responses stuck in the
-        // socket buffer whenever pipelined bytes were already in flight while
-        // the client was still waiting for this response (e.g. an unread
-        // request body). the next response flush covers the pipelining case.
-        flush();
 
     }
 }

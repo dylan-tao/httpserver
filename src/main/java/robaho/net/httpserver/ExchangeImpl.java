@@ -36,7 +36,6 @@ import java.lang.System.Logger.Level;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 
 import com.sun.net.httpserver.*;
 

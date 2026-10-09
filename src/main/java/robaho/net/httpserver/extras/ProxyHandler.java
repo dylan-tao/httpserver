@@ -149,7 +149,15 @@ public class ProxyHandler implements HttpHandler {
         proxies.put(authorityOf(uri),proxy);
         try {
             CURRENT_PROXY.set(proxy);
-            var response = proxyClient.send(HttpRequest.newBuilder(uri).headers(headers(exchange.getRequestHeaders())).method(exchange.getRequestMethod(),HttpRequest.BodyPublishers.ofInputStream(() -> exchange.getRequestBody())).build(),HttpResponse.BodyHandlers.ofInputStream());
+            var requestBuilder = HttpRequest.newBuilder(uri);
+            String[] forwardedHeaders = headers(exchange.getRequestHeaders());
+            // HttpRequest.Builder.headers() rejects an empty array: a request
+            // whose headers were all restricted (e.g. only Host and Connection)
+            // must skip the call entirely
+            if (forwardedHeaders.length > 0) {
+                requestBuilder = requestBuilder.headers(forwardedHeaders);
+            }
+            var response = proxyClient.send(requestBuilder.method(exchange.getRequestMethod(),HttpRequest.BodyPublishers.ofInputStream(() -> exchange.getRequestBody())).build(),HttpResponse.BodyHandlers.ofInputStream());
             exchange.getResponseHeaders().putAll(response.headers().map());
             // strip hop-by-hop and framing headers: this server performs its own
             // chunked framing, so forwarding them would emit both
@@ -213,9 +221,13 @@ public class ProxyHandler implements HttpHandler {
         return transferred;
     }
 
-    /** hop-by-hop headers that must not be forwarded in either direction (RFC 7230 6.1) */
+    /** hop-by-hop headers that must not be forwarded in either direction (RFC 7230 6.1).
+     * CONTENT-LENGTH is not hop-by-hop, but must be dropped all the same: this
+     * server re-frames the proxied body (sendResponseHeaders(status,0) switches
+     * to chunked), so a forwarded Content-length would coexist with the
+     * Transfer-encoding header, which RFC 7230 5.1 forbids */
     private static final Set<String> HOP_BY_HOP_HEADERS = Set.of(
-            "CONNECTION", "KEEP-ALIVE", "PROXY-AUTHENTICATE", "PROXY-AUTHORIZATION",
+            "CONNECTION", "CONTENT-LENGTH", "KEEP-ALIVE", "PROXY-AUTHENTICATE", "PROXY-AUTHORIZATION",
             "TE", "TRAILER", "TRANSFER-ENCODING", "UPGRADE");
 
     private static final Set<String> restrictedHeaders = Set.of(
