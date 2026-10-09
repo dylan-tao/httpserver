@@ -47,7 +47,7 @@ import javax.net.ssl.*;
 
 public class Test3 extends Test {
     static int count = 1;
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         System.setProperty("robaho.net.httpserver.idleInterval", "4");
 
         System.out.print ("Test3: ");

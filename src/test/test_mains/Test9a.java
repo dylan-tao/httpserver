@@ -49,7 +49,7 @@ public class Test9a extends Test {
     static volatile SSLContext clientCtx = null;
     static volatile boolean error = false;
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         HttpsServer server = null;
         ExecutorService executor=null;
         try {
@@ -141,8 +141,7 @@ public class Test9a extends Test {
                     .toURL();
 
                 HttpURLConnection urlc = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-                if (urlc instanceof HttpsURLConnection) {
-                    HttpsURLConnection urlcs = (HttpsURLConnection) urlc;
+                if (urlc instanceof HttpsURLConnection urlcs) {
                     urlcs.setHostnameVerifier (new HostnameVerifier () {
                         public boolean verify (String s, SSLSession s1) {
                             return true;

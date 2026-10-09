@@ -45,10 +45,26 @@ public class HTTP2HeaderField {
         return name.startsWith(":");
     }
 
+    /** normalized-name cache: header names are a small repeating set, and the
+     * concat allocated 3 objects per literal header field on the decode path.
+     * bounded - on overflow the concat fallback applies (names are attacker
+     * controllable, so the cache must not grow unbounded) */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> NORMALIZE_CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int NORMALIZE_CACHE_MAX = 256;
+
     public static String normalize(String value) {
         if (value == null || value.isEmpty()) {
             return value;
         }
-        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
+        String cached = NORMALIZE_CACHE.get(value);
+        if (cached != null) {
+            return cached;
+        }
+        String normalized = Character.toUpperCase(value.charAt(0)) + value.substring(1);
+        if (NORMALIZE_CACHE.size() < NORMALIZE_CACHE_MAX) {
+            NORMALIZE_CACHE.putIfAbsent(value, normalized);
+        }
+        return normalized;
     }
 }

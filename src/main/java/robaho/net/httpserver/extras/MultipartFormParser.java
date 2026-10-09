@@ -37,11 +37,44 @@ public class MultipartFormParser {
      * @param contentType if non-null, the content type of the data
      * @param filename if non-null, the form provided filename
      * @param file if non-null, points to the uploaded file data (the name may
-     * differ from filename). This file is marked as delete on exit.
+     * differ from filename). The storage directory's contents are deleted
+     * best-effort at JVM exit.
      * @param data if non-null, contains the part data as a String.
      */
     public record Part(String contentType, String filename, String data, File file) {
 
+    }
+
+    /** storage directories that already have an exit-cleanup hook registered.
+     * bounded by the number of distinct storage locations - unlike
+     * File.deleteOnExit(), whose static registry grows with every uploaded
+     * file (~100-200B each, for the lifetime of the JVM) and takes a
+     * JDK-internal monitor on every upload */
+    private static final java.util.Set<Path> CLEANUP_REGISTERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** register best-effort exit cleanup for the storage directory: ONE
+     * shutdown hook per distinct directory replaces the per-file
+     * File.deleteOnExit() registration. the directory's contents are deleted
+     * (the storage root itself is kept); the caller remains responsible for
+     * deleting files when they are no longer needed */
+    private static void registerExitCleanup(Path storage) {
+        if (CLEANUP_REGISTERED.add(storage)) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try (var walk = java.nio.file.Files.walk(storage)) {
+                    // deepest first so directories empty out as their files vanish
+                    walk.sorted(java.util.Comparator.reverseOrder())
+                        .filter(p -> !p.equals(storage))
+                        .forEach(p -> {
+                            try {
+                                java.nio.file.Files.deleteIfExists(p);
+                            } catch (IOException ignored) {
+                                // best effort: a locked file simply survives
+                            }
+                        });
+                } catch (IOException ignored) {
+                }
+            }, "multipart-storage-cleanup"));
+        }
     }
 
     private record PartMetadata(String contentType, String name, String filename) {
@@ -65,7 +98,10 @@ public class MultipartFormParser {
 
         // an unsynchronized buffered stream: the parser reads single bytes, and
         // BufferedInputStream.read() is synchronized per byte
-        is = new NoSyncBufferedInputStream(is);
+        // the configured connection buffer size: this wrap exists to amortize
+        // the LeftOver lock across single-byte reads, so it follows the same
+        // sizing knob as the connection buffers
+        is = new NoSyncBufferedInputStream(is, robaho.net.httpserver.ServerConfig.bufferSize());
 
         Map<String, List<Part>> results = new HashMap<>();
 
@@ -132,7 +168,7 @@ public class MultipartFormParser {
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, null, bos.toString(charset), null));
             } else {
                 File file = Path.of(storage.toString(), sanitizeFilename(meta.filename)).toFile();
-                file.deleteOnExit();
+                registerExitCleanup(storage);
                 os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, meta.filename, null, file));
             }

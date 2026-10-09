@@ -84,7 +84,7 @@ public class B6401598 {
     static ExecutorService exec;
     static HttpServer server;
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         try {
             InetAddress loopback = InetAddress.getLoopbackAddress();
             server = HttpServer.create(new InetSocketAddress(loopback, 0), 400);

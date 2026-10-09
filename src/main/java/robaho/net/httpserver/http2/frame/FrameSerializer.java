@@ -17,14 +17,14 @@ public class FrameSerializer {
         HTTP2Connection.readFully(inputStream, tmpBuffer);
 		FrameHeader frameHeader = FrameHeader.Parse(tmpBuffer);
 
-        if(frameHeader.getLength() > ServerConfig.http2MaxFrameSize()) {
+        if(frameHeader.length() > ServerConfig.http2MaxFrameSize()) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
 
-        byte[] body = new byte[frameHeader.getLength()];
+        byte[] body = new byte[frameHeader.length()];
         HTTP2Connection.readFully(inputStream, body);
 
-		switch (frameHeader.getType()) {
+		switch (frameHeader.type()) {
 		case HEADERS:
 			baseFrame = HeadersFrame.parse(body, frameHeader);
 			break;

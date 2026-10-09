@@ -48,7 +48,7 @@ public class Http10KeepAliveMaxParamTest {
      * with a "Keep-Alive" header in the response, then the header value doesn't have the
      * "max" parameter.
      */
-    public static void main(final String[] args) throws Exception {
+    static void main(final String[] args) throws Exception {
         final var bindAddr = new InetSocketAddress(InetAddress.getLoopbackAddress(), 0);
         final int backlog = 0;
         final HttpServer server = HttpServer.create(bindAddr, backlog);

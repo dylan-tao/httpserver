@@ -154,10 +154,7 @@ public class BasicAuthenticatorRealm {
 
         @Override
         public boolean checkCredentials(String username, String password) {
-            if (!getRealm().equals(realm)) {
-                return false;
-            }
-            return true;
+            return getRealm().equals(realm);
         }
     }
 

@@ -19,7 +19,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import com.sun.net.httpserver.Headers;
 
 import robaho.net.httpserver.HttpConnection;
-import robaho.net.httpserver.OpenAddressIntMap;
 import robaho.net.httpserver.OptimizedHeaders;
 import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.hpack.HPackContext;
@@ -53,9 +52,44 @@ public class HTTP2Connection {
 
     private int lastSeenStreamId = 0;
 
-    final OpenAddressIntMap<HTTP2Stream> http2Streams = new OpenAddressIntMap(16);
+    /** stream registry. a ConcurrentHashMap (not the custom open-addressing map):
+     * the reader thread looks up a stream on EVERY inbound frame, and a lock-free
+     * volatile read beats even an uncontended lock acquisition. close() removes
+     * the entry (the old map used null tombstones for the same guard) */
+    final java.util.concurrent.ConcurrentHashMap<Integer, HTTP2Stream> http2Streams = new java.util.concurrent.ConcurrentHashMap<>(16);
+
+    /** reusable 16KB stream output buffers: sequential streams on a connection
+     * share a small pool instead of allocating 16KB per stream (at high h2 RPS
+     * that allocation dominates young-gen churn). bounded so a connection with
+     * many CONCURRENT streams cannot pin extra buffers beyond the cap */
+    private final java.util.concurrent.ConcurrentLinkedDeque<byte[]> streamBufferPool = new java.util.concurrent.ConcurrentLinkedDeque<>();
+    private final java.util.concurrent.atomic.AtomicInteger pooledBufferCount = new java.util.concurrent.atomic.AtomicInteger();
+    private static final int MAX_POOLED_STREAM_BUFFERS = 4;
+
+    byte[] pollStreamBuffer() {
+        byte[] buffer = streamBufferPool.poll();
+        if (buffer != null) {
+            pooledBufferCount.decrementAndGet();
+            return buffer;
+        }
+        return new byte[robaho.net.httpserver.ServerConfig.bufferSize()];
+    }
+
+    void offerStreamBuffer(byte[] buffer) {
+        if (buffer != null && buffer.length > 0
+                && pooledBufferCount.incrementAndGet() <= MAX_POOLED_STREAM_BUFFERS) {
+            streamBufferPool.offer(buffer);
+        } else if (buffer != null) {
+            pooledBufferCount.decrementAndGet();
+        }
+    }
 
     private final SettingsMap remoteSettings = new SettingsMap();
+
+    /** cached peer SETTINGS_MAX_FRAME_SIZE (default 16384), updated on SETTINGS
+     * receipt: the DATA write path reads it per chunk, and a settings-map
+     * lookup per write was measurable overhead */
+    private volatile int remoteMaxFrameSize = 16384;
     private final SettingsMap localSettings = new SettingsMap();
 
     private final StreamHandler handler;
@@ -109,7 +143,7 @@ public class HTTP2Connection {
     }
 
     public void debug() {
-        logger.log(Level.INFO,toString()+" receive window "+receiveWindow.get()+" send window "+sendWindow.get()+" in progress "+requestsInProgress.get());
+        logger.log(Level.INFO, this +" receive window "+receiveWindow.get()+" send window "+sendWindow.get()+" in progress "+requestsInProgress.get());
         for(var stream : http2Streams.values()) {
             stream.debug();
         }
@@ -134,6 +168,11 @@ public class HTTP2Connection {
                 stream.close();
             }
         }
+    }
+
+    /** the peer's advertised max frame size, cached for the DATA write path */
+    int remoteMaxFrameSize() {
+        return remoteMaxFrameSize;
     }
 
     public SettingsMap getRemoteSettings() {
@@ -162,7 +201,7 @@ public class HTTP2Connection {
                 outputStream.write(frame);
             }
             outputStream.flush();
-            stats.flushes.incrementAndGet();
+            if (HTTP2Stats.ENABLED) stats.flushes.incrementAndGet();
         } finally {
             unlock();
         }
@@ -181,7 +220,7 @@ public class HTTP2Connection {
         // a single read() may return short when the preface is segmented by
         // the transport; readFully loops until the whole preface arrived
         readFully(inputStream, preface);
-        String prefaceStr = new String(preface, 0, preface.length);
+        String prefaceStr = new String(preface);
         return prefaceStr.equals(preface_match);
     }
 
@@ -218,16 +257,16 @@ public class HTTP2Connection {
             BaseFrame frame = FrameSerializer.deserialize(inputStream);
             // System.out.println("Received frame: " + frame.getHeader());
 
-            int streamId = frame.getHeader().getStreamIdentifier();
+            int streamId = frame.getHeader().streamIdentifier();
             if (streamId != 0 && streamId % 2 == 0) {
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "invalid stream id " + streamId + " on type " + frame.getHeader().getType());
+                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "invalid stream id " + streamId + " on type " + frame.getHeader().type());
             }
 
             // rfc7540 (section 6.5): SETTINGS frames always apply to a
             // connection, never a single stream.
-            switch (frame.getHeader().getType()) {
+            switch (frame.getHeader().type()) {
                 case SETTINGS:
-                    if (frame.getHeader().getFlags().contains(FrameFlag.ACK)) {
+                    if (frame.getHeader().flags().contains(FrameFlag.ACK)) {
                         // the limit is already enforced from construction; the ack
                         // needs no further action
                         continue;
@@ -243,7 +282,7 @@ public class HTTP2Connection {
                     }
                     throw new IOException("received GOAWAY from remote " + goaway.errorCode);
                 case PING:
-                    if (!frame.getHeader().getFlags().contains(FrameFlag.ACK)) {
+                    if (!frame.getHeader().flags().contains(FrameFlag.ACK)) {
                         sendPingAck((PingFrame) frame);
                     }
                     continue;
@@ -258,7 +297,7 @@ public class HTTP2Connection {
                     if (streamId == 0) {
                         int windowSizeIncrement = ((WindowUpdateFrame) frame).getWindowSizeIncrement();
                         sendWindow.addAndGet(windowSizeIncrement);
-                        logger.log(Level.DEBUG, "received connection window update " + windowSizeIncrement + ", new size " + sendWindow.get());
+                        logger.log(Level.DEBUG, () -> "received connection window update " + windowSizeIncrement + ", new size " + sendWindow.get());
                         if (sendWindow.get() > 2147483647) {
                             throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "maximum window size exceeded");
                         }
@@ -269,7 +308,7 @@ public class HTTP2Connection {
                     if (inHeaders) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "NOT_IMPLEMENTED frame received while headers being received");
                     }
-                    if (frame.getHeader().getStreamIdentifier() == 0) {
+                    if (frame.getHeader().streamIdentifier() == 0) {
                         continue;
                     }
                     break;
@@ -277,7 +316,7 @@ public class HTTP2Connection {
                     DataFrame dataFrame = (DataFrame) frame;
                     // flow control accounting uses the full frame payload length
                     // (including any PADDED bytes), not the stripped body (RFC 7540 6.9)
-                    if (receiveWindow.addAndGet(-frame.getHeader().getLength()) < 0) {
+                    if (receiveWindow.addAndGet(-frame.getHeader().length()) < 0) {
                         // the peer sent beyond the connection flow control window
                         throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "connection flow control window exceeded");
                     }
@@ -307,11 +346,11 @@ public class HTTP2Connection {
                                 throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
                             }
                             headerBlockFragments.add(trailerFrame.getHeaderBlock());
-                            if (!trailerFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                            if (!trailerFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                                 // multi frame trailer: remember the END_STREAM flag of the
                                 // HEADERS frame - it is consumed when the last CONTINUATION
                                 // completes the block
-                                pendingTrailerEndStream = trailerFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM);
+                                pendingTrailerEndStream = trailerFrame.getHeader().flags().contains(FrameFlag.END_STREAM);
                                 inHeaders = true;
                                 openStreamId = streamId;
                                 continue;
@@ -324,7 +363,7 @@ public class HTTP2Connection {
                             hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
                             headerBlockFragments.clear();
                             headerBlockBytes = 0;
-                            stream.receiveTrailer(trailerFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM));
+                            stream.receiveTrailer(trailerFrame.getHeader().flags().contains(FrameFlag.END_STREAM));
                             continue;
                         }
                         // HEADERS on a closed or half closed stream is a stream error
@@ -343,19 +382,19 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
                     }
                     headerBlockFragments.add(headersFrame.getHeaderBlock());
-                    if (!headersFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                    if (!headersFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                         // remember the END_STREAM flag of the HEADERS frame: it
                         // cannot ride on the CONTINUATION frames that complete
                         // the block, and losing it leaves a body-reading
                         // handler parked forever
-                        pendingEndStream = headersFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM);
+                        pendingEndStream = headersFrame.getHeader().flags().contains(FrameFlag.END_STREAM);
                         inHeaders = true;
                         openStreamId = streamId;
                         continue;
                     }
                     break;
                 case CONTINUATION:
-                    if (inHeaders && frame.getHeader().getStreamIdentifier() != openStreamId) {
+                    if (inHeaders && frame.getHeader().streamIdentifier() != openStreamId) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received on open stream");
                     }
                     if (!inHeaders) {
@@ -368,7 +407,7 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
                     }
                     headerBlockFragments.add(continuationFrame.getHeaderBlock());
-                    if (!continuationFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                    if (!continuationFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                         continue;
                     }
                     // header block complete: if the stream already exists this block
@@ -412,7 +451,7 @@ public class HTTP2Connection {
                     break;
                 default:
                     if (inHeaders) {
-                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, frame.getHeader().getType() + " frame received during headers receive");
+                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, frame.getHeader().type() + " frame received during headers receive");
                     }
                     // unknown or unsupported frame types (e.g. PUSH_PROMISE from a
                     // client, extension frames) must not reach the stream dispatch
@@ -466,14 +505,14 @@ public class HTTP2Connection {
                     // frames arriving for a stream we have already closed
                     // (e.g. DATA in flight when the stream was reset) are
                     // ignored (RFC 7540 5.1, closed state)
-                    logger.log(Level.TRACE,() -> "received "+frame.getHeader().getType()+" on closed stream "+streamId);
+                    logger.log(Level.TRACE,() -> "received "+frame.getHeader().type()+" on closed stream "+streamId);
                     continue;
                 }
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,  "frame "+frame.getHeader().getType()+", stream "+streamId+" not in order");
+                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,  "frame "+frame.getHeader().type()+", stream "+streamId+" not in order");
             }
 
             targetStream.processFrame(frame);
-            if (pendingEndStream && frame.getHeader().getType() == FrameType.CONTINUATION) {
+            if (pendingEndStream && frame.getHeader().type() == FrameType.CONTINUATION) {
                 // a new stream's header block just completed via CONTINUATION:
                 // re-apply the END_STREAM flag recorded from the HEADERS frame
                 // (processFrame saw only the CONTINUATION, which cannot carry
@@ -500,6 +539,7 @@ public class HTTP2Connection {
             }
             if (parameter.identifier == SettingIdentifier.SETTINGS_MAX_FRAME_SIZE) {
                 logger.log(Level.DEBUG, () -> "received max frame size " + parameter.value);
+                remoteMaxFrameSize = (int) parameter.value;
             }
             getRemoteSettings().set(parameter);
         }
@@ -538,11 +578,11 @@ public class HTTP2Connection {
     }
 
     InetSocketAddress getRemoteAddress() {
-        return (InetSocketAddress) httpConnection.getRemoteAddress();
+        return httpConnection.getRemoteAddress();
     }
 
     InetSocketAddress getLocalAddress() {
-        return (InetSocketAddress) httpConnection.getLocalAddress();
+        return httpConnection.getLocalAddress();
     }
 
     public void sendGoAway(HTTP2ErrorCode errorCode) throws IOException {
@@ -566,7 +606,7 @@ public class HTTP2Connection {
     public void sendPing() throws IOException {
         PingFrame frame = new PingFrame();
         HTTP2Connection.this.writeFrame(frame.encode());
-        stats.pingsSent.incrementAndGet();
+        if (HTTP2Stats.ENABLED) stats.pingsSent.incrementAndGet();
         logger.log(Level.TRACE, () -> "Sent Ping ");
     }
 
@@ -576,7 +616,7 @@ public class HTTP2Connection {
         logger.log(Level.TRACE, "Sent Ping Ack");
     }
 
-    public static interface StreamHandler {
+    public interface StreamHandler {
 
         void handleStream(HTTP2Stream stream, InputStream in, OutputStream out) throws IOException;
 

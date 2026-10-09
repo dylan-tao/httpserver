@@ -40,7 +40,7 @@ import com.sun.net.httpserver.HttpServer;
 
 public class SimpleHttpServerTest {
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
 
         System.out.println(System.getProperty("java.version"));
         InetSocketAddress serverAddr = new InetSocketAddress(0);

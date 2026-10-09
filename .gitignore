@@ -1,15 +1,12 @@
-.gradle/
 build/
 bin/
-gradle.properties
 .vscode
 .DS_Store
 fileserver/
-gradlew.bat
-gradle/
-gradle/
 /target/
 .classpath
 .factorypath
 *.prefs
 .project
+test-output/
+.idea/

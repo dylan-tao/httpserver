@@ -83,7 +83,7 @@ public class TruncatedRequestBody {
     /**
      * @param args the command line arguments
      */
-    public static void main(String[] args) throws IOException, InterruptedException {
+    static void main(String[] args) throws IOException, InterruptedException {
         Logger logger = Logger.getLogger("com.sun.net.httpserver");
         ConsoleHandler h = new ConsoleHandler();
         h.setLevel(Level.ALL);

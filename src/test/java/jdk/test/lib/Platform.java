@@ -178,11 +178,11 @@ public class Platform {
     }
 
     public static boolean isSlowDebugBuild() {
-        return (jdkDebug.toLowerCase().equals("slowdebug"));
+        return (jdkDebug.equalsIgnoreCase("slowdebug"));
     }
 
     public static boolean isFastDebugBuild() {
-        return (jdkDebug.toLowerCase().equals("fastdebug"));
+        return (jdkDebug.equalsIgnoreCase("fastdebug"));
     }
 
     public static String getVMVersion() {
@@ -252,9 +252,7 @@ public class Platform {
         if (isAix()) {
             return false; // SA not implemented.
         } else if (isLinux()) {
-            if (isS390x() || isARM()) {
-                return false; // SA not implemented.
-            }
+            return !isS390x() && !isARM(); // SA not implemented.
         }
         // Other platforms expected to work:
         return true;
@@ -330,7 +328,7 @@ public class Platform {
         }
 
         try {
-            if (codesignProcess.waitFor(10, TimeUnit.SECONDS) == false) {
+            if (!codesignProcess.waitFor(10, TimeUnit.SECONDS)) {
                 System.err.println("Timed out waiting for the codesign process to complete. Assuming not hardened.");
                 codesignProcess.destroyForcibly();
                 return false; // assume not hardened

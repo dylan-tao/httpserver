@@ -59,7 +59,7 @@ public class TcpNoDelayNotRequired {
 
     public static final Logger LOGGER = Logger.getLogger("sun.net.www.protocol.http");
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
 
         java.util.logging.Handler outHandler = new StreamHandler(System.out,
                 new SimpleFormatter());

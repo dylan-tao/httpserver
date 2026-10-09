@@ -58,7 +58,7 @@ public class Test1 extends Test {
 
     static SSLContext ctx;
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         System.setProperty("robaho.net.httpserver.maxReqTime", "10");
         System.setProperty("robaho.net.httpserver.nodelay", "true");
 
@@ -115,8 +115,7 @@ public class Test1 extends Test {
                  .path("/test1/"+f)
                  .toURL();
         HttpURLConnection urlc = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-        if (urlc instanceof HttpsURLConnection) {
-            HttpsURLConnection urlcs = (HttpsURLConnection) urlc;
+        if (urlc instanceof HttpsURLConnection urlcs) {
             urlcs.setHostnameVerifier (new HostnameVerifier () {
                 public boolean verify (String s, SSLSession s1) {
                     return true;

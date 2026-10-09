@@ -36,6 +36,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -46,7 +47,7 @@ import com.sun.net.httpserver.HttpServer;
 
 public class B6529200 {
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         Handler handler = new Handler();
         InetAddress loopback = InetAddress.getLoopbackAddress();
         InetSocketAddress addr = new InetSocketAddress (loopback, 0);
@@ -102,7 +103,7 @@ public class B6529200 {
             throw new RuntimeException ("Test failed in test2");
         }
 
-        String ss = new String (buf, "ISO-8859-1");
+        String ss = new String (buf, StandardCharsets.ISO_8859_1);
         if (ss.indexOf ("\r\n\r\nhello world") == -1) {
             server.stop(0);
             executor.shutdown ();

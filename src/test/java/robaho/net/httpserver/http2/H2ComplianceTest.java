@@ -57,17 +57,17 @@ public class H2ComplianceTest {
             client.sendTrailer(stream, "x-trailer", "value", true);
 
             var response = client.awaitResponse(stream);
-            Assert.assertFalse(response.goaway, "trailer must not trigger GOAWAY");
-            Assert.assertNull(response.rstErrorCode, "stream must not be reset");
-            Assert.assertEquals(response.status, 200, "trailer request must be served");
-            Assert.assertEquals(new String(response.data, StandardCharsets.UTF_8), "hello",
+            Assert.assertFalse(response.goaway(), "trailer must not trigger GOAWAY");
+            Assert.assertNull(response.rstErrorCode(), "stream must not be reset");
+            Assert.assertEquals(response.status(), 200, "trailer request must be served");
+            Assert.assertEquals(new String(response.data(), StandardCharsets.UTF_8), "hello",
                 "handler must see the body sent before the trailer");
 
             // the connection survives: a new stream is served
             int stream2 = client.sendRequest("GET", "/echo", true);
             var response2 = client.awaitResponse(stream2);
-            Assert.assertFalse(response2.goaway);
-            Assert.assertEquals(response2.status, 200);
+            Assert.assertFalse(response2.goaway());
+            Assert.assertEquals(response2.status(), 200);
         }
     }
 
@@ -78,15 +78,15 @@ public class H2ComplianceTest {
         try (H2Client client = new H2Client(server.getAddress().getPort())) {
             int stream = client.sendRequest("GET", "/echo", true);
             var response = client.awaitResponse(stream);
-            Assert.assertEquals(response.status, 200);
+            Assert.assertEquals(response.status(), 200);
 
             // late DATA on the finished stream
             client.sendData(stream, "late".getBytes(StandardCharsets.UTF_8), true);
 
             int stream2 = client.sendRequest("GET", "/echo", true);
             var response2 = client.awaitResponse(stream2);
-            Assert.assertFalse(response2.goaway, "late DATA on a closed stream must not trigger GOAWAY");
-            Assert.assertEquals(response2.status, 200, "connection must stay usable");
+            Assert.assertFalse(response2.goaway(), "late DATA on a closed stream must not trigger GOAWAY");
+            Assert.assertEquals(response2.status(), 200, "connection must stay usable");
         }
     }
 
@@ -101,8 +101,8 @@ public class H2ComplianceTest {
 
             int stream2 = client.sendRequest("GET", "/echo", true);
             var response2 = client.awaitResponse(stream2);
-            Assert.assertFalse(response2.goaway, "RST_STREAM must not escalate to GOAWAY");
-            Assert.assertEquals(response2.status, 200, "new streams must be served after a reset");
+            Assert.assertFalse(response2.goaway(), "RST_STREAM must not escalate to GOAWAY");
+            Assert.assertEquals(response2.status(), 200, "new streams must be served after a reset");
         }
     }
 
@@ -131,9 +131,9 @@ public class H2ComplianceTest {
             System.arraycopy("hello".getBytes(StandardCharsets.UTF_8), 0, payload, 1, 5);
             client.writeRawFrame(H2Client.TYPE_DATA, H2Client.FLAG_END_STREAM | H2Client.FLAG_PADDED, stream, payload);
             var response = client.awaitResponse(stream);
-            Assert.assertFalse(response.goaway);
-            Assert.assertEquals(response.status, 200);
-            Assert.assertEquals(new String(response.data, StandardCharsets.UTF_8), "hello",
+            Assert.assertFalse(response.goaway());
+            Assert.assertEquals(response.status(), 200);
+            Assert.assertEquals(new String(response.data(), StandardCharsets.UTF_8), "hello",
                 "padded DATA must deliver only the unpadded body");
         }
     }
@@ -152,9 +152,9 @@ public class H2ComplianceTest {
             client.writeRawFrame(H2Client.TYPE_CONTINUATION, 0, 1, java.util.Arrays.copyOfRange(block, 7_000, 14_000));
             client.writeRawFrame(H2Client.TYPE_CONTINUATION, H2Client.FLAG_END_HEADERS, 1, java.util.Arrays.copyOfRange(block, 14_000, block.length));
             var response = client.awaitResponse(1);
-            Assert.assertFalse(response.goaway);
-            Assert.assertNull(response.rstErrorCode);
-            Assert.assertEquals(response.status, 200, "request must complete after a multi-frame header block");
+            Assert.assertFalse(response.goaway());
+            Assert.assertNull(response.rstErrorCode());
+            Assert.assertEquals(response.status(), 200, "request must complete after a multi-frame header block");
         }
     }
 
@@ -185,7 +185,7 @@ public class H2ComplianceTest {
                 connWindow -= n;
             }
             var response = client.awaitResponse(stream);
-            Assert.assertEquals(response.status, 200);
+            Assert.assertEquals(response.status(), 200);
             long ms = (System.nanoTime() - start) / 1_000_000;
             // healthy is sub-second on loopback; the unfixed server throttled
             // to ~64KB/s (256KB would take ~4s). 1.5s leaves CI margin.
@@ -231,7 +231,7 @@ public class H2ComplianceTest {
                 connWindow -= frame.length;
             }
             var response = client.awaitResponse(stream);
-            Assert.assertEquals(response.status, 200);
+            Assert.assertEquals(response.status(), 200);
             long ms = (System.nanoTime() - start) / 1_000_000;
             Assert.assertTrue(ms < 1500, "160KB padded upload took " + ms + "ms (padding window credit lost?)");
         }
@@ -250,7 +250,7 @@ public class H2ComplianceTest {
             client.writeRawFrame(H2Client.TYPE_WINDOW_UPDATE, 0, 1, new byte[] { 0, 0, 0x0F, 0x00 });
             try {
                 var response = client.awaitResponse(1);
-                Assert.assertTrue(response.goaway,
+                Assert.assertTrue(response.goaway(),
                     "WINDOW_UPDATE during an incomplete header block must terminate the connection");
             } catch (IOException expected) {
                 // connection closed without a GOAWAY is also an acceptable
@@ -281,8 +281,8 @@ public class H2ComplianceTest {
                 H2Client.FLAG_END_STREAM | H2Client.FLAG_END_HEADERS, stream, trailer.toByteArray());
 
             var response = client.awaitResponse(stream);
-            Assert.assertFalse(response.goaway);
-            Assert.assertEquals(response.status, 200);
+            Assert.assertFalse(response.goaway());
+            Assert.assertEquals(response.status(), 200);
 
             // the next request references the dynamic table entry 62 (0xBE):
             // it must decode to the trailer field, not fail with COMPRESSION_ERROR.
@@ -302,8 +302,8 @@ public class H2ComplianceTest {
                 H2Client.FLAG_END_STREAM | H2Client.FLAG_END_HEADERS, 3, block.toByteArray());
 
             var response2 = client.awaitResponse(3);
-            Assert.assertFalse(response2.goaway, "dynamic table must stay in sync after a trailer");
-            Assert.assertEquals(response2.status, 200, "request referencing the trailer's dynamic entry must be served");
+            Assert.assertFalse(response2.goaway(), "dynamic table must stay in sync after a trailer");
+            Assert.assertEquals(response2.status(), 200, "request referencing the trailer's dynamic entry must be served");
         }
     }
 

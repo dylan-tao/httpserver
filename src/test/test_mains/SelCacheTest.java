@@ -52,7 +52,7 @@ public class SelCacheTest extends Test {
 
     static SSLContext ctx;
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         HttpServer s1 = null;
         HttpsServer s2 = null;
         ExecutorService executor=null;
@@ -105,8 +105,7 @@ public class SelCacheTest extends Test {
                   .path("/test1/"+f)
                   .toURL();
         HttpURLConnection urlc = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-        if (urlc instanceof HttpsURLConnection) {
-            HttpsURLConnection urlcs = (HttpsURLConnection) urlc;
+        if (urlc instanceof HttpsURLConnection urlcs) {
             urlcs.setHostnameVerifier(new HostnameVerifier() {
                 public boolean verify(String s, SSLSession s1) {
                     return true;

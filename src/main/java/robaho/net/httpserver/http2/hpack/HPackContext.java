@@ -109,9 +109,9 @@ public class HPackContext {
     }
 
     private int decodeIndexedHeaderField(byte[] buffer, int index, HTTP2HeaderField headerField) throws HTTP2Exception {
-        var pair = decodeUnsignedInteger(buffer, index, 7);
-        int headerIndex = pair.value;
-        index = pair.index;
+        long packed = decodeUnsignedInteger(buffer, index, 7);
+        int headerIndex = packedValue(packed);
+        index = packedIndex(packed);
 
         HTTP2HeaderField field = getHeaderField(headerIndex);
         if (field == null) {
@@ -125,9 +125,9 @@ public class HPackContext {
     }
 
     private int decodeFieldWithIncrementalIndexing(byte[] buffer, int index, HTTP2HeaderField headerField) throws HTTP2Exception {
-        var pair = decodeUnsignedInteger(buffer, index, 6);
-        int headerIndex = pair.value;
-        index = pair.index;
+        long packed = decodeUnsignedInteger(buffer, index, 6);
+        int headerIndex = packedValue(packed);
+        index = packedIndex(packed);
 
         index = decodeFieldName(buffer, index, headerIndex, headerField);
         index = decodeFieldValue(buffer, index, headerField);
@@ -137,18 +137,18 @@ public class HPackContext {
         return index;
     }
     private int decodeLiteralFieldWithoutIndexing(byte[] buffer, int index, HTTP2HeaderField headerField) throws HTTP2Exception {
-        var pair = decodeUnsignedInteger(buffer, index, 4);
-        int headerIndex = pair.value;
-        index = pair.index;
+        long packed = decodeUnsignedInteger(buffer, index, 4);
+        int headerIndex = packedValue(packed);
+        index = packedIndex(packed);
 
         index = decodeFieldName(buffer, index, headerIndex, headerField);
         index = decodeFieldValue(buffer, index, headerField);
         return index;
     }
     private int decodeDynamicTableSizeUpdate(byte[] buffer, int index) throws HTTP2Exception {
-        var pair = decodeUnsignedInteger(buffer, index, 5);
-        int size = pair.value;
-        index = pair.index;
+        long packed = decodeUnsignedInteger(buffer, index, 5);
+        int size = packedValue(packed);
+        index = packedIndex(packed);
 
         if (size > 4096) { // Assuming 4096 is the maximum size for the dynamic table
             throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "Dynamic table size update too large: " + size);
@@ -163,22 +163,28 @@ public class HPackContext {
     private int decodeFieldName(byte[] buffer, int index, int headerIndex, HTTP2HeaderField headerField) throws HTTP2Exception {
         if (headerIndex == 0) {
             boolean huffmanCode = (buffer[index] & 0x80) != 0;
-            var pair = decodeUnsignedInteger(buffer, index, 7);
-            index = pair.index;
-            int length = pair.value;
+            long packed = decodeUnsignedInteger(buffer, index, 7);
+            index = packedIndex(packed);
+            int length = packedValue(packed);
             if (index + length > buffer.length) {
                 throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "header field name length exceeds header block");
             }
-            byte[] valueBytes = Arrays.copyOfRange(buffer, index, index + length);
-            index += length;
+            // decode IN PLACE: the bounds are validated above, so the
+            // copyOfRange allocated a duplicate of every name for nothing
             String value;
             if (huffmanCode) {
-                value = Huffman.decode(valueBytes);
+                value = Huffman.decode(buffer, index, length);
             } else {
-                value = new String(valueBytes);
+                value = new String(buffer, index, length, java.nio.charset.StandardCharsets.UTF_8);
             }
-            if(!value.equals(value.toLowerCase())) {
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "header field name is not lowercase " + value);
+            index += length;
+            // zero-allocation lowercase check: toLowerCase() copied the whole
+            // name on every literal header field
+            for (int i = 0; i < value.length(); i++) {
+                char c = value.charAt(i);
+                if (c >= 'A' && c <= 'Z') {
+                    throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "header field name is not lowercase " + value);
+                }
             }
             headerField.setName(value);
         } else {
@@ -194,35 +200,37 @@ public class HPackContext {
     private int decodeFieldValue(byte[] buffer, int index, HTTP2HeaderField headerField) throws HTTP2Exception {
         // Check if Huffman coding is used
         boolean huffmanCode = (buffer[index] & 0x80) != 0;
-        var pair = decodeUnsignedInteger(buffer, index, 7);
-        index = pair.index;
-        int length = pair.value;
-        // a length beyond the end of the block would make copyOfRange allocate
-        // an attacker controlled (huge) array instead of failing
+        long packed = decodeUnsignedInteger(buffer, index, 7);
+        index = packedIndex(packed);
+        int length = packedValue(packed);
+        // a length beyond the end of the block is rejected before any decode
         if (index + length > buffer.length) {
             throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "header field value length exceeds header block");
         }
 
-        byte[] valueBytes = Arrays.copyOfRange(buffer, index, index + length);
+        // decode IN PLACE (bounds validated above): the copyOfRange allocated
+        // a duplicate of every value for nothing
         String value;
         if (huffmanCode) {
-            value = Huffman.decode(valueBytes);
+            value = Huffman.decode(buffer, index, length);
         } else {
-            value = new String(valueBytes);
+            // explicit UTF-8: header values are UTF-8 (RFC 7540 8.1.2); the
+            // default charset must not be assumed
+            value = new String(buffer, index, length, java.nio.charset.StandardCharsets.UTF_8);
         }
         headerField.setValue(value);
 
         return index + length;
     }
 
-    private static record IndexValuePair(int index, int value) {
-    }
-
-    private static IndexValuePair decodeUnsignedInteger(byte[] buffer, int index, int prefixBits) {
+    /** decode an HPACK varint, returning (value << 32) | nextIndex packed in a
+     * long: the previous record-per-varint allocated 1-3 objects per header
+     * field (field index, name length, value length) */
+    private static long decodeUnsignedInteger(byte[] buffer, int index, int prefixBits) {
         int value = buffer[index] & ((1 << prefixBits) - 1);
         index++;
         if (value < ((1 << prefixBits) - 1)) {
-            return new IndexValuePair(index, value);
+            return ((long) value << 32) | index;
         }
 
         int m = 0;
@@ -234,13 +242,21 @@ public class HPackContext {
             index++;
         } while ((b & 0x80) != 0);
 
-        return new IndexValuePair(index, value);
+        return ((long) value << 32) | index;
+    }
+
+    private static int packedValue(long packed) {
+        return (int) (packed >>> 32);
+    }
+
+    private static int packedIndex(long packed) {
+        return (int) packed;
     }
 
     private int decodeLiteralFieldNeverIndexed(byte[] buffer, int index, HTTP2HeaderField headerField) throws HTTP2Exception {
-        var pair = decodeUnsignedInteger(buffer, index, 4);
-        int headerIndex = pair.value;
-        index = pair.index;
+        long packed = decodeUnsignedInteger(buffer, index, 4);
+        int headerIndex = packedValue(packed);
+        index = packedIndex(packed);
 
         index = decodeFieldName(buffer, index, headerIndex, headerField);
         index = decodeFieldValue(buffer, index, headerField);
@@ -249,6 +265,46 @@ public class HPackContext {
 
     /** this method is optimized for a server implementation and is not suitable for generic http2 hpack header encoding */
     public static void writeHeaderFrame(Headers headers, OutputStream outputStream, int streamId,boolean closeStream) throws IOException {
+        for (byte[] frame : encodeHeaderFrames(headers, streamId, closeStream)) {
+            outputStream.write(frame);
+        }
+    }
+
+    /** lowercase-name cache: response header names repeat (Content-type,
+     * Content-length, Date...), and the two-String lowercase conversion ran
+     * per header per response. bounded against attacker-controlled names */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> LOWERCASE_CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int LOWERCASE_CACHE_MAX = 256;
+
+    private static String lowercase(String name) {
+        String cached = LOWERCASE_CACHE.get(name);
+        if (cached != null) {
+            return cached;
+        }
+        String lower = Character.toLowerCase(name.charAt(0)) + name.substring(1);
+        if (LOWERCASE_CACHE.size() < LOWERCASE_CACHE_MAX) {
+            LOWERCASE_CACHE.putIfAbsent(name, lower);
+        }
+        return lower;
+    }
+
+    private static void writeField(ByteArrayOutputStream fields, String name, String value) {
+        byte[] header = encodeHeader(name, value);
+        try {
+            fields.write(header);
+        } catch (IOException ex) {
+        }
+    }
+
+    /**
+     * encode a response header block into complete HEADERS (+CONTINUATION)
+     * frame byte arrays. callers run this OUTSIDE the connection lock and take
+     * the lock only for the writes: the encoding (string building, HPACK) is
+     * stream-local, and keeping it out of the critical section lets
+     * concurrent streams on a connection scale with cores
+     */
+    public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream) throws IOException {
         ByteArrayOutputStream fields = new ByteArrayOutputStream(256); // average http headers length is 800 bytes
 
         // ':status' is required and the only allowed outbound pseudo headers
@@ -258,117 +314,69 @@ public class HPackContext {
         }
         fields.write(encodeHeader(":status", status));
 
-        StringBuilder sb = new StringBuilder(32);
-
-        headers.forEach((name, values) -> {
-            for (String value : values) {
-                if(name.startsWith(":")) {
-                    continue;
+        // raw iteration when possible: forEach() wraps every single-valued
+        // header in a mutable ArrayList (its contract), which is pure
+        // allocation on the encoder's read-only path
+        if (headers instanceof robaho.net.httpserver.OptimizedHeaders optimized) {
+            optimized.forEachRaw((name, v) -> {
+                if (name.charAt(0) == ':') {
+                    return;
                 }
-                // Headers keys are normalized to the first letter in uppercase and the rest in lowercase
-                // http2 keys are all lowercase
-
-                sb.setLength(0);
-                sb.append(Character.toLowerCase(name.charAt(0)));
-                sb.append(name.substring(1));
-
-                byte[] header = encodeHeader(sb.toString(), value);
-                try {
-                    fields.write(header);
-                } catch (IOException ex) {
+                String lower = lowercase(name);
+                if (v instanceof String single) {
+                    writeField(fields, lower, single);
+                } else {
+                    for (String value : (List<String>) v) {
+                        writeField(fields, lower, value);
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            headers.forEach((name, values) -> {
+                if (name.charAt(0) == ':') {
+                    return;
+                }
+                String lower = lowercase(name);
+                for (String value : values) {
+                    writeField(fields, lower, value);
+                }
+            });
+        }
 
-        writeHeaderBlock(outputStream, fields.toByteArray(), streamId, closeStream);
+        return encodeHeaderBlockFrames(fields.toByteArray(), streamId, endStream);
     }
 
-    /**
-     * write an encoded header block, splitting it into HEADERS + CONTINUATION
-     * frames when it exceeds our advertised SETTINGS_MAX_FRAME_SIZE
-     * (RFC 7540 sections 4.3 / 6.5.2)
-     */
-    private static void writeHeaderBlock(OutputStream outputStream, byte[] block, int streamId, boolean endStream) throws IOException {
+    /** split an encoded header block into complete HEADERS/CONTINUATION frames
+     * (each a byte[] of frame header + fragment), per our advertised
+     * SETTINGS_MAX_FRAME_SIZE (RFC 7540 sections 4.3 / 6.5.2) */
+    private static List<byte[]> encodeHeaderBlockFrames(byte[] block, int streamId, boolean endStream) {
         int maxFrameSize = ServerConfig.http2MaxFrameSize();
+        List<byte[]> frames = new ArrayList<>(2);
         int off = 0;
         while (true) {
             int len = Math.min(block.length - off, maxFrameSize);
             boolean last = off + len == block.length;
+            FlagSet flags;
             if (off == 0) {
-                FlagSet flags = last
-                        ? (endStream ? END_OF_HEADERS_AND_STREAM : END_OF_HEADERS)
-                        : (endStream ? FlagSet.of(FrameFlag.END_STREAM) : FrameFlag.NONE);
-                FrameHeader.writeTo(outputStream, len, FrameType.HEADERS, flags, streamId);
+                flags = last
+                    ? (endStream ? END_OF_HEADERS_AND_STREAM : END_OF_HEADERS)
+                    : (endStream ? FlagSet.of(FrameFlag.END_STREAM) : FrameFlag.NONE);
             } else {
-                FlagSet flags = last ? END_OF_HEADERS : FrameFlag.NONE;
-                FrameHeader.writeTo(outputStream, len, FrameType.CONTINUATION, flags, streamId);
+                flags = last ? END_OF_HEADERS : FrameFlag.NONE;
             }
-            outputStream.write(block, off, len);
+            byte[] frame = new byte[9 + len];
+            System.arraycopy(FrameHeader.encode(len, off == 0 ? FrameType.HEADERS : FrameType.CONTINUATION, flags, streamId), 0, frame, 0, 9);
+            System.arraycopy(block, off, frame, 9, len);
+            frames.add(frame);
             off += len;
             if (last) {
-                return;
+                return frames;
             }
         }
     }
 
-    public static void writeGenericHeaderFrame(Headers headers, OutputStream outputStream, int streamId) throws IOException {
-        ByteArrayOutputStream pseudo = new ByteArrayOutputStream();
-        ByteArrayOutputStream fields = new ByteArrayOutputStream();
-
-        headers.forEach((name, values) -> {
-            for (String value : values) {
-                if(name.startsWith(":")) {
-                    // Headers keys are normalized to the first letter in uppercase and the rest in lowercase
-                    // http2 keys are all lowercase
-                    byte[] header = encodeHeader(Character.toLowerCase(name.charAt(0))+name.substring(1), value);
-                    try {
-                        pseudo.write(header);
-                    } catch (IOException ex) {
-                    }
-                } else {
-                    // Headers keys are normalized to the first letter in uppercase and the rest in lowercase
-                    // http2 keys are all lowercase
-                    byte[] header = encodeHeader(Character.toLowerCase(name.charAt(0))+name.substring(1), value);
-                    try {
-                        fields.write(header);
-                    } catch (IOException ex) {
-                    }
-
-                }
-            }
-        });
-
-        FrameHeader.writeTo(outputStream,pseudo.size()+fields.size(),FrameType.HEADERS, END_OF_HEADERS, streamId);
-        pseudo.writeTo(outputStream);
-        fields.writeTo(outputStream);
-    }
-
     private static final FlagSet END_OF_HEADERS = FlagSet.of(FrameFlag.END_HEADERS);
     private static final FlagSet END_OF_HEADERS_AND_STREAM = FlagSet.of(FrameFlag.END_HEADERS,FrameFlag.END_STREAM);
-
-    public static List<byte[]> encodeHeadersFrame(Headers headers,int streamId) {
-        byte[] buffer = encodeHeaders(headers);
-        byte[] header = FrameHeader.encode(buffer.length, FrameType.HEADERS, END_OF_HEADERS, streamId);
-        return List.of(header,buffer);
-    }
-
-    private static byte[] encodeHeaders(Headers headers) {
-        List<byte[]> fields = new ArrayList(headers.size());
-        List<byte[]> pseudo = new ArrayList<>(6);
-        headers.forEach((name, values) -> {
-            for (String value : values) {
-                if(name.startsWith(":")) {
-                    byte[] header = encodeHeader(name, value);
-                    pseudo.add(header);
-                } else {
-                    // Headers keys are normalized to the first letter in uppercase and the rest in lowercase
-                    byte[] header = encodeHeader(Character.toLowerCase(name.charAt(0))+name.substring(1), value);
-                    fields.add(header);
-                }
-            }
-        });
-        return Utils.combineByteArrays(pseudo,fields);
-    }
 
     private static byte[] encodeHeader(String name, String value) {
         if(":status".equals(name)) {
@@ -377,67 +385,118 @@ public class HPackContext {
         }
         var index = RFC7541Parser.getIndex(name);
 
-        byte[] buffer = new byte[1];
-        buffer[0]=0x00; // Literal Header Field without Indexing
-        byte[] name_buffer = null;
-
+        // single allocation for the whole field: the previous version built
+        // 2-3 intermediate byte[] per header (encodeString growth via
+        // Arrays.copyOf + combineByteArrays), ~6-8 allocations per response
+        // header at high h2 RPS
+        byte[] nameBytes = null;
+        byte[] valueBytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int size;
         if(index!=null) {
-            buffer = encodeIndexedField(index,4);
+            size = indexedFieldEncodedSize(index, 4) + stringEncodedSize(valueBytes);
         } else {
-            byte[] nameBytes = name.getBytes();
-            name_buffer = encodeString(nameBytes);
+            nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            size = 1 + stringEncodedSize(nameBytes) + stringEncodedSize(valueBytes);
         }
-
-        // Encode header value
-        byte[] valueBytes = value.getBytes();
-        byte[] value_buffer = encodeString(valueBytes);
-
-        return name_buffer == null ? Utils.combineByteArrays(buffer,value_buffer) : Utils.combineByteArrays(buffer,name_buffer,value_buffer);
+        byte[] out = new byte[size];
+        int pos;
+        if(index!=null) {
+            pos = encodeIndexedFieldInto(out, 0, index, 4);
+        } else {
+            out[0] = 0x00; // Literal Header Field without Indexing
+            pos = encodeStringInto(out, 1, nameBytes);
+        }
+        encodeStringInto(out, pos, valueBytes);
+        return out;
     }
 
-    private static byte[] encodeString(byte[] value) {
-        // TODO: implement huffman encoding
-        // a string literal is a 7-bit prefix integer length (with the huffman
-        // flag bit clear) followed by the raw bytes (RFC 7541 section 5.2)
-        byte[] buffer = new byte[0];
-        int length = value.length;
-        if (length < 127) {
-            buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) length;
+    /** exact encoded size of a string literal: varint length prefix + raw bytes */
+    /** exact encoded size of a string literal: huffman when shorter (RFC 7541
+     * 5.2 "SHOULD"), literal otherwise - varint length prefix + payload */
+    private static int stringEncodedSize(byte[] value) {
+        int huffLen = Huffman.encodedLength(value);
+        if (huffLen < value.length) {
+            return stringLengthPrefixSize(huffLen) + huffLen;
+        }
+        return stringLengthPrefixSize(value.length) + value.length;
+    }
+
+    /** size of the 7-bit prefix varint length prefix for a payload of len bytes */
+    private static int stringLengthPrefixSize(int len) {
+        if (len < 127) {
+            return 1;
+        }
+        int remainder = len - 127;
+        int varintBytes = 1;
+        while (remainder >= 128) {
+            varintBytes++;
+            remainder >>>= 7;
+        }
+        return 1 + varintBytes;
+    }
+
+    /** write a string literal into the target buffer at pos: huffman-coded
+     * when shorter (flag bit set), raw otherwise. returns the new position */
+    private static int encodeStringInto(byte[] out, int pos, byte[] value) {
+        int huffLen = Huffman.encodedLength(value);
+        if (huffLen < value.length) {
+            pos = encodeLengthPrefix(out, pos, huffLen, true);
+            return Huffman.encodeInto(value, out, pos);
+        }
+        pos = encodeLengthPrefix(out, pos, value.length, false);
+        System.arraycopy(value, 0, out, pos, value.length);
+        return pos + value.length;
+    }
+
+    /** write the 7-bit prefix varint string length (huffman flag bit per the
+     * argument) into the target buffer at pos */
+    private static int encodeLengthPrefix(byte[] out, int pos, int len, boolean huffman) {
+        int flag = huffman ? 0x80 : 0x00;
+        if (len < 127) {
+            out[pos++] = (byte) (flag | len);
         } else {
-            buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) 127;
-            int remainder = length - 127;
+            out[pos++] = (byte) (flag | 127);
+            int remainder = len - 127;
             while (remainder >= 128) {
-                buffer = Arrays.copyOf(buffer, buffer.length + 1);
-                buffer[buffer.length - 1] = (byte) ((remainder & 0x7F) | 0x80);
+                out[pos++] = (byte) ((remainder & 0x7F) | 0x80);
                 remainder >>>= 7;
             }
-            buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) remainder;
+            out[pos++] = (byte) remainder;
         }
-        buffer = Arrays.copyOf(buffer, buffer.length + value.length);
-        System.arraycopy(value, 0, buffer, buffer.length - value.length, value.length);
-        return buffer;
+        return pos;
     }
 
-    private static byte[] encodeIndexedField(int index, int prefixBits) {
-        byte[] buffer = new byte[1];
+    /** exact encoded size of an indexed field with the given prefix bits */
+    private static int indexedFieldEncodedSize(int index, int prefixBits) {
         int mask = (1 << prefixBits) - 1;
         if (index < mask) {
-            buffer[0] = (byte) index;
-            return buffer;
+            return 1;
         }
-        buffer[0] = (byte) mask;
         index -= mask;
+        int size = 2;
         while (index >= 128) {
-            buffer = Arrays.copyOf(buffer, buffer.length + 1);
-            buffer[buffer.length - 1] = (byte) ((index & 0x7F) | 0x80);
+            size++;
             index >>>= 7;
         }
-        buffer = Arrays.copyOf(buffer, buffer.length + 1);
-        buffer[buffer.length - 1] = (byte) index;
-        return buffer;
+        return size;
+    }
+
+    /** write an indexed field (prefix bits + varint index) into the target
+     * buffer at pos, returning the new position */
+    private static int encodeIndexedFieldInto(byte[] out, int pos, int index, int prefixBits) {
+        int mask = (1 << prefixBits) - 1;
+        if (index < mask) {
+            out[pos++] = (byte) index;
+            return pos;
+        }
+        out[pos++] = (byte) mask;
+        index -= mask;
+        while (index >= 128) {
+            out[pos++] = (byte) ((index & 0x7F) | 0x80);
+            index >>>= 7;
+        }
+        out[pos++] = (byte) index;
+        return pos;
     }
 
 }

@@ -57,7 +57,6 @@ public class HttpConnection {
     volatile boolean closed = false;
 
     volatile long lastActivityTime;
-    volatile boolean noActivity;
     volatile boolean inRequest;
     volatile long drainingAt;
 
@@ -70,13 +69,18 @@ public class HttpConnection {
 
     HttpConnection(Socket socket) throws IOException {
         this.socket = socket;
-        this.is = new NoSyncBufferedInputStream(new ActivityTimerInputStream(socket.getInputStream()));
-        this.os = new NoSyncBufferedOutputStream(new ActivityTimerOutputStream(socket.getOutputStream()));
+        this.is = new NoSyncBufferedInputStream(new ActivityTimerInputStream(socket.getInputStream()), ServerConfig.bufferSize());
+        // configured size + 64: a full 16KB h2 DATA frame plus its 9-byte
+        // frame header accumulate and flush as ONE write/packet. with a plain
+        // 16KB buffer the payload bypasses the buffer and the header is
+        // flushed as a separate 9-byte syscall (and, with TCP_NODELAY on, a
+        // separate packet) per frame
+        this.os = new NoSyncBufferedOutputStream(new ActivityTimerOutputStream(socket.getOutputStream()), ServerConfig.bufferSize() + 64);
         connectionId = "["+socket.getLocalPort()+"."+socket.getPort()+"]";
     }
 
     public void debug() {
-        logger.log(Level.INFO,toString()+", inRequest "+inRequest+", request count "+requestCount.get());
+        logger.log(Level.INFO, this +", inRequest "+inRequest+", request count "+requestCount.get());
     }
 
     public SSLSession getSSLSession() {
@@ -193,7 +197,7 @@ public class HttpConnection {
         }
 
         @Override
-        public int read(byte b[], int off, int len) throws IOException {
+        public int read(byte[] b, int off, int len) throws IOException {
             try {
                 return super.read(b, off, len);
             } finally {
@@ -219,7 +223,7 @@ public class HttpConnection {
         }
 
         @Override
-        public void write(byte b[], int off, int len) throws IOException {
+        public void write(byte[] b, int off, int len) throws IOException {
             try {
                 out.write(b, off, len);
             } finally {

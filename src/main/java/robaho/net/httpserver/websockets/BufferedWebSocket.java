@@ -36,6 +36,9 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     private final LinkedBlockingQueue<WebSocketFrame> queue = new LinkedBlockingQueue<>(MAX_PENDING_FRAMES);
     private final AtomicInteger pending = new AtomicInteger();
+    /** total bytes of queued (not yet written) frames: the frame-count bound
+     * alone allowed 1024 x frame-size retention when the consumer stalls */
+    private final java.util.concurrent.atomic.AtomicLong queuedBytes = new java.util.concurrent.atomic.AtomicLong();
     /** the thread running the drain task, so doClose can detect being called
      * FROM the drain task (waiting on our own future would always time out
      * and self-interrupt via cancel(true)) */
@@ -125,6 +128,10 @@ public abstract class BufferedWebSocket extends WebSocket {
                 }
                 super.sendFrame(frame);
                 pending.decrementAndGet();
+                var payload = frame.getBinaryPayload();
+                if (payload != null) {
+                    queuedBytes.addAndGet(-payload.length);
+                }
             }
         } catch (IOException ex) {
             onException(ex);
@@ -135,12 +142,28 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     @Override
     public void sendFrame(WebSocketFrame frame) throws IOException {
+        var payload = frame.getBinaryPayload();
+        int frameBytes = payload == null ? 0 : payload.length;
+        int cap = robaho.net.httpserver.ServerConfig.maxBufferedWebSocketBytes();
+        if (cap != 0) {
+            // bound the retained bytes, not just the frame count: a stalled
+            // consumer with 1024 queued frames could otherwise pin
+            // 1024 x frame-size of memory
+            long total = queuedBytes.addAndGet(frameBytes);
+            if (total > cap) {
+                queuedBytes.addAndGet(-frameBytes);
+                throw new WebSocketException(CloseCode.MessageTooBig,
+                    "buffered frames exceed the " + cap + " byte queue cap");
+            }
+        }
         pending.incrementAndGet();
         try {
             // put() blocks when the queue is full, providing backpressure
             // against a producer that outpaces the consumer
             queue.put(frame);
         } catch (InterruptedException ex) {
+            queuedBytes.addAndGet(-frameBytes);
+            pending.decrementAndGet();
             Thread.currentThread().interrupt();
             throw new IOException("interrupted while queueing frame", ex);
         }

@@ -3,7 +3,6 @@ package robaho.net.httpserver;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -184,5 +183,30 @@ public class OptimizedHeaders extends Headers {
         // the lists must be mutable: consumers of entrySet()/forEach() (e.g.
         // Headers.putAll followed by add()) modify the returned lists
         map.forEach((k,v) -> action.accept(k, (v instanceof String s) ? new ArrayList<>(List.of(s)) : (List<String>)v));
+    }
+
+    /** iteration for READ-ONLY consumers: passes the raw stored value (a
+     * String for single-valued headers, a List otherwise) without the
+     * mutable-list wrapper allocations forEach() must make. used by the HPACK
+     * response encoder */
+    public void forEachRaw(java.util.function.BiConsumer<String, Object> action) {
+        map.forEach((k, v) -> action.accept(k, v));
+    }
+
+    /** copy entries into a JDK Headers without the entrySet()/forEach()
+     * wrapper allocations: putAll() iterated wrappers (SimpleEntry +
+     * ArrayList + List.of per single-valued header), ~5-6 allocations per
+     * header on every request. the copy still yields MUTABLE lists (the
+     * HttpHandler contract), so single values wrap exactly once */
+    public void copyInto(Headers target) {
+        map.forEach((k, v) -> {
+            if (v instanceof String single) {
+                java.util.ArrayList<String> list = new java.util.ArrayList<>(1);
+                list.add(single);
+                target.put(k, list);
+            } else {
+                target.put(k, new java.util.ArrayList<>((java.util.List<String>) v));
+            }
+        });
     }
 }

@@ -10,9 +10,15 @@ import java.io.OutputStream;
  */
 public class NoSyncBufferedInputStream extends FilterInputStream {
 
-    /** 16KB: large enough that a typical response (headers + small body) is
-     * written with a single flush, small enough for many connections */
-    protected byte[] buf = new byte[16384];
+    private static final byte[] EMPTY = new byte[0];
+
+    private final int bufferSize;
+
+    /** lazily allocated on first fill (connections that never read - e.g.
+     * port probes - never pay for a buffer); null once closed. 16KB default:
+     * large enough that a typical request (headers + small body) is read with
+     * a single fill, small enough for many connections */
+    protected byte[] buf = EMPTY;
 
     /**
      * The index one greater than the index of the last valid byte in
@@ -74,7 +80,15 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
 
 
     public NoSyncBufferedInputStream(InputStream in) {
+        this(in, 16384);
+    }
+
+    public NoSyncBufferedInputStream(InputStream in, int size) {
         super(in);
+        if (size <= 0) {
+            throw new IllegalArgumentException("buffer size " + size);
+        }
+        this.bufferSize = size;
     }
 
     /**
@@ -85,7 +99,12 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
     private void fill() throws IOException {
         pos = 0;
         count = 0;
-        int n = getInIfOpen().read(getBufIfOpen());
+        byte[] buffer = getBufIfOpen();
+        if (buffer.length == 0) {
+            buffer = new byte[bufferSize];
+            buf = buffer;
+        }
+        int n = getInIfOpen().read(buffer);
         if (n > 0)
             count = n;
     }
@@ -118,7 +137,9 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
     private int read1(byte[] b, int off, int len) throws IOException {
         int avail = count - pos;
         if (avail <= 0) {
-            if (len >= buf.length) {
+            // compare against the configured size, not buf.length: the buffer
+            // is allocated lazily and may still be empty here
+            if (len >= bufferSize) {
                 return getInIfOpen().read(b, off, len);
             }
             fill();

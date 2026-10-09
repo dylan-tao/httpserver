@@ -106,30 +106,16 @@ public class OpenAddressMap<K,V> {
         int start = index;
         // int count=0;
         Entry entry;
-        try {
-            while ((entry = entries[index]) != null) {
-                // count++;
-                if (entry.key.equals(key)) {
-                    return (V)entry.value;
-                }
-                index = (index + 1) & mask;
-                if(index==start) {
-                    break;
-                }
+        while ((entry = entries[index]) != null) {
+            if (entry.key.equals(key)) {
+                return (V)entry.value;
             }
-            return null;
-        } finally {
-            // System.out.println("count="+count);
-            // if(count>5) {
-            //     for(var e : entries) {
-            //         if(e!=null) {
-            //             System.out.println(e.key+"="+e.value);
-            //         } else {
-            //             System.out.println("null");
-            //         }
-            //     }
-            // }
+            index = (index + 1) & mask;
+            if(index==start) {
+                break;
+            }
         }
+        return null;
     }
 
     public int size() {

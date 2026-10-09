@@ -3,7 +3,6 @@ package robaho.net.httpserver.http2;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
@@ -84,19 +83,15 @@ class H2Client implements AutoCloseable {
         }
     }
 
-    /** the collected outcome for one stream */
-    static final class Response {
-        final int status;            // decoded :status, -1 when absent/undecoded
-        final byte[] data;           // concatenated DATA payloads
-        final Integer rstErrorCode;  // RST_STREAM error code for this stream, if any
-        final boolean goaway;        // the connection saw a GOAWAY
-
-        Response(int status, byte[] data, Integer rstErrorCode, boolean goaway) {
-            this.status = status;
-            this.data = data;
-            this.rstErrorCode = rstErrorCode;
-            this.goaway = goaway;
-        }
+    /**
+     * the collected outcome for one stream
+     *
+     * @param status       decoded :status, -1 when absent/undecoded
+     * @param data         concatenated DATA payloads
+     * @param rstErrorCode RST_STREAM error code for this stream, if any
+     * @param goaway       the connection saw a GOAWAY
+     */
+        record Response(int status, byte[] data, Integer rstErrorCode, boolean goaway) {
     }
 
     Response awaitResponse(int streamId) throws IOException {
@@ -176,6 +171,13 @@ class H2Client implements AutoCloseable {
                         if (f.streamId == streamId) {
                             data.writeBytes(f.payload);
                             if (f.has(FLAG_END_STREAM)) {
+                                // return the connection-window credit for the
+                                // DATA received: without it the 65535 window
+                                // exhausts after ~64KB of responses and the
+                                // server's writers park forever
+                                if (data.size() > 0) {
+                                    writeWindowUpdate(0, data.size());
+                                }
                                 return new Response(decodeStatus(headers.toByteArray()),
                                     data.toByteArray(), null, goawayReceived);
                             }
@@ -199,6 +201,12 @@ class H2Client implements AutoCloseable {
     int sendRequest(String method, String path, boolean endStream) throws IOException {
         int streamId = nextStreamId;
         nextStreamId += 2;
+        return sendRequest(streamId, method, path, endStream);
+    }
+
+    /** send a request on an explicitly chosen stream id (multi-lane
+     * benchmarks: ids must be odd and strictly increasing per connection) */
+    int sendRequest(int streamId, String method, String path, boolean endStream) throws IOException {
         byte[] block = encodeHeaders(
             ":method", method,
             ":scheme", "http",
@@ -343,6 +351,16 @@ class H2Client implements AutoCloseable {
         byte[] payload = new byte[length];
         readFully(payload);
         return new Frame(type, flags, streamId, payload);
+    }
+
+    /** send a WINDOW_UPDATE frame returning flow control credit */
+    void writeWindowUpdate(int streamId, int increment) throws IOException {
+        byte[] payload = new byte[4];
+        payload[0] = (byte) (increment >>> 24);
+        payload[1] = (byte) (increment >>> 16);
+        payload[2] = (byte) (increment >>> 8);
+        payload[3] = (byte) increment;
+        writeFrame(TYPE_WINDOW_UPDATE, 0, streamId, payload);
     }
 
     private void writeFrame(int type, int flags, int streamId, byte[] payload) throws IOException {

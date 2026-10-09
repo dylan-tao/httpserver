@@ -41,7 +41,7 @@ import java.util.concurrent.*;
  */
 
 public class Test10 extends Test {
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         System.setProperty("robaho.net.httpserver.idleInterval", "3");
 
         System.out.print ("Test10: ");

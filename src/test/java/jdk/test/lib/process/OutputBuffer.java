@@ -36,7 +36,7 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 public interface OutputBuffer {
-  public static class OutputBufferException extends RuntimeException {
+  class OutputBufferException extends RuntimeException {
     private static final long serialVersionUID = 8528687792643129571L;
 
     public OutputBufferException(Throwable cause) {
@@ -49,13 +49,13 @@ public interface OutputBuffer {
    *
    * @return stdout result
    */
-  public String getStdout();
+  String getStdout();
 
   /**
    * Returns the stdout as a list.
    * Empty List if application produced no output.
    */
-  default public List<String> getStdoutAsList() {
+  default List<String> getStdoutAsList() {
     return new BufferedReader(new StringReader(getStdout()))
             .lines()
             .collect(Collectors.toList());
@@ -66,29 +66,29 @@ public interface OutputBuffer {
    *
    * @return stderr result
    */
-  public String getStderr();
-  public int getExitValue();
+  String getStderr();
+  int getExitValue();
 
   /**
    * Returns the pid if available
    *
    * @return pid
    */
-  public long pid();
+  long pid();
 
-  public static OutputBuffer of(Process p, Charset cs) {
+  static OutputBuffer of(Process p, Charset cs) {
     return new LazyOutputBuffer(p, cs);
   }
 
-  public static OutputBuffer of(Process p) {
+  static OutputBuffer of(Process p) {
     return new LazyOutputBuffer(p, null);
   }
 
-  public static OutputBuffer of(String stdout, String stderr, int exitValue) {
+  static OutputBuffer of(String stdout, String stderr, int exitValue) {
     return new EagerOutputBuffer(stdout, stderr, exitValue);
   }
 
-  public static OutputBuffer of(String stdout, String stderr) {
+  static OutputBuffer of(String stdout, String stderr) {
     return of(stdout, stderr, -1);
   }
 

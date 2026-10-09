@@ -53,7 +53,7 @@ public class AutoCloseableHttpExchange {
     static AtomicBoolean exchangeCloseFail = new AtomicBoolean(false);
 
     static class Handler implements HttpHandler {
-        private CountDownLatch latch;
+        private final CountDownLatch latch;
 
         Handler(CountDownLatch latch) {
             this.latch = latch;
@@ -89,7 +89,7 @@ public class AutoCloseableHttpExchange {
         is.close();
     }
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         int CONNECTION_COUNT = 5;
         CountDownLatch latch = new CountDownLatch(CONNECTION_COUNT);
 

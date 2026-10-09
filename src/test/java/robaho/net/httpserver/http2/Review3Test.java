@@ -3,7 +3,6 @@ package robaho.net.httpserver.http2;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 
 import org.testng.Assert;
 import org.testng.SkipException;
@@ -52,13 +51,13 @@ public class Review3Test {
             client.sendTrailer(stream1, "x-trailer", "value", true);
 
             var response3 = client.awaitResponse(stream3);
-            Assert.assertFalse(response3.goaway, "interleaved trailer must not trigger GOAWAY");
-            Assert.assertEquals(response3.status, 200, "stream 3 must complete");
+            Assert.assertFalse(response3.goaway(), "interleaved trailer must not trigger GOAWAY");
+            Assert.assertEquals(response3.status(), 200, "stream 3 must complete");
 
             var response1 = client.awaitResponse(stream1);
-            Assert.assertFalse(response1.goaway);
-            Assert.assertNull(response1.rstErrorCode);
-            Assert.assertEquals(response1.status, 200, "stream 1 must complete after its trailer");
+            Assert.assertFalse(response1.goaway());
+            Assert.assertNull(response1.rstErrorCode());
+            Assert.assertEquals(response1.status(), 200, "stream 1 must complete after its trailer");
         }
     }
 

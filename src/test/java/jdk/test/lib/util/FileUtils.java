@@ -296,7 +296,7 @@ public final class FileUtils {
                 }
             } catch (IOException ioe) {
                 throw new RuntimeException(ioe);
-            };
+            }
         });
 
         final AtomicReference throwableReference =

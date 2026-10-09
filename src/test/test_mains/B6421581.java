@@ -37,7 +37,7 @@ public class B6421581 {
     static boolean error = false;
     static int iter = 0;
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
                 once();
     }
 

@@ -3,7 +3,7 @@ package robaho.net.httpserver;
 /** small set designed for efficient negative contains */
 public class BloomSet {
     private final int bloomHash;
-    private OpenAddressMap<String,Boolean> values;
+    private final OpenAddressMap<String,Boolean> values;
     private BloomSet(String... values) {
         this.values = new OpenAddressMap<>(values.length*2);
         int bloomHash = 0;

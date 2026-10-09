@@ -51,8 +51,8 @@ import static java.util.Collections.list;
  */
 public class NetworkConfiguration {
 
-    private Map<NetworkInterface,List<Inet4Address>> ip4Interfaces;
-    private Map<NetworkInterface,List<Inet6Address>> ip6Interfaces;
+    private final Map<NetworkInterface,List<Inet4Address>> ip4Interfaces;
+    private final Map<NetworkInterface,List<Inet6Address>> ip6Interfaces;
     private final boolean isIPv6Available;
     private boolean has_testableipv6address = false;
     private boolean has_sitelocaladdress = false;
@@ -73,8 +73,7 @@ public class NetworkConfiguration {
                 // addresses does not fully enable IPv6 operations.
                 // E.g. IPv6 multicasting does not work.
                 // So, don't set has_testableipv6address if we only find these.
-                .filter(addr -> Platform.isAix() ?
-                    !(addr.isAnyLocalAddress() || addr.isLoopbackAddress()) : true)
+                .filter(addr -> !Platform.isAix() || !(addr.isAnyLocalAddress() || addr.isLoopbackAddress()))
                 .forEach(ia -> {
                     has_testableipv6address = true;
                     if (ia.isLinkLocalAddress()) has_linklocaladdress = true;
@@ -90,7 +89,7 @@ public class NetworkConfiguration {
     }
 
     private static boolean isIPv6LinkLocal(InetAddress a) {
-        return Inet6Address.class.isInstance(a) && a.isLinkLocalAddress();
+        return a instanceof Inet6Address && a.isLinkLocalAddress();
     }
 
     /**
@@ -141,9 +140,7 @@ public class NetworkConfiguration {
 
         if (Platform.isWindows()) {
             String dName = nif.getDisplayName();
-            if (dName != null && dName.contains("Teredo")) {
-                return false;
-            }
+            return dName == null || !dName.contains("Teredo");
         }
         return true;
     }

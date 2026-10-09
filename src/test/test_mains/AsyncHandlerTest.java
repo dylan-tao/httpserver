@@ -61,7 +61,7 @@ public class AsyncHandlerTest implements HttpHandler {
         });
     }
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    static void main(String[] args) throws IOException, InterruptedException {
         HttpServer server = HttpServer.create(
                 new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
 

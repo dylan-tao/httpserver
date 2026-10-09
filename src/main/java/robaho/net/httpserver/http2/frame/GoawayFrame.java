@@ -33,7 +33,7 @@ public class GoawayFrame extends BaseFrame {
     }
 
     public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {
-        if(frameHeader.getStreamIdentifier()!=0) {
+        if(frameHeader.streamIdentifier()!=0) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }
         if(body.length<8) {

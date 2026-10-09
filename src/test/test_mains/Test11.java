@@ -53,7 +53,7 @@ public class Test11 {
         }
     }
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         System.out.print ("Test 11: ");
         InetAddress loopback = InetAddress.getLoopbackAddress();
         HttpServer server = HttpServer.create(new InetSocketAddress(loopback, 0), 0);

@@ -10,17 +10,26 @@ import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
 
 /**
- * HPACK huffman decoding (RFC 7541 appendix B).
+ * HPACK huffman codec (RFC 7541 appendix B).
  *
  * The codes form a canonical prefix code, so decoding uses per-length
  * "first code / count / first index" tables: after consuming each bit, an
  * O(1) range check decides whether the accumulated bits are a code of that
  * length. No per-bit allocation is performed.
+ *
+ * Encoding uses the per-symbol code/length arrays parsed from the same
+ * resource: bits are accumulated and emitted byte-wise, with EOS-prefix
+ * (ones) padding on the final partial byte as the RFC requires.
  */
 public class Huffman {
 
     private static final int MAX_CODE_LENGTH = 30;
     private static final int EOS = 256;
+
+    /** per-symbol code values (index = symbol 0..255) for encoding */
+    private static final long[] CODES = new long[256];
+    /** per-symbol code lengths (index = symbol 0..255) for encoding */
+    private static final int[] LENGTHS = new int[256];
 
     private static final class Tables {
         /** first code value of each length (index = length), or -1 if none */
@@ -114,6 +123,10 @@ public class Huffman {
                 }
                 codes[value] = c;
                 lengths[value] = code.length();
+                if (value < 256) {
+                    CODES[value] = c;
+                    LENGTHS[value] = code.length();
+                }
                 value++;
             }
         } catch (IOException e) {
@@ -126,19 +139,26 @@ public class Huffman {
     }
 
     public static String decode(byte[] value) throws HTTP2Exception {
+        return decode(value, 0, value.length);
+    }
+
+    /** decode a region of the header block in place: the caller has already
+     * validated the bounds, so the previous copyOfRange per name/value was a
+     * duplicate allocation */
+    public static String decode(byte[] value, int offset, int length) throws HTTP2Exception {
         Tables t = TABLES;
         // RFC 7541 5.2: the decoded symbol sequence is the UTF-8 encoding of
         // the header value - collect raw bytes, then convert once (decoding
         // symbol-by-symbol into a String would corrupt multi byte sequences).
         // the shortest code is 5 bits, so the decoded output can be LARGER
         // than the input in bytes (e.g. 96 input bits -> 15+ symbols)
-        byte[] decoded = new byte[value.length * 8 / 5 + 2];
+        byte[] decoded = new byte[length * 8 / 5 + 2];
         int pos = 0;
 
         long acc = 0;
         int bits = 0;
 
-        for (int i = 0; i < value.length; i++) {
+        for (int i = offset; i < offset + length; i++) {
             int b = value[i] & 0xFF;
             for (int j = 7; j >= 0; j--) {
                 acc = (acc << 1) | ((b >> j) & 1);
@@ -150,9 +170,9 @@ public class Huffman {
 
                 long base = t.firstCode[bits];
                 if (base != -1) {
-                    long offset = acc - base;
-                    if (offset >= 0 && offset < t.count[bits]) {
-                        int symbol = t.symbols[t.firstIndex[bits] + (int) offset];
+                    long codeOffset = acc - base;
+                    if (codeOffset >= 0 && codeOffset < t.count[bits]) {
+                        int symbol = t.symbols[t.firstIndex[bits] + (int) codeOffset];
                         if (symbol == EOS) {
                             throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "decoded data contains EOS");
                         }
@@ -170,5 +190,46 @@ public class Huffman {
         }
 
         return new String(decoded, 0, pos, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** the huffman-encoded byte length of value, without encoding it (used
+     * for the shorter-of-literal choice in HPACK string literals) */
+    public static int encodedLength(byte[] value) {
+        long bits = 0;
+        for (byte b : value) {
+            bits += LENGTHS[b & 0xFF];
+        }
+        return (int) ((bits + 7) >>> 3);
+    }
+
+    /** huffman-encode value into a fresh array */
+    public static byte[] encode(byte[] value) {
+        byte[] out = new byte[encodedLength(value)];
+        encodeInto(value, out, 0);
+        return out;
+    }
+
+    /** huffman-encode value directly into out at pos (zero allocation),
+     * returning the new position. the final partial byte is padded with the
+     * EOS prefix (ones) as RFC 7541 5.2 requires */
+    public static int encodeInto(byte[] value, byte[] out, int pos) {
+        long acc = 0;
+        int nbits = 0;
+        for (byte b : value) {
+            int s = b & 0xFF;
+            acc = (acc << LENGTHS[s]) | CODES[s];
+            nbits += LENGTHS[s];
+            while (nbits >= 8) {
+                out[pos++] = (byte) (acc >>> (nbits - 8));
+                nbits -= 8;
+            }
+            // keep the accumulator bounded: at most 7 bits remain here, so
+            // the next symbol's shift stays far below 64 bits
+            acc &= (1L << nbits) - 1;
+        }
+        if (nbits > 0) {
+            out[pos++] = (byte) ((acc << (8 - nbits)) | ((1 << (8 - nbits)) - 1));
+        }
+        return pos;
     }
 }

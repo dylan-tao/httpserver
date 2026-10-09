@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.FileInputStream;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -20,7 +21,7 @@ import static robaho.net.httpserver.extras.MultipartFormParser.parse;
 public class MultipartFormParserTest {
 
     @Test
-    public void testFiles() throws UnsupportedEncodingException, IOException {
+    public void testFiles() throws IOException {
         var body = "trash1\r\n";
         body += "------WebKitFormBoundaryvef1fLxmoUdYZWXp\r\n";
         body += "Content-Disposition: form-data; name=\"uploads[]\"; filename=\"A.txt\"\r\n";
@@ -41,7 +42,7 @@ public class MultipartFormParserTest {
         Path storage = Path.of("/tmp", "parser_test");
         storage.toFile().mkdirs();
 
-        var results = parse("UTF-8", "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryvef1fLxmoUdYZWXp", new ByteArrayInputStream(body.getBytes("UTF-8")), storage);
+        var results = parse("UTF-8", "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryvef1fLxmoUdYZWXp", new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)), storage);
 
         Assert.assertEquals(results.size(), 1);
         List<Part> values = results.get("uploads[]");
@@ -53,7 +54,7 @@ public class MultipartFormParserTest {
         s += "111Z\rCCCC\nCCCC\r\nCCCCC@\r\n";
 
         Assert.assertEquals(values.get(0).contentType(),"text/plain");
-        Assert.assertEquals(s.getBytes("UTF-8"), Files.readAllBytes((values.get(0).file()).toPath()), "file1 failed");
+        Assert.assertEquals(s.getBytes(StandardCharsets.UTF_8), Files.readAllBytes((values.get(0).file()).toPath()), "file1 failed");
 
 
         s = "\r\n";
@@ -62,7 +63,7 @@ public class MultipartFormParserTest {
         s += "222Z\r222W\n2220\r\n666@";
 
         Assert.assertEquals(values.get(1).contentType(),"text/plain");
-        Assert.assertEquals(s.getBytes("UTF-8"), Files.readAllBytes((values.get(1).file()).toPath()), "file2 failed");
+        Assert.assertEquals(s.getBytes(StandardCharsets.UTF_8), Files.readAllBytes((values.get(1).file()).toPath()), "file2 failed");
     }
 
     @Test
@@ -162,7 +163,7 @@ public class MultipartFormParserTest {
         storage.toFile().mkdirs();
 
         var results = parse("UTF-8", "Content-Type: multipart/form-data; boundary=boundary",
-            new ByteArrayInputStream(body.getBytes("UTF-8")), storage);
+            new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)), storage);
 
         Assert.assertEquals(results.size(), 1);
         List<Part> values = results.get("upload");

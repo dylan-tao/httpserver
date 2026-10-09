@@ -147,7 +147,7 @@ public class FixedLengthInputStream
     void check(boolean cond) {if (cond) pass(); else fail();}
     void check(boolean cond, String failMessage) {if (cond) pass(); else fail(failMessage);}
     void debug(String message) {if(debug) { System.out.println(message); }  }
-    public static void main(String[] args) throws Throwable {
+    static void main(String[] args) throws Throwable {
         Class<?> k = new Object(){}.getClass().getEnclosingClass();
         try {k.getMethod("instanceMain",String[].class)
                 .invoke( k.newInstance(), (Object) args);}

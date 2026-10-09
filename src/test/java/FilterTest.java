@@ -410,7 +410,7 @@ public class FilterTest {
             assertEquals(exchange.getResponseCode(), originalExchange.getResponseCode());
             assertEquals(exchange.getResponseBody(), originalExchange.getResponseBody());
             assertEquals(exchange.getAttribute("foo"), originalExchange.getAttribute("foo"));
-            assertFalse(exchange.getRequestHeaders().equals(originalExchange.getRequestHeaders()));
+            assertNotEquals(originalExchange.getRequestHeaders(), exchange.getRequestHeaders());
 
             exchange.setAttribute("foo", "barbar");
             assertEquals(exchange.getAttribute("foo"), originalExchange.getAttribute("foo"));

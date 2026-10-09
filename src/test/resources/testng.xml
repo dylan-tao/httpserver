@@ -1,0 +1,42 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="Verify suite">
+  <test name="Command line test">
+    <classes>
+      <class name="BasicAuthenticatorExceptionCheck"/>
+      <class name="BasicAuthenticatorRealm"/>
+      <class name="CreateHttpServerTest"/>
+      <class name="DateFormatterTest"/>
+      <class name="ExceptionKeepAlive"/>
+      <class name="ExchangeAttributeTest"/>
+      <class name="FilterTest"/>
+      <class name="HeadKeepAlive"/>
+      <class name="HeadersTest"/>
+      <class name="HttpContextTest"/>
+      <class name="HttpPrincipalTest"/>
+      <class name="InputNotRead"/>
+      <class name="InputRead100Test"/>
+      <class name="ZeroLengthOutputStream"/>
+      <class name="robaho.net.httpserver.HttpsConfiguratorTest"/>
+      <class name="robaho.net.httpserver.PipeliningStallTest"/>
+      <class name="robaho.net.httpserver.RequestHeadersTest"/>
+      <class name="robaho.net.httpserver.SSLSessionTest"/>
+      <class name="robaho.net.httpserver.StringUtilsTest"/>
+      <class name="robaho.net.httpserver.extras.MultipartFormParserTest"/>
+      <class name="robaho.net.httpserver.http2.Http2Test"/>
+      <class name="robaho.net.httpserver.websockets.MultipleWebSocketTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketResponseHandlerTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketTest"/>
+      <class name="robaho.net.httpserver.SlowBodyKeepAliveTest"/>
+      <class name="robaho.net.httpserver.http2.hpack.HuffmanTest"/>
+      <class name="robaho.net.httpserver.http2.H2ComplianceTest"/>
+      <class name="robaho.net.httpserver.http2.MultiFrameTrailerTest"/>
+      <class name="robaho.net.httpserver.http2.Review3Test"/>
+      <class name="robaho.net.httpserver.extras.ProxyForwardingTest"/>
+      <class name="robaho.net.httpserver.Http1RegressionTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketHandshakeErrorTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketFrameValidationTest"/>
+      <class name="robaho.net.httpserver.extras.FormParserTest"/>
+      <class name="robaho.net.httpserver.websockets.BufferedWebSocketTest"/>
+    </classes>
+  </test>
+</suite>

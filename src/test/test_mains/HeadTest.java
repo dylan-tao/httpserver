@@ -46,7 +46,7 @@ import jdk.test.lib.net.URIBuilder;
 
 public class HeadTest {
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         server();
     }
 

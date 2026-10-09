@@ -42,25 +42,30 @@ public class ServerConfig {
     private static final int DEFAULT_MAX_IDLE_CONNECTIONS = 200;
 
     private static final long DEFAULT_MAX_REQ_TIME = -1; // default: forever
-    private static final long DEFAULT_MAX_RSP_TIME = -1; // default: forever
     // default timer schedule, in milli seconds, for the timer task that's
     // responsible for
     // timing out request/response if max request/response time is configured
-    private static final long DEFAULT_REQ_RSP_TIMER_TASK_SCHEDULE_MILLIS = 1000;
     private static final int DEFAULT_MAX_REQ_HEADERS = 200;
     private static final long DEFAULT_DRAIN_AMOUNT = 64 * 1024;
 
     private static final int DEFAULT_HTTP2_MAX_FRAME_SIZE = 16384;
     private static final int DEFAULT_HTTP2_INITIAL_WINDOW_SIZE = 65535;
     private static final int DEFAULT_HTTP2_CONNECTION_WINDOW_SIZE = 65535;
-    private static final int DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS = -1; // use -1 for no limit
+    // concurrent h2 streams per connection. 100 matches browser behavior
+    // (Chrome's per-connection stream limit) and bounds the per-connection
+    // memory (each open stream holds a 16KB output buffer + a handler task).
+    // -1 disables the limit; over-limit streams get REFUSED_STREAM (retryable)
+    private static final int DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS = 100;
     // maximum total size of a received HTTP/2 header block (HEADERS + CONTINUATIONs)
     private static final int DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE = 128 * 1024;
     // maximum size of a single HTTP/1.1 request line or header line
     private static final int DEFAULT_MAX_REQ_LINE_SIZE = 64 * 1024;
-    // maximum websocket frame / message sizes
-    private static final int DEFAULT_MAX_WS_FRAME_SIZE = 64 * 1024 * 1024;
-    private static final int DEFAULT_MAX_WS_MESSAGE_SIZE = 64 * 1024 * 1024;
+    // maximum websocket frame / message sizes. 4MB is generous for real
+    // applications (most messages are KBs) while bounding the worst case
+    // per connection to ~8-16MB instead of ~128-256MB; the previous 64MB
+    // default let a single slow client pin that much with one frame
+    private static final int DEFAULT_MAX_WS_FRAME_SIZE = 4 * 1024 * 1024;
+    private static final int DEFAULT_MAX_WS_MESSAGE_SIZE = 4 * 1024 * 1024;
     // maximum duration in seconds for the TLS handshake to complete
     private static final long DEFAULT_SSL_HANDSHAKE_TIMEOUT_SECS = 30;
 
@@ -78,9 +83,6 @@ public class ServerConfig {
     private static int maxReqHeaders;
     // max time a request or response is allowed to take
     private static long maxReqTime;
-    private static long maxRspTime;
-    private static long reqRspTimerScheduleMillis;
-    private static boolean debug;
 
     // the value of the TCP_NODELAY socket-level option
     private static boolean noDelay;
@@ -88,6 +90,21 @@ public class ServerConfig {
     // run connection handling on virtual threads (JDK 21, JEP 444). the
     // default executor and the BufferedWebSocket drain threads both honor it
     private static boolean virtualThreads;
+
+    // hot-path stats counters are only maintained when enabled (the /__stats
+    // endpoint property); gating removes ~8 volatile RMWs per request
+    private static boolean statsEnabled;
+
+    // connection-level stream buffer size (input and output), also used for
+    // the h2 stream buffer pool and the multipart parser read-ahead. 16KB
+    // fits a typical response into a single write; smaller values trade
+    // syscalls/frames for memory, larger the reverse
+    private static int bufferSize;
+
+    // byte cap on a BufferedWebSocket's pending frame queue. the frame-count
+    // bound (1024) alone allowed 1024 x frame-size retention (up to ~4GB with
+    // 4MB frames) when the consumer stalls; 0 disables the byte cap
+    private static int maxBufferedWebSocketBytes;
 
     private static boolean http2OverSSL;
     private static boolean http2OverNonSSL;
@@ -105,7 +122,7 @@ public class ServerConfig {
     static {
         java.security.AccessController.doPrivileged(
                 new PrivilegedAction<Void>() {
-                    String pkg = "robaho.net.httpserver";
+                    final String pkg = "robaho.net.httpserver";
                     @Override
                     public Void run() {
                         idleIntervalMillis = Long.getLong(pkg + ".idleInterval",
@@ -142,25 +159,25 @@ public class ServerConfig {
                         maxReqTime = Long.getLong(pkg + ".maxReqTime",
                                 DEFAULT_MAX_REQ_TIME);
 
-                        maxRspTime = Long.getLong(pkg + ".maxRspTime",
-                                DEFAULT_MAX_RSP_TIME);
-
-                        reqRspTimerScheduleMillis = Long.getLong(pkg + ".timerMillis",
-                                DEFAULT_REQ_RSP_TIMER_TASK_SCHEDULE_MILLIS);
-                        if (reqRspTimerScheduleMillis <= 0) {
-                            // ignore any negative or zero value for this configuration and reset
-                            // to default schedule
-                            reqRspTimerScheduleMillis = DEFAULT_REQ_RSP_TIMER_TASK_SCHEDULE_MILLIS;
-                        }
-
-                        debug = Boolean.getBoolean(pkg + ".debug");
-
-                        noDelay = Boolean.getBoolean(pkg + ".nodelay");
+                        // TCP_NODELAY defaults ON: with small h2 frames and
+                        // SSE-style writes, Nagle + delayed ACK can add ~40ms
+                        // stalls. opt out with robaho.net.httpserver.nodelay=false
+                        noDelay = Boolean.parseBoolean(System.getProperty(pkg + ".nodelay", "true"));
 
                         // default ON: the blocking-IO-heavy connection handling
                         // scales far better on virtual threads. opt out with
                         // robaho.net.httpserver.virtualThreads=false
                         virtualThreads = Boolean.parseBoolean(System.getProperty(pkg + ".virtualThreads", "true"));
+
+                        statsEnabled = Boolean.getBoolean(pkg + ".EnableStats");
+
+                        bufferSize = Integer.getInteger(pkg + ".bufferSize", 16384);
+                        if (bufferSize < 512) {
+                            // below this the syscall/frame overhead dominates
+                            bufferSize = 512;
+                        }
+
+                        maxBufferedWebSocketBytes = Integer.getInteger(pkg + ".maxBufferedWebSocketBytes", 16 * 1024 * 1024);
 
                         http2OverSSL = Boolean.getBoolean(pkg + ".http2OverSSL");
                         http2OverNonSSL = Boolean.getBoolean(pkg + ".http2OverNonSSL");
@@ -203,10 +220,6 @@ public class ServerConfig {
 
     }
 
-
-    static boolean debugEnabled() {
-        return debug;
-    }
 
     /**
      * {@return Returns the maximum duration, in milli seconds, a connection can be
@@ -264,26 +277,6 @@ public class ServerConfig {
         return maxReqTime;
     }
 
-    /**
-     * @return Returns the maximum amount of time the server will wait for the
-     *         response to be generated
-     *         for a request that is being processed. This method can return a value
-     *         of 0 or negative to
-     *         imply no maximum limit has been configured.
-     */
-    static long getMaxRspTime() {
-        return maxRspTime;
-    }
-
-    /**
-     * {@return Returns the timer schedule of the task that's responsible for timing
-     * out
-     * request/response that have been running longer than any configured timeout}
-     */
-    static long getReqRspTimerScheduleMillis() {
-        return reqRspTimerScheduleMillis;
-    }
-
     static boolean noDelay() {
         return noDelay;
     }
@@ -297,6 +290,66 @@ public class ServerConfig {
     /** true (default) when connection handling runs on virtual threads */
     public static boolean virtualThreads() {
         return virtualThreads;
+    }
+    /** hot-path stats counters are maintained only when this is true */
+    public static boolean statsEnabled() {
+        return statsEnabled;
+    }
+    /** connection-level stream buffer size (configurable, default 16KB) */
+    public static int bufferSize() {
+        return bufferSize;
+    }
+    /** byte cap on a BufferedWebSocket's pending queue (default 16MB, 0 = unlimited) */
+    public static int maxBufferedWebSocketBytes() {
+        return maxBufferedWebSocketBytes;
+    }
+
+    /** one-shot guard for the startup feature log */
+    private static final java.util.concurrent.atomic.AtomicBoolean JVM_FEATURES_LOGGED = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * log the state of the JVM-level performance features once at startup.
+     * These are LAUNCH flags the deployer controls (they cannot be switched at
+     * runtime); when they are on the JVM applies them automatically, and when
+     * they are off the code-level optimizations (buffer pooling, single
+     * allocation encoding, gated stats) remain in effect as the fallback - no
+     * configuration is needed for either mode.
+     */
+    static void logJvmFeatures(System.Logger logger) {
+        if (!JVM_FEATURES_LOGGED.compareAndSet(false, true)) {
+            return;
+        }
+        boolean zgc = false;
+        try {
+            for (var gc : java.lang.management.ManagementFactory.getGarbageCollectorMXBeans()) {
+                if (gc.getName().contains("ZGC")) {
+                    zgc = true;
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+            // management beans unavailable: report unknown
+        }
+        String compactHeaders = "unknown";
+        try {
+            for (String arg : java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments()) {
+                if (arg.contains("UseCompactObjectHeaders")) {
+                    compactHeaders = arg.startsWith("-XX:+") ? "on" : "off";
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        logger.log(System.Logger.Level.INFO, "JVM features: virtual threads=" + (virtualThreads ? "on" : "off")
+            + ", ZGC=" + zgc + ", compact object headers=" + compactHeaders
+            + (compactHeaders.equals("unknown") ? " (JDK < 24 or flag not set)" : ""));
+        if (!zgc) {
+            logger.log(System.Logger.Level.DEBUG,
+                "tip: -XX:+UseZGC (generational since JDK 23) suits this allocation-heavy workload");
+        }
+        if (!"on".equals(compactHeaders)) {
+            logger.log(System.Logger.Level.DEBUG,
+                "tip: -XX:+UseCompactObjectHeaders (JDK 24+) shrinks per-object overhead by 20-30%");
+        }
     }
     public static int http2MaxFrameSize() {
         return http2MaxFrameSize;

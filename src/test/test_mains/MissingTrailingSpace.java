@@ -47,7 +47,7 @@ public class MissingTrailingSpace {
     private static final int noMsgCode = 207;
     private static final String someContext = "/context";
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         InetAddress loopback = InetAddress.getLoopbackAddress();
         HttpServer server = HttpServer.create(new InetSocketAddress(loopback, 0), 0);
         try {

@@ -47,8 +47,10 @@ public class FormParser {
             os.write(buffer, 0, bytesRead);
         }
 
-        String data = new String(os.toByteArray(), encoding);
-        if (data.length() == 0) {
+        // toString(charset) decodes the internal buffer directly: the previous
+        // toByteArray() + new String() made a full extra copy of the body
+        String data = os.toString(encoding);
+        if (data.isEmpty()) {
             //data is empty - can skip the rest
             return new HashMap<>(0);
         }
@@ -63,21 +65,37 @@ public class FormParser {
         // https://bugzilla.mozilla.org/show_bug.cgi?id=18643
         //
         // NB: _charset_ must always be used with accept-charset and it must have the same value
-        String[] keyValues = data.split("&");
-
-        if (MAX_PARAMS != 0 && keyValues.length > MAX_PARAMS) {
-            throw new IllegalStateException("number of request parameters %d is higher than maximum of %d, aborting. Can be configured using 'http.maxParams'".formatted(keyValues.length, MAX_PARAMS));
+        //
+        // index-based scanning instead of split(): no intermediate String[]
+        // arrays and no regex machinery (split also allocates a copy of every
+        // segment). trailing '&' produce empty segments that split() silently
+        // drops, so trim them for identical behavior
+        int end = data.length();
+        while (end > 0 && data.charAt(end - 1) == '&') {
+            end--;
         }
 
-        for (String keyValue : keyValues) {
-            String[] segs = keyValue.split("=", 2);
-            String key = segs[0];
-            String value = segs.length > 1 ? segs[1] : null;
+        int paramCount = 0;
+        int start = 0;
+        while (start < end) {
+            int amp = data.indexOf('&', start);
+            if (amp == -1 || amp >= end) {
+                amp = end;
+            }
+            String keyValue = data.substring(start, amp);
+            int eq = keyValue.indexOf('=');
+            String key = eq == -1 ? keyValue : keyValue.substring(0, eq);
+            String value = eq == -1 ? null : keyValue.substring(eq + 1);
 
             List<String> values = params.computeIfAbsent(key, k -> new ArrayList());
             if (value != null) {
                 values.add(value);
             }
+            paramCount++;
+            if (MAX_PARAMS != 0 && paramCount > MAX_PARAMS) {
+                throw new IllegalStateException("number of request parameters %d is higher than maximum of %d, aborting. Can be configured using 'http.maxParams'".formatted(paramCount, MAX_PARAMS));
+            }
+            start = amp + 1;
         }
 
         // Second phase - look for _charset_ param and do the encoding

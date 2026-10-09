@@ -189,7 +189,7 @@ public class HeadersTest {
         }
     }
 
-    private static CompletableFuture<Throwable> throwable = new CompletableFuture<>();
+    private static final CompletableFuture<Throwable> throwable = new CompletableFuture<>();
 
     private record Handler(String headerKey, List<String> headerVal) implements HttpHandler {
 
@@ -259,7 +259,7 @@ public class HeadersTest {
     @Test(dataProvider = "headerPairs")
     public static void testEqualsAndHashCode(Headers h1, Headers h2) {
         // avoid testng's asserts(Map, Map) as they don't call Headers::equals
-        assertTrue(h1.equals(h2), "Headers differ");
+        assertEquals(h2, h1, "Headers differ");
         assertEquals(h1.hashCode(), h2.hashCode(), "hashCode differ for "
                 + List.of(h1, h2));
     }
@@ -268,16 +268,16 @@ public class HeadersTest {
     public static void testEqualsMap() {
         final var h = new Headers();
         final var m = new HashMap<String, List<String>>();
-        assertTrue(h.equals(m));
-        assertTrue(m.equals(h));
-        assertFalse(h.equals(null), "null cannot be equal to Headers");
+        assertEquals(m, h);
+        assertEquals(h, m);
+        assertNotEquals(h, null, "null cannot be equal to Headers");
     }
 
     @Test
     public static void testToString() {
         final var h = new Headers();
         h.put("Accept-Encoding", List.of("gzip, deflate"));
-        assertTrue(h.toString().equals("Headers { {Accept-encoding=[gzip, deflate]} }"));
+        assertEquals(h.toString(), "Headers { {Accept-encoding=[gzip, deflate]} }");
     }
 
     @Test
@@ -289,15 +289,15 @@ public class HeadersTest {
 
         final var list = new ArrayList<String>();
         list.add(null);
-        assertThrows(NPE, () -> h0.putAll(Map.of("a", list)));
-        assertThrows(IAE, () -> h0.putAll(Map.of("a", List.of("\n"))));
+        assertThrows(NPE, () -> h0.put("a", list));
+        assertThrows(IAE, () -> h0.put("a", List.of("\n")));
 
         final var h1 = new Headers();
         h1.put("a", List.of("1"));
         h1.put("b", List.of("2"));
         final var h2 = new Headers();
         h2.putAll(Map.of("a", List.of("1"), "b", List.of("2")));
-        assertTrue(h1.equals(h2));
+        assertEquals(h2, h1);
     }
 
     @Test
@@ -317,7 +317,7 @@ public class HeadersTest {
         final var h2 = new Headers();
         h2.put("a", List.of("11"));
         h2.put("b", List.of("22"));
-        assertTrue(h1.equals(h2));
+        assertEquals(h2, h1);
     }
 
     @Test
@@ -425,7 +425,7 @@ public class HeadersTest {
 
     @Test
     public static void testOfEmpty() {
-        for (var h : List.of(Headers.of(), Headers.of(new String[] {}))) {
+        for (var h : List.of(Headers.of(), Headers.of())) {
             assertEquals(h.size(), 0);
             assertTrue(h.isEmpty());
         }
@@ -445,7 +445,7 @@ public class HeadersTest {
         List.of(List.of("1"), List.of("1", "2", "3")).forEach(v -> assertTrue(h.containsValue(v)));
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         // String[] args0 = {"-testclass", "HeadersTest", "-methods", "testNullResponseHeaders", "-alwaysrunlisteners", "false"};
         // org.testng.TestNG.main(args0);
     }

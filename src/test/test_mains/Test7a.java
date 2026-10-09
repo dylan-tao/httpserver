@@ -46,7 +46,7 @@ import jdk.test.lib.net.URIBuilder;
 
 public class Test7a extends Test {
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         //Logger log = Logger.getLogger ("com.sun.net.httpserver");
         //log.setLevel (Level.FINE);
         //ConsoleHandler h = new ConsoleHandler();

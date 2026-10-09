@@ -482,7 +482,7 @@ public final class ProcessTools {
         StringBuilder cmdLine = new StringBuilder();
         for (String cmd : args)
             cmdLine.append(cmd).append(' ');
-        System.out.println("Command line: [" + cmdLine.toString() + "]");
+        System.out.println("Command line: [" + cmdLine + "]");
 
         ProcessBuilder pb = new ProcessBuilder(args);
         if (noCP) {
@@ -883,13 +883,13 @@ public final class ProcessTools {
 
     // ProcessTools as a wrapper
     // It executes method main in a separate virtual or platform thread
-    public static void main(String[] args) throws Throwable {
+    static void main(String[] args) throws Throwable {
         String wrapper = args[0];
         String className = args[1];
         String[] classArgs = new String[args.length - 2];
         System.arraycopy(args, 2, classArgs, 0, args.length - 2);
         Class c = Class.forName(className);
-        Method mainMethod = c.getMethod("main", new Class[] { String[].class });
+        Method mainMethod = c.getMethod("main", String[].class);
         mainMethod.setAccessible(true);
 
         if (wrapper.equals("Virtual")) {

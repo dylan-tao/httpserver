@@ -33,7 +33,7 @@ import com.sun.net.httpserver.HttpServer;
 
 public class B6424196 {
 
-    public static void main(String[] args) throws IOException {
+    static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create();
     }
 }

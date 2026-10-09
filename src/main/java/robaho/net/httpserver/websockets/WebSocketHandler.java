@@ -19,12 +19,12 @@ public abstract class WebSocketHandler implements HttpHandler {
         // (e.g. from a stubbed exchange) is not rejected.
         String requestMethod = exchange.getRequestMethod();
         if (requestMethod != null && !"GET".equalsIgnoreCase(requestMethod)) {
-            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1l);
+            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1L);
             return;
         }
 
         if (!isWebsocketRequested(headers)) {
-            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1l);
+            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1L);
             return;
         }
 

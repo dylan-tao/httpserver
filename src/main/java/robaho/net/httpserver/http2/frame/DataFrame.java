@@ -17,9 +17,9 @@ public class DataFrame extends BaseFrame {
     @Override
     public void writeTo(OutputStream outputStream) throws IOException {
         outputStream.write(body);
-    }   
+    }
     public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {
-        if(frameHeader.getFlags().contains(FrameFlag.PADDED)) {
+        if(frameHeader.flags().contains(FrameFlag.PADDED)) {
             if (body.length == 0) {
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "PADDED DATA frame with empty body");
             }

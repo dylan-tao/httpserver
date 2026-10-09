@@ -22,7 +22,7 @@ import robaho.net.httpserver.extras.ProxyHandler;
  * @summary test ability to create a tunneling proxy server using the CONNECT request method
  */
 public class TunnelProxyTest {
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         System.setProperty("jdk.httpclient.HttpClient.log","all");
 
         InetAddress loopback = InetAddress.getLoopbackAddress();

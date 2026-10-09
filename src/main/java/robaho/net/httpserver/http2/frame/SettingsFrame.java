@@ -30,12 +30,12 @@ public class SettingsFrame extends BaseFrame {
 	}
 
 	public static SettingsFrame parse(byte[] frameBody, FrameHeader header) throws HTTP2Exception {
-        if (header.getStreamIdentifier() != 0) {
+        if (header.streamIdentifier() != 0) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }
 
-        if(header.getFlags().contains(FrameFlag.ACK)) {
-            if(header.getLength() != 0) {
+        if(header.flags().contains(FrameFlag.ACK)) {
+            if(header.length() != 0) {
                 throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
             }
         }
@@ -51,7 +51,7 @@ public class SettingsFrame extends BaseFrame {
             var param = SettingParameter.parse(Arrays.copyOfRange(frameBody, paramIndex, paramIndex + 6));
             if(param!=null) {
                 result.params.add(param);
-            }   
+            }
             paramIndex += 6;
         }
         return result;
@@ -62,7 +62,7 @@ public class SettingsFrame extends BaseFrame {
 
 		int settingBodySize = params.size() * SettingParameter.PARAMETER_SIZE;
 
-        FrameHeader header = new FrameHeader(settingBodySize,FrameType.SETTINGS,getHeader().getFlags(),getHeader().getStreamIdentifier());
+        FrameHeader header = new FrameHeader(settingBodySize,FrameType.SETTINGS,getHeader().flags(),getHeader().streamIdentifier());
         header.writeTo(os);
 
 		for (int i = 0; i < params.size(); i++) {

@@ -94,8 +94,8 @@ public class Asserts {
     public static <T extends Comparable<T>>void assertLessThan(T lhs, T rhs, String msg) {
         if (!(compare(lhs, rhs, msg) < 0)) {
             msg = Objects.toString(msg, "assertLessThan")
-                    + ": expected that " + Objects.toString(lhs)
-                    + " < " + Objects.toString(rhs);
+                    + ": expected that " + lhs
+                    + " < " + rhs;
             fail(msg);
         }
     }
@@ -149,8 +149,8 @@ public class Asserts {
     public static <T extends Comparable<T>> void assertLessThanOrEqual(T lhs, T rhs, String msg) {
         if (!(compare(lhs, rhs, msg) <= 0)) {
             msg = Objects.toString(msg, "assertLessThanOrEqual")
-                    + ": expected that " + Objects.toString(lhs)
-                    + " <= " + Objects.toString(rhs);
+                    + ": expected that " + lhs
+                    + " <= " + rhs;
             fail(msg);
         }
     }
@@ -198,10 +198,10 @@ public class Asserts {
      * @throws RuntimeException if the assertion is not true.
      */
     public static void assertEquals(Object lhs, Object rhs, String msg) {
-        if ((lhs != rhs) && ((lhs == null) || !(lhs.equals(rhs)))) {
+        if (!Objects.equals(lhs, rhs)) {
             msg = Objects.toString(msg, "assertEquals")
-                    + ": expected " + Objects.toString(lhs)
-                    + " to equal " + Objects.toString(rhs);
+                    + ": expected " + lhs
+                    + " to equal " + rhs;
             fail(msg);
         }
     }
@@ -228,8 +228,8 @@ public class Asserts {
     public static void assertSame(Object lhs, Object rhs, String msg) {
         if (lhs != rhs) {
             msg = Objects.toString(msg, "assertSame")
-                    + ": expected " + Objects.toString(lhs)
-                    + " to equal " + Objects.toString(rhs);
+                    + ": expected " + lhs
+                    + " to equal " + rhs;
             fail(msg);
         }
     }
@@ -283,8 +283,8 @@ public class Asserts {
     public static <T extends Comparable<T>> void assertGreaterThanOrEqual(T lhs, T rhs, String msg) {
         if (!(compare(lhs, rhs, msg) >= 0)) {
             msg = Objects.toString(msg, "assertGreaterThanOrEqual")
-                    + ": expected " + Objects.toString(lhs)
-                    + " >= " + Objects.toString(rhs);
+                    + ": expected " + lhs
+                    + " >= " + rhs;
             fail(msg);
         }
     }
@@ -338,8 +338,8 @@ public class Asserts {
     public static <T extends Comparable<T>> void assertGreaterThan(T lhs, T rhs, String msg) {
         if (!(compare(lhs, rhs, msg) > 0)) {
             msg = Objects.toString(msg, "assertGreaterThan")
-                    + ": expected " + Objects.toString(lhs)
-                    + " > " + Objects.toString(rhs);
+                    + ": expected " + lhs
+                    + " > " + rhs;
             fail(msg);
         }
     }
@@ -387,10 +387,10 @@ public class Asserts {
      * @throws RuntimeException if the assertion is not true.
      */
     public static void assertNotEquals(Object lhs, Object rhs, String msg) {
-        if ((lhs == rhs) || (lhs != null && lhs.equals(rhs))) {
+        if (Objects.equals(lhs, rhs)) {
             msg = Objects.toString(msg, "assertNotEquals")
-                    + ": expected " + Objects.toString(lhs)
-                    + " to not equal " + Objects.toString(rhs);
+                    + ": expected " + lhs
+                    + " to not equal " + rhs;
             fail(msg);
         }
     }
@@ -508,11 +508,11 @@ public class Asserts {
     public static void assertStringsEqual(String str1, String str2,
                                           String msg) {
         String lineSeparator = System.getProperty("line.separator");
-        String str1Lines[] = str1.split(lineSeparator);
-        String str2Lines[] = str2.split(lineSeparator);
+        String[] str1Lines = str1.split(lineSeparator);
+        String[] str2Lines = str2.split(lineSeparator);
 
         int minLength = Math.min(str1Lines.length, str2Lines.length);
-        String longestStringLines[] = ((str1Lines.length == minLength) ?
+        String[] longestStringLines = ((str1Lines.length == minLength) ?
                                        str2Lines : str1Lines);
 
         boolean stringsAreDifferent = false;
@@ -567,11 +567,11 @@ public class Asserts {
             sb.append(' ');
         }
         sb.append("<");
-        sb.append(Objects.toString(lhs));
+        sb.append(lhs);
         sb.append("> ");
         sb.append(Objects.toString(relation, ","));
         sb.append(" <");
-        sb.append(Objects.toString(rhs));
+        sb.append(rhs);
         sb.append(">");
         return sb.toString();
     }

@@ -2,7 +2,6 @@ package robaho.net.httpserver.http2.frame;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.EnumSet;
 import java.util.List;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
@@ -35,7 +34,7 @@ public class PingFrame extends BaseFrame {
     }
 
     public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {
-        if (frameHeader.getStreamIdentifier() != 0) {
+        if (frameHeader.streamIdentifier() != 0) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }
         if(body.length!=8) {

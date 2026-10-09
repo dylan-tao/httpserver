@@ -53,7 +53,7 @@ public class LogFilter extends Filter {
         sb.append(t.getResponseCode());
         sb.append(" ");
         sb.append(t.getRemoteAddress());
-        ps.println(sb.toString());
+        ps.println(sb);
     }
 
     public void init(HttpContext ctx) {

@@ -38,10 +38,10 @@ import jdk.test.lib.net.URIBuilder;
 
 public class B6373555 {
 
-    private static int s_received = 0;
-    private static int sent = 0;
+    private static final int s_received = 0;
+    private static final int sent = 0;
 
-    private static int received = 0;
+    private static final int received = 0;
     private static int port;
 
     private static volatile boolean error = false;
@@ -49,7 +49,7 @@ public class B6373555 {
     static ExecutorService pool, execs;
     static int NUM = 1000;
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         try {
             if (args.length > 0) {
                 NUM = Integer.parseInt(args[0]);

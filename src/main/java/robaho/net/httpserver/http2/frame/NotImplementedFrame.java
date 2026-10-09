@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 class NotImplementedFrame extends BaseFrame {
-    private byte[] body;
+    private final byte[] body;
     public NotImplementedFrame(FrameHeader header,byte[] body) {
         super(header);
         this.body = body;

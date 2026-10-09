@@ -13,6 +13,7 @@ import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSession;
 
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -50,7 +51,7 @@ public class HttpsConfiguratorTest {
             urlc.setSSLSocketFactory (ctx.getSocketFactory());
             urlc.setHostnameVerifier (new DummyVerifier());
             urlc.getInputStream().readAllBytes();
-            assertTrue(urlc.getResponseCode()==200);
+            assertEquals(urlc.getResponseCode(), 200);
         } finally {
             httpsServer.stop(0);
         }

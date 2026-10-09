@@ -35,7 +35,6 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.time.ZoneId;
 
 import com.sun.net.httpserver.*;
 
@@ -59,7 +58,7 @@ class ExchangeImpl {
     private static final String HEAD = "HEAD";
     private static final String CONNECT = "CONNECT";
     private static final String HEADER_CONNECTION = "Connection";
-    private static final String HEADER_CONNECTION_UPGRADE = "Upgrade";  
+    private static final String HEADER_CONNECTION_UPGRADE = "Upgrade";
     /*
      * streams which take care of the HTTP protocol framing
      * and are passed up to higher layers
@@ -80,9 +79,15 @@ class ExchangeImpl {
     ExchangeImpl(
             String m, URI u, Request req, long len, HttpConnection connection) throws IOException {
         this.req = req;
-        // make a mutable copy to allow HttpHandler to modify in chain
+        // make a mutable copy to allow HttpHandler to modify in chain.
+        // OptimizedHeaders.copyInto avoids the per-header wrapper
+        // allocations of the generic putAll() path (~60-70 per request)
         this.reqHdrs = new Headers();
-        reqHdrs.putAll(req.headers());
+        if (req.headers() instanceof OptimizedHeaders optimized) {
+            optimized.copyInto(reqHdrs);
+        } else {
+            reqHdrs.putAll(req.headers());
+        }
         this.rspHdrs = new Headers();
         this.method = m;
         this.uri = u;
@@ -206,7 +211,7 @@ class ExchangeImpl {
     }
 
     // hard-coded formatting for Date header, rather than using slower DateFormatter
-    
+
     public void sendResponseHeaders(int rCode, long contentLen)
             throws IOException {
         final Logger logger = getServerImpl().getLogger();
@@ -214,10 +219,8 @@ class ExchangeImpl {
             throw new IOException("headers already sent");
         }
         this.rcode = rCode;
-        String statusLine = rCode == 101 ? "HTTP/1.1 101 Switching Protocols\r\n"
-                : "HTTP/1.1 " + rCode + Code.msg(rCode) + "\r\n";
         PlaceholderOutputStream o = getPlaceholderResponseBody();
-        ros.write(statusLine.getBytes(ISO_CHARSET));
+        ros.write(statusLineBytes(rCode));
         boolean noContentToSend = false; // assume there is content
         boolean noContentLengthHeader = false; // must not send Content-length is set
 
@@ -230,7 +233,7 @@ class ExchangeImpl {
 
         /* check for response type that is not allowed to send a body */
         var informational = rCode >= 100 && rCode < 200;
-        
+
         if (informational) {
         	if (rCode == 101) {
                 logger.log(Level.DEBUG, () -> "switching protocols");
@@ -324,7 +327,7 @@ class ExchangeImpl {
         }
         if(flush) {
             ros.flush();
-        }   
+        }
         if (noContentToSend) {
             close();
         }
@@ -332,29 +335,70 @@ class ExchangeImpl {
     }
 
     static final Charset ISO_CHARSET = StandardCharsets.ISO_8859_1;
-    private static final byte[] COLON_SPACE = ": ".getBytes(ISO_CHARSET);
-    private static final byte[] CRNL_BYTES = "\r\n".getBytes(ISO_CHARSET);
+    private static final byte[] STATUS_101 = "HTTP/1.1 101 Switching Protocols\r\n".getBytes(ISO_CHARSET);
+    /** status lines are immutable per code: cache the encoded bytes instead of
+     * rebuilding the String (and re-encoding it) on every response */
+    private static final java.util.concurrent.ConcurrentHashMap<Integer, byte[]> STATUS_LINES = new java.util.concurrent.ConcurrentHashMap<>();
 
-    private static void outputAscii(String s,OutputStream os) throws IOException {
-        os.write(s.getBytes(ISO_CHARSET));
+    private static byte[] statusLineBytes(int code) {
+        if (code == 101) {
+            return STATUS_101;
+        }
+        return STATUS_LINES.computeIfAbsent(code, c -> ("HTTP/1.1 " + c + Code.msg(c) + "\r\n").getBytes(ISO_CHARSET));
+    }
+
+    /** encode a String as ISO-8859-1 directly into the target buffer (zero
+     * allocation; unmappable chars become '?' exactly like the charset) */
+    private static int writeAscii(String s, byte[] buffer, int pos) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            buffer[pos++] = (byte) (c > 0xFF ? '?' : c);
+        }
+        return pos;
     }
 
     void writeHeaders(Headers map, OutputStream os) throws IOException {
+        // assemble the whole head into ONE buffer and write it once: the old
+        // per-header 4-write pattern cost ~18 virtual calls and ~9 byte[]
+        // allocations per response. ISO-8859-1 encodes one byte per char, so
+        // the char counts size the buffer exactly
+        int total = 2; // trailing CRLF
         for (Map.Entry<String, List<String>> entry : map.entrySet()) {
             String key = entry.getKey();
+            int keyLen = key.length();
             for (String val : entry.getValue()) {
                 // a CR/LF in a response header value would split the response
                 // (response splitting); refuse rather than write it through
                 if (val == null || val.indexOf('\r') >= 0 || val.indexOf('\n') >= 0) {
                     throw new IOException("illegal response header value for " + key);
                 }
-                outputAscii(key,os);
-                os.write(COLON_SPACE);
-                outputAscii(val,os);
-                os.write(CRNL_BYTES);
+                total += keyLen + 2 + val.length() + 2;
             }
         }
-        os.write(CRNL_BYTES);
+        byte[] head = new byte[total];
+        int pos = 0;
+        for (Map.Entry<String, List<String>> entry : map.entrySet()) {
+            String key = entry.getKey();
+            for (String val : entry.getValue()) {
+                pos = writeAscii(key, head, pos);
+                head[pos++] = ':';
+                head[pos++] = ' ';
+                if (val == ActivityTimer.dateAndTime()) {
+                    // the framework-set Date header: use the cached encoded
+                    // bytes instead of re-encoding the string per response
+                    byte[] dateBytes = ActivityTimer.dateAndTimeBytes();
+                    System.arraycopy(dateBytes, 0, head, pos, dateBytes.length);
+                    pos += dateBytes.length;
+                } else {
+                    pos = writeAscii(val, head, pos);
+                }
+                head[pos++] = '\r';
+                head[pos++] = '\n';
+            }
+        }
+        head[pos++] = '\r';
+        head[pos++] = '\n';
+        os.write(head, 0, pos);
     }
 
     public InetSocketAddress getRemoteAddress() {
@@ -467,12 +511,12 @@ class PlaceholderOutputStream extends java.io.OutputStream {
         wrapped.write(b);
     }
 
-    public void write(byte b[]) throws IOException {
+    public void write(byte[] b) throws IOException {
         checkWrap();
         wrapped.write(b);
     }
 
-    public void write(byte b[], int off, int len) throws IOException {
+    public void write(byte[] b, int off, int len) throws IOException {
         checkWrap();
         wrapped.write(b, off, len);
     }

@@ -2,7 +2,6 @@ package robaho.net.httpserver.http2.frame;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.EnumSet;
 import java.util.List;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
@@ -29,7 +28,7 @@ public class ResetStreamFrame extends BaseFrame {
         os.flush();
     }
 
-    static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception, Exception {
+    static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws Exception {
         if(body.length != 4) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }

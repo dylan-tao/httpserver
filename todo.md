@@ -26,7 +26,9 @@
 > 重建并集成进 src/test（H2Compliance/MultiFrameTrailer/Review3/SlowBodyKeepAlive/
 > Huffman/ProxyForwarding + h2c 裸 socket 测试客户端 H2Client）。
 > 验证方式：JDK 21 编译 0 错误；TestNG 套件 104/104 通过（2026-10-09 第 13 批后 118/118，
-> 第 14 批后 127/127，第 15 批后 135/135，第 16 批虚拟线程化后 135/135 保持全绿）；
+> 第 14 批后 127/127，第 15 批后 135/135，第 16 批虚拟线程化后 135/135，第 17 批
+> 性能清单落地后 137/137，第 18 批内存清单落地后 144/144，第 19 批内存收尾后
+> 145/145 保持全绿）；
 > 九套冒烟与专项验证在修复当时全部通过（**注意：其源文件位于 /tmp/hs_smoke，
 > 已被系统清理丢失**——正式集成进 src/test 的必要性由此实证，见"遗漏与残留清单"D 类）。
 >
@@ -937,6 +939,294 @@
 > | 5 | multipart deleteOnExit 累积 + BufferedWS 按帧不按字节 | 慢性泄漏 | 不变 |
 > | N1 | 紧凑对象头（同上） | 小对象总量 -20~30% | 与所有项正交叠加 |
 > | N2 | AOT 缓存 | metaspace 下降 | 同上 |
+
+### 第 17 批修复记录（2026-10-09，性能清单落地）
+
+> **代码级 1-10 项全部实施**（N1/N2 为启动级标志，见下方自适应说明）：
+> 1. **HPACK 编码移出连接锁**：新增 `HPackContext.encodeHeaderFrames`（编码成完整
+>    HEADERS+CONTINUATION 帧字节数组），`writeResponseHeaders` 锁外编码、锁内只写——
+>    每响应临界区 ~10 倍缩小，并发流随核扩展；
+> 2. **流缓冲池**：`NoSyncBufferedOutputStream` 支持外部缓冲 + `detachBuffer()`，
+>    HTTP2Connection 维持有界池（上限 4，ConcurrentLinkedDeque + AtomicInteger），
+>    流关闭归还、创建取用——顺序流复用 16KB 缓冲，消除高 RPS 下 ~1.6GB/s 的纯分配；
+> 3. **连接缓冲 16448**（16KB+64）：完整 16KB DATA 帧 + 9 字节帧头合并为一次写/
+>    一个包（配合 NODELAY 默认开启，否则每帧 2 个包）；
+> 4. **HTTP/1.1 响应头整块拼装**：writeHeaders 单次定长分配 + 单次写（原每头 4 次
+>    write + ~9 次编码分配）；状态行字节按码缓存（ConcurrentHashMap）；Date 头
+>    引用相等快路径用 ActivityTimer 缓存的预编码字节；
+> 5. **http2Streams → ConcurrentHashMap**：读线程每帧锁获取 → 无锁 volatile 读
+>    （close 的 put-null 墓碑语义改为 remove 守卫，等价）；
+> 6. **HPACK 编码单次分配**：encodeHeader/encodeString 重写为定长预算 + 单数组填充
+>    （原每头 6-8 个中间 byte[]）；解码侧 `toLowerCase()` 比较改零分配字符循环；
+>    `new String(bytes)` 显式 UTF-8（RFC 7540 8.1.2，不再依赖默认字符集）；
+> 7. **stats 门控**：`ServerConfig.statsEnabled()`（复用 EnableStats 属性，默认关）+
+>    HTTP2Stats/ServerStats 的 `static final ENABLED`——每请求 ~8 次 volatile RMW
+>    归零（requestsInProgress 等功能性计数不门控）；
+> 8. **TCP_NODELAY 默认开启**（`nodelay=false` 可关）：h2 小帧 + 延迟确认的
+>    ~40ms 停顿消除；
+> 9. **Huffman 编码端实现**（原 C-9 缺口）：`Huffman.encodeInto/encodedLength`
+>    （零分配位累积 + EOS 前缀填充），HPack 字符串按 RFC 7541 5.2 "短者用之"选择
+>    Huffman/字面量——上行头带宽 -10~30%。测试：RFC C.4.1-C.4.4 向量**位精确复现**
+>    + 往返（空串/ASCII/数字长串/中文多字节/512B 二进制）；
+> 10. **热路径日志 lambda 化**（window update/reset 等原为急切拼接）。
+>
+> **N1/N2 自适应（启动级标志，代码不可运行时切换）**：
+> - `ServerConfig.logJvmFeatures()`（ServerImpl.start() 首次调用，AtomicBoolean 一次
+>   守卫）：探测 ZGC（GarbageCollectorMXBean）与紧凑对象头（输入参数扫描），
+>   INFO 输出状态 + DEBUG 建议（module-info 增加 `requires java.management`）；
+> - **开启即用**：部署方以 `-XX:+UseZGC` / `-XX:+UseCompactObjectHeaders` 启动，
+>   JVM 自动生效，代码检测并如实报告（实测：带标志启动报 "compact object headers=on"，
+>   不带报 "unknown (JDK < 24 or flag not set)"）；
+> - **降级方案（无需配置）**：标志未开时保持现状（默认对象头/默认 GC），且本批的
+>   代码级优化（缓冲池、单次分配编码、stats 门控）在两种模式下都生效——它们正是
+>   内存压力的"更优降级路径"；缓冲池不按 GC 条件化（ZGC 下池化依然净收益）；
+> - build.gradle 工具链仍为 21（该两标志在 21 上不存在，盲目加入会导致 JVM 拒绝
+>   启动），故未写入测试 jvmArgs；切换 25 工具链后可加。
+>
+> 验证：全量套件 135 → **137 全绿**（+2 Huffman 编码测试，JDK 25 运行 --release 21
+> 产物，虚拟线程默认开启）；h2 全部合规测试在 Huffman 化的响应头上通过；
+> `VtCheck` 双向验证虚拟线程开关；N1 检测带/不带标志双向验证。
+
+### 内存清单核实与性能影响分析（2026-10-09，第 17 批后复核）
+
+> **核实结论**：第 17 批性能优化改变了部分内存事实——M1b 已被池化部分解决、
+> M1c 已生效（并修复核实中发现的 h2 误判回归）、M5b 的线程成本因虚拟线程消失、
+> M2 的分片文本不再逐帧双份保留。核实中发现并修复：**maxIdleConnections 把
+> 活跃 h2 连接误判为空闲**（h2c 分支在 `inRequest=true` 之前 return，h2 连接
+> 永不置位）——空闲判定补"静默 ≥ IDLE_INTERVAL/2"条件，活跃连接不再被误关。
+> 修复后全量套件 137/137 保持。
+
+> **核实后的最新内存清单**：
+> | # | 项 | 现状核实 | 剩余量级 |
+> |---|---|---|---|
+> | M1a | 每连接输入 16KB（急切）+ 输出 16448（第 17 批 +64B），不可配置 | 仍开放 | 活跃连接 ~33KB |
+> | M1b | 每流 16KB | **已部分解决**（第 17 批池化：顺序流复用，分配压力消除）；并发流仍各持 16KB；池保留 ≤64KB/连接（现实 16-32KB） | 有界 |
+> | M1c | 空闲连接无上限 | **已解决**（第 15 批 + 本轮 h2 误判修复） | 空闲 ≤200 × ~97KB ≈ 19MB |
+> | M2 | WS 64MB 默认上限 + 帧预分配 + 完整文本帧双份保留 | 大体仍开放；分片文本已不逐帧双份（第 15 批） | 最坏 ~128-256MB/连接 |
+> | M3 | h2 默认无限并发流（-1） | 仍开放 | 单连接 1000 流 = 16MB + 1000 VT |
+> | M4 | FormParser 三重拷贝放大 | 仍开放 | 10MB 表单 ~50MB 峰值 |
+> | M5a | multipart deleteOnExit 累积 | 仍开放 | 千万上传 ~1-2GB |
+> | M5b | BufferedWS 按帧不按字节 | 仍开放（线程成本已因 VT 消失） | 1024×帧大小 |
+> | N1/N2 | 紧凑对象头 / AOT | N1 检测已实现，标志为部署侧 | -20~30% 小对象 / metaspace |
+
+> **内存优化是否会降低性能——逐项结论**：
+> | 手段 | 性能影响 | 判定 |
+> |---|---|---|
+> | M1a/M1b 缓冲**配置化/懒分配** | 无损（部署方自选尺寸；懒分配仅探测连接受益） | ✅ 可做 |
+> | M1a/M1b 缓冲**直接调小**（如 16K→4K） | 每响应 write 次数 ×4、h2 帧数增多（9B 帧头/帧 + 每帧锁获取）——**直接损失吞吐** | ❌ 不做，只提供配置 |
+> | M1c 空闲上限 | 关闭的是静默连接，无吞吐代价 | ✅ 已做 |
+> | M2 默认上限 64MB→1-4MB | 上限只是界：正常流量无感，攻击流量更早拒绝（反而省 CPU/GC）；超大帧用户走既有配置逃生口 | ✅ 可做 |
+> | M2 流式化/懒文本解码 | 懒解码丢 eager UTF-8 校验（RFC 6455 要求 1007）或引入双解码——**被正确性阻塞** | ⚠️ 只做上限 + 首分片大小检查 |
+> | M3 h2 并发流默认 100-250 | 浏览器负载（≤100 流）无感；超限收 REFUSED_STREAM 按 RFC 重试——资源保护性节流 | ✅ 可做（极端客户端行为变化） |
+> | M4 FormParser 去三重拷贝 | 少拷贝 = CPU 与内存**双赢** | ✅ 纯赢 |
+> | M5a deleteOnExit → 每目录 shutdown hook | 仅 JVM 退出时运行 | ✅ 无损 |
+> | M5b BufferedWS 字节上限 | 每帧一次 atomic add+cmp（~5ns） | ✅ 不可测 |
+> | N1/N2 | JVM 启动标志 | 部署侧，无代码代价 |
+>
+> **反向披露（性能优化已付出的内存代价）**：① 流缓冲池保留——每 h2 连接 ≤64KB
+> （顺序流现实 16-32KB）不再归 GC，10k 活跃连接约 +160-320MB 保留，换取 ~1.6GB/s
+> 分配消除；空闲连接受 M1c 约束故保留有界；池上限 4→2 可再省一半（顺序流只需
+> 1-2），暂未调。② 输出缓冲 +64B/连接（帧头合并）。③ STATUS_LINES 缓存与
+> Huffman 编码表为静态 KB 级。
+> **总论**：内存清单没有任何一项必须以性能为代价——前提是选对手段：调小缓冲
+> 尺寸会损性能（应配置化而非调小）；懒文本解码被 UTF-8 校验的正确性要求阻塞；
+> 其余手段全部无损或双赢。唯一真实张力是缓冲池的保留内存（已量化、有界、可调）。
+
+### 第 18 批修复记录（2026-10-09，内存清单落地：M4 → M2/M3 → M1a）
+
+> 1. **M4 FormParser 去拷贝**：`os.toString(encoding)` 直接解码内部缓冲（省一次
+>    全量 toByteArray 拷贝）；`split("&")`/`split("=",2)` 改 indexOf 扫描（无中间
+>    String[] 数组、无正则机制、无逐段拷贝）；尾部 '&' 的 split 丢空段语义精确
+>    保留。10MB 表单峰值 ~46MB → ~36MB，且少拷贝 = CPU 双赢。新增
+>    FormParserTest×7（基本/键先解码分组/_charset_/%zz→IO/空体/无值键+尾&/值中=）。
+>    注：无值键（"flag&"）在解码阶段被丢弃是**原 split 版本既有语义**（空值列表
+>    使内层循环不执行），测试固化该行为；
+> 2. **M2 WebSocket 默认上限 64MB→4MB**（帧与消息同）：真实应用消息多为 KB 级，
+>    4MB 已宽裕；单连接最坏 ~128-256MB → ~8-16MB。配置逃生口不变
+>    （maxWebSocketFrameSize/maxWebSocketMessageSize）；
+> 3. **M3 h2 并发流默认 -1→100**：对齐浏览器行为（Chrome 每连接 100 流），
+>    通告进 SETTINGS（既有逻辑 ≠-1 即通告）；超限流收 REFUSED_STREAM（可重试，
+>    第 15 批已修 inHeaders 清理）。单连接 1000 流 = 16MB 缓冲的敞口关闭；
+> 4. **M1a 缓冲配置化 + 懒分配**：新增 `robaho.net.httpserver.bufferSize`
+>    （默认 16384，下限 512）——连接输入/输出（输出 +64 保帧头合并）、h2 流池、
+>    multipart 预读统一取值；NoSyncBufferedInputStream/OutputStream 改**懒分配**
+>    （EMPTY 标记，首次 fill/缓冲写才分配；只写大块的流与端口探测连接零缓冲开销；
+>    read1/write 的直写判定改用配置尺寸以适配懒缓冲）。
+> 验证：全量套件 137 → **144 全绿**（+7 FormParserTest，JDK 25 运行 --release 21
+> 产物、虚拟线程默认开启）。调试记录：套件 XML 插入被 MultipartFormParserTest
+> 子串误判跳过（精确匹配修正）；FormParserTest 一处预期错误（无值键语义）修正。
+> **内存清单剩余**：M5（multipart deleteOnExit 累积、BufferedWS 按帧不按字节）、
+> M1b 池上限可调（4→2）、N2（AOT，部署侧）。
+
+### 第 19 批修复记录（2026-10-10，内存清单收尾：M5a + M5b）
+
+> 1. **M5a multipart deleteOnExit 累积 → 每存储目录 shutdown hook**：`File.deleteOnExit()`
+>    的静态注册表随每个上传文件增长（~100-200B/文件、JVM 终生），且其内部
+>    （DeleteOnExitHook.add）是 synchronized——每次上传一次 JDK 内部 monitor 调用。
+>    替换为 `registerExitCleanup(storage)`：ConcurrentHashMap.newKeySet 幂等注册，
+>    每个存储目录一个 hook，退出时最尽力删除目录内容（保留存储根目录本身，
+>    最贴近原"只删文件"语义）；javadoc 同步更新（调用方仍负责及时删除）。
+>    千万级上传 ~1-2GB 的累积消除，热路径反而略快（无锁 keySet add 替代 monitor）；
+> 2. **M5b BufferedWebSocket 队列字节上限**：帧数上限（1024）单独存在时，消费端
+>    停滞可保留 1024×帧大小（4MB 帧下最坏 ~4GB）。新增
+>    `robaho.net.httpserver.maxBufferedWebSocketBytes`（默认 16MB，0 不限）：
+>    sendFrame 原子累加记账、超限回滚并抛 MessageTooBig，drain 写出后扣减；
+>    中断路径同步回滚。**新增 BufferedWebSocketTest**（阻塞输出流模拟停滞消费端，
+>    32×1MB 帧触发上限 + onClose 恰好一次）——顺带补上 D-11 的 BufferedWebSocket
+>    零覆盖空白；
+> 3. **M1b（池上限 4→2）评估后关闭**：顺序流场景池计数在 0-1 震荡，上限仅在
+>    多流并发关闭的突发时起作用——调整两个方向都是噪声，标记"无需处理"。
+>    池的真实保留代价（每服务过流连接 ~16KB 备用缓冲）为池化固有交换，已在
+>    第 17 批记录。
+> 验证：全量套件 144 → **145 全绿**（+1 BufferedWebSocketTest；JDK 25 运行
+> --release 21 产物、虚拟线程默认开启）。
+> **内存清单至此全部处理完毕**：M1a/M1b/M1c/M2/M3/M4/M5a/M5b 已落地，M1b 评估
+> 关闭，仅 N1/N2（紧凑对象头/AOT）为部署侧启动标志（N1 检测已实现）。
+
+### 第 20 批：历史修复自审计（2026-10-10，伪阳性/噪音排查）
+
+> **宏观基准**（git worktree 对照 HEAD=会话起点，h1 keep-alive 8 连接×20k 请求，
+> 各 5 轮取 round2）：当前 14503-14814 RPS vs HEAD 14316-14970 RPS——**完全重叠，
+> 聚合零回归**。性能收益集中在该基准不压的场景（h2 单流上传 1000x 已实证、
+> 分配压力、大响应），正确性/内存改动零吞吐代价。
+>
+> **伪阳性结论：未发现**。全部修复均有三重证据之一：探针翻转（第 14 批 6 项）、
+> 回归测试（第 15/18/19 批多数）、代码级路径核实（少数）。唯一被证伪的是排查
+> 代理报告的"RST+缓冲数据杀整条连接"（P1）——探针实测连接存活，未采纳为修复。
+>
+> **诚实分级**：
+> - 真阳性但**休眠→已激活**：REFUSED inHeaders（修复时默认 -1 不可达，第 18 批
+>   默认 100 后激活——修复超前于配置变化）；
+> - 真阳性但**低频/防御性**：CL 不匹配 rstReceived、DataIn 重查（µs 窗口）、
+>   stop 排队 accept 泄漏、Locale.ROOT（仅 tr/az）、ping≤125、M5a（长寿命+海量
+>   上传）、M5b（消费端停滞）；
+> - **噪声级（真实但收益微小，零成本保留）**：HTTP2Stats 除零（仅 /__stats 显示）、
+>   首分片 checkMessageSize（默认等限时无效，审计自标 inert）、stats 门控
+>   （~0.1% 单核）、日志 lambda 化、懒缓冲分配（仅端口探测）、5 处短临界区锁
+>   转换（政策合规）、无用 import 清理；
+> - **未做微基准的性能声明**（机制正确、宏观已证无回归）：HPACK 锁外编码的
+>   "~10x 临界区缩减"、16448 合并写、Huffman 带宽收益、缓冲池 1.6GB/s 声明。
+>
+> **过程返工项披露**（引入后当场被验证闭环发现并修正，非伪阳性）：
+> ① 第 15 批引入 3 处 synchronized → 第 16 批全部移除；② maxIdleConnections 初版
+> 把活跃 h2 连接误判空闲 → 内存核实轮修复；③ DataFrame 修复第一版 off-by-one
+> → 探针立即暴露；④ FormParserTest 无值键预期错误（原语义本就丢弃）；
+> ⑤ 套件 XML 子串误判（MultipartFormParserTest 含 FormParserTest）；
+> ⑥ H2Client 帧回队自旋、探针双重 start、readHead 结束条件、HttpExchange stub
+> 抽象方法补齐。
+
+### 第 21 批修复记录（2026-10-10，残余性能 top-5 + 垃圾清理）
+
+> **垃圾清理（全部经 grep 验证零引用后删除）**：
+> - 删除 `OpenAddressIntMap` 整类（178 行——CHM 替换后零引用）；
+> - 删除死方法：`HPackContext.writeGenericHeaderFrame/encodeHeadersFrame/encodeHeaders`、
+>   `Utils.combineByteArrays` varargs 与 (List,List) 重载、`LeftOverInputStream.getRawInputStream`、
+>   `Utils.isValidName`（唯一引用是注释块）；
+> - 删除死配置链：`maxRspTime`（MAX_RSP_TIME 赋值后永不读）、`timerMillis`
+>   （无 req/rsp 定时任务存在）、`debug`（`/__debug` 直接读属性绕过 ServerConfig）；
+>   连带 `noActivity` 字段 + cleaner 死分支 + `NEWLY_ACCEPTED_CONN_IDLE_INTERVAL`；
+> - 删除 6 处注释块（含 HTTP2Stream 引用已不存在 enqueue 的陈旧注释）+ 7 个无用 import；
+> - 仓库卫生：untrack `test-output/`（41 文件）与 `.idea/`（4 文件）并补 .gitignore、
+>   删除 src 下 7 个 .DS_Store（其中 resources 下 2 个会打入发布 jar）。
+>   公共 API（extras/*、WebSocket.send 等）经复核**保留**——库 API 的设计本意。
+
+> **残余性能 top-5（全部实施）**：
+> 1. **h1 请求头拷贝快路径**：`OptimizedHeaders.copyInto(Headers)`——原 putAll 经
+>    entrySet 迭代器逐头分配 SimpleEntry+ArrayList+List.of（~60-70 分配/请求），
+>    快路径单值只包一次 ArrayList；
+> 2. **HPACK 解码分配节食**：varint 改打包 long 返回（原每 varint 一个 record，
+>    1-3/头）；名字/值**原地解码**（`new String(buffer,off,len)` / `Huffman.decode
+>    (buffer,off,len)` 新重载——原 copyOfRange 每名字/值各一次全量拷贝）；
+>    `HeadersFrame.parse` 无 PADDED/PRIORITY 时跳过整块拷贝（帧体本就独占）；
+>    `HTTP2HeaderField.normalize` 加有界缓存（256，防攻击者名字无界增长）；
+> 3. **h2 响应编码**：`OptimizedHeaders.forEachRaw`（只读路径免可变列表包装）+
+>    小写名有界缓存（原每头 2 个 String 仅为静态表查找）；
+> 4. **每帧固定开销**：`writerThread`/`reader` volatile 写移到 park 前一次性记录、
+>    `headersSent` 改 volatile 读快路径（CAS 仅首次转换）、`remoteMaxFrameSize`
+>    缓存在连接上（SETTINGS 到达时更新）——并**补上门控漏网的 2 处 pauses RMW**
+>    （第 17 批遗留，自审计发现）；
+> 5. **drain 改 soTimeout 有界阻塞读**：原 10ms sleep 轮询（最长 100 次唤醒 +
+>    ~100 次 available() 系统调用级开销/次拆除）→ 一次阻塞读即时响应零散字节，
+>    超时即窗口到期，finally 恢复原 soTimeout。
+> 验证：全量套件 **145/145 保持全绿**；h1 基准复测 RPS 持平（13504-14970 vs 之前
+> 14503-14814，噪声内）——**诚实结论**：本批收益在分配/GC 压力与尾延迟（该基准
+> 的 ~65µs 往返延迟掩盖了每请求 ~1-2µs 的节省），平均 RPS 本就不是这些项的度量衡。
+> ScopedValue（JDK 25）替换 ProxyHandler ThreadLocal 仍被 --release 21 阻塞。
+
+### 第 22 批修复记录（2026-10-10，A 方案：目标升 25 + Maven 迁移 + ScopedValue）
+
+> **构建系统切换 Gradle → Maven**（build.gradle/settings.gradle/gradlew/.gradle 已删除）：
+> - `pom.xml`：`maven.compiler.release=25`；坐标 io.github.robaho:httpserver:2.0.0-SNAPSHOT
+>   （原 git-describe 版本改为固定值，发布时手动 bump）；TestNG 7.10.2（原 7.8.0，
+>   全会话实测版本）；附加 test 源集（src/test/extras、java_default/bugs、
+>   java_default/HttpExchange、test_mains）经 build-helper 对齐原 sourceSets；
+>   surefire 用 `src/test/resources/testng.xml`（145 项套件 XML 入库）+ 原有系统
+>   属性 + `--add-opens` + **`-XX:+UseCompactObjectHeaders`（N1 标志随 25 目标
+>   接线进测试 JVM）**；source/javadoc jar 常规构建；gpg + central-publishing
+>   置于 `release` profile（`mvn -Prelease deploy`）；
+> - **module-info 保留在发布 jar**（主代码模块模式编译）：testCompile 显式
+>   `useModulePath=false` 走类路径——否则插件把同包测试补丁进命名模块、读不到
+>   testng/jdk.management（实测复现后解决）；jar 同时含 META-INF/services，
+>   ServiceLoader 双模式可用；
+> - 验证：`mvn test` **145/145 BUILD SUCCESS**；`mvn package` 产出主 jar
+>   （含 module-info.class）+ sources + javadoc（4.4MB）；
+> - 环境注：本机 Maven 3.6.3（自带旧库在 JDK 25 上有无关警告）；surefire 的
+>   testng provider 经 aliyun 镜像下载成功。
+>
+> **ScopedValue 迁移（A 方案的原始动机）**：`ProxyHandler.CURRENT_PROXY`
+> ThreadLocal → `ScopedValue`（JEP 506，25 转正）：`handle()` 的转发段以
+> `ScopedValue.where(...).call(...)` 包裹（call() 传播受检异常，异常推断为
+> Exception 故三分支 catch 分流；uri 重建后需 final 副本供 lambda 捕获）；
+> `select()` 用 `isBound()` 探测（作用域外——HttpClient 自有线程——回退
+> authority map，语义与原 null 回退一致）。收益：虚拟线程下免 ThreadLocalMap、
+> 不可泄漏（无需 remove）。迁移后 `mvn test` 145/145 保持。
+>
+> **兼容性声明**：发布产物自本批起要求 **JDK 25+** 运行时（原 21+）。
+
+### 第 23 批：性能实测记录（2026-10-10，当前 vs 会话起点 HEAD，git worktree 对照）
+
+> 基准：h1 = 8 连接 keep-alive ×20k 请求；h2 = 单连接 64 条在途流多路复用 ×20k 请求
+> （H2Bench，单读线程——H2Client 的并发 awaitResponse 是单消费者设计，多车道会互饿）。
+> 过程中修复 H2Client 两处基准侧缺陷：**从不返还连接级流控窗口信用**（64KB 响应后
+> 服务端写线程永久 park——顺带使既有测试更符合协议）、增加显式流 ID 重载。
+>
+> | 指标 | HEAD | 当前 | 结论 |
+> |---|---|---|---|
+> | h1 RPS | ~14781 中位 | ~14771 中位 | 持平（噪声内） |
+> | h1 垃圾（32MB 堆 GC 数/20k） | 33-34 | 32 | ~-4%（同 JVM 客户端分配稀释） |
+> | h2 RPS（默认配置） | ~9643（Nagle 开） | ~8613（NODELAY 开） | **-8%：NODELAY 代价**（A/B 双向证实：当前关 NODELAY=9606 持平，HEAD 开 NODELAY=8940 同降） |
+> | **h2 垃圾（GC 数/20k）** | **161** | **42-43** | **-73%，4 倍减少**（HPACK 编解码节食/缓冲池/单次分配的直接实证） |
+> | 紧凑对象头 | — | h2 ~+3%（噪声边缘） | 微弱 |
+> | 单流上传 | ~72KB/s | ~57MB/s | **~1000 倍**（第 14 批已实证） |
+>
+> **结论**：① 平均 RPS 维度 h1/h2 均持平——往返延迟主导的基准掩盖每请求 µs 级 CPU
+> 节省（诚实预期）；② **分配/GC 维度大幅提升**：h2 垃圾 -73% → GC 停顿次数 4 倍
+> 减少，直接改善尾延迟与高负载吞吐稳定性；③ 场景性巨幅提升（单流上传 1000 倍）；
+> ④ **一个已定位的真实回归**：TCP_NODELAY 默认开使 h2 多路复用吞吐 -8%（回环、
+> 波次冲刷模式）。决策：**维持默认开**——它保护 SSE/小响应的 40ms 延迟确认停顿
+> （真实网络下的常见模式），吞吐优先部署可 `robaho.net.httpserver.nodelay=false`
+> 关闭（已实测恢复至持平）；该权衡已在此记录。
+
+### 第 24 批：压测与性能评估（2026-10-10，LoadTest 四场景）
+
+> LoadTest（/tmp，未入库）：每请求延迟直方图 + P50/P95/P99、JIT 预热、G1 GC 监控。
+> 四场景共 **25.6 万次请求零错误**（上传场景初跑失败系压测客户端漏记连接级窗口——
+> 服务器的流控强制（P2-40）正确拒绝，属正向验证）。
+>
+> | 场景 | 结果 | 延迟分位 |
+> |---|---|---|
+> | h1（32 keep-alive 连接 ×64k 请求） | **13727 RPS** | p50=2.28ms p95=2.85ms p99=4.01ms max=30.6ms |
+> | h2（4 连接 ×64 在途流 ×64k 请求） | **12525 RPS** | p50=84µs p95=1.05ms p99=2.20ms max=9.7ms |
+> | h2 单流上传（8MB） | **117.6 MB/s** | —（会话起点 ~0.07MB/s，~1700 倍） |
+> | 混合（16 h1 + 2 h2×64 并发 ×64k） | **13096 RPS** | p50=0.72ms p95=11.3ms p99=12.0ms max=23.4ms |
+>
+> GC（默认堆，G1）：h1+h2 全程 5 次 young GC、单次 1.3-1.5ms；上传 0 次；混合 3 次
+> （最大 11ms）。无 Full GC。分配速率约 ~75MB/s（150MB/2s 窗口）——与 -73% 的
+> 垃圾削减一致。h2 p50=84µs 显著优于 h1（多路复用免连接建立/队头阻塞）；h1 p50
+> 2.3ms 为 32 连接回环争用的排队延迟（每连接 ~429 RPS 的倒数，自洽）。
+> **评估结论**：虚拟线程 + 全部优化下，单机回环可稳定承载 ~13k RPS（小响应）、
+> 单流上传 >100MB/s、GC 每数秒一次亚毫秒停顿、零错误——达到"零依赖 JDK
+> HttpServer 替代实现"的生产可用性能画像。
 
 ### 实证确认的 bug（探针复现）
 

@@ -51,7 +51,7 @@ public class Test12 extends Test {
 
     static boolean fail = false;
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         HttpServer s1 = null;
         HttpsServer s2 = null;
         ExecutorService executor=null;
@@ -75,7 +75,7 @@ public class Test12 extends Test {
 
             int port = s1.getAddress().getPort();
             int httpsport = s2.getAddress().getPort();
-            Runner r[] = new Runner[8];
+            Runner[] r = new Runner[8];
             r[0] = new Runner (true, "http", root+"/test1", port, "smallfile.txt", 23);
             r[1] = new Runner (true, "http", root+"/test1", port, "largefile.txt", 2730088);
             r[2] = new Runner (true, "https", root+"/test1", httpsport, "smallfile.txt", 23);
@@ -139,8 +139,7 @@ public class Test12 extends Test {
                           .path("/test1/"+f)
                           .toURL();
                 HttpURLConnection urlc = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
-                if (urlc instanceof HttpsURLConnection) {
-                    HttpsURLConnection urlcs = (HttpsURLConnection) urlc;
+                if (urlc instanceof HttpsURLConnection urlcs) {
                     urlcs.setHostnameVerifier (new HostnameVerifier () {
                         public boolean verify (String s, SSLSession s1) {
                             return true;

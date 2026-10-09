@@ -8,10 +8,17 @@ import java.io.OutputStream;
  * buffered output stream designed for virtual threads
  */
 public class NoSyncBufferedOutputStream extends FilterOutputStream {
+
+    private static final byte[] EMPTY = new byte[0];
+
+    private final int bufferSize;
+
     /**
-     * The internal buffer where data is stored. sized for virtual threads.
+     * The internal buffer where data is stored. lazily allocated on the first
+     * buffered write (connections that only write large chunks bypass it
+     * entirely); EMPTY after detachBuffer.
      */
-    protected byte[] buf;
+    protected byte[] buf = EMPTY;
 
     /**
      * The number of valid bytes in the buffer. This value is always
@@ -32,7 +39,28 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
         if (size <= 0) {
             throw new IllegalArgumentException("buffer size " + size);
         }
-        this.buf = new byte[size];
+        this.bufferSize = size;
+    }
+
+    /** wrap an externally owned buffer (e.g. from a pool). the caller remains
+     * responsible for its lifecycle and may reclaim it with detachBuffer() */
+    public NoSyncBufferedOutputStream(OutputStream out, byte[] buffer) {
+        super(out);
+        if (buffer == null || buffer.length == 0) {
+            throw new IllegalArgumentException("empty buffer");
+        }
+        this.buf = buffer;
+        this.bufferSize = buffer.length;
+    }
+
+    /** detach the internal buffer for reuse (e.g. return it to a pool). the
+     * stream must be closed and unused afterwards: writes fail fast on the
+     * empty replacement buffer */
+    public byte[] detachBuffer() {
+        byte[] b = buf;
+        buf = EMPTY;
+        count = 0;
+        return b;
     }
 
     /** Flush the internal buffer */
@@ -53,6 +81,9 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
     public void write(int b) throws IOException {
         if (count >= buf.length) {
             flushBuffer();
+            if (buf.length == 0) {
+                buf = new byte[bufferSize];
+            }
         }
         buf[count++] = (byte)b;
     }
@@ -76,13 +107,18 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
      */
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
-        if (len >= buf.length) {
+        // compare against the configured size, not buf.length: the buffer is
+        // allocated lazily and may still be empty here
+        if (len >= bufferSize) {
             /* If the request length exceeds the max size of the output buffer,
                flush the output buffer and then write the data directly.
                In this way buffered streams will cascade harmlessly. */
             flushBuffer();
             out.write(b, off, len);
             return;
+        }
+        if (buf.length == 0) {
+            buf = new byte[bufferSize];
         }
         if (len > buf.length - count) {
             flushBuffer();

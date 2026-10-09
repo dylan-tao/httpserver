@@ -44,7 +44,7 @@ import jdk.test.lib.net.URIBuilder;
 
 public class TestLogging extends Test {
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         HttpServer s1 = null;
         ExecutorService executor=null;
 

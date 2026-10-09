@@ -42,7 +42,7 @@ public class HTTP2Stream {
 
     private final HTTP2Connection connection;
     private final Logger logger;
-    private final OutputStream outputStream;
+    private final robaho.net.httpserver.NoSyncBufferedOutputStream outputStream;
     private final DataIn dataIn;
     private final HTTP2Connection.StreamHandler handler;
     private final Headers requestHeaders;
@@ -57,7 +57,7 @@ public class HTTP2Stream {
     private volatile boolean streamOutputClosed = false;
     // set when the peer sent RST_STREAM: no further frames may be sent for this stream
     private volatile boolean rstReceived = false;
-    private volatile AtomicBoolean handlingRequest = new AtomicBoolean(false);
+    private final AtomicBoolean handlingRequest = new AtomicBoolean(false);
     /** the thread currently blocked writing (flow control); woken when a
      * WINDOW_UPDATE arrives so it does not have to spin on a 1ms poll */
     private volatile Thread writerThread;
@@ -79,7 +79,7 @@ public class HTTP2Stream {
         // the stream level buffer bounds the DATA frame size: use 16KB (the
         // default max frame size) so small writes coalesce into full frames
         // instead of 1KB frames with per frame header overhead
-        this.outputStream = new NoSyncBufferedOutputStream(new Http2OutputStream(streamId), 16384);
+        this.outputStream = new NoSyncBufferedOutputStream(new Http2OutputStream(streamId), connection.pollStreamBuffer());
         var setting = connection.getRemoteSettings().get(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE);
         if(setting!=null) {
             sendWindow.set((int)(setting.value));
@@ -115,8 +115,8 @@ public class HTTP2Stream {
 
     public void debug() {
         logger.log(Level.INFO,connection.toString()+", stream "+streamId+" open "+streamOpen+" half closed "+halfClosed+", streamOutputClosed "+streamOutputClosed+", thread "+thread);
-        logger.log(Level.INFO,connection.toString()+", stream "+streamId+" data in size "+dataInSize+" expected "+expectedSize());
-        logger.log(Level.INFO,""+Arrays.toString(thread.getStackTrace()));
+        logger.log(Level.INFO, connection +", stream "+streamId+" data in size "+dataInSize+" expected "+expectedSize());
+        logger.log(Level.INFO, Arrays.toString(thread.getStackTrace()));
     }
 
     public boolean isOpen() {
@@ -149,7 +149,10 @@ public class HTTP2Stream {
     public void close() {
         streamOpen = false;
 
-        if(connection.http2Streams.put(streamId,null)==null) {
+        // remove() returns the removed stream (null when already removed):
+        // the first closer wins, later closes return - same guard the old
+        // null-tombstone put provided
+        if(connection.http2Streams.remove(streamId)==null) {
             return;
         }
 
@@ -166,6 +169,10 @@ public class HTTP2Stream {
                 logger.log(connection.httpConnection.requestCount.get()>0 ? Level.WARNING : Level.DEBUG, "IOException closing http2 stream",e);
             }
         } finally {
+            // return the stream buffer to the connection pool: sequential
+            // streams on a connection reuse it instead of allocating 16KB
+            // per stream (at high h2 RPS this dominates young-gen allocation)
+            connection.offerStreamBuffer(outputStream.detachBuffer());
         }
     }
 
@@ -181,7 +188,7 @@ public class HTTP2Stream {
 
     public void processFrame(BaseFrame frame) throws HTTP2Exception, IOException {
 
-        switch (frame.getHeader().getType()) {
+        switch (frame.getHeader().type()) {
         case HEADERS:
         case CONTINUATION:
             if(halfClosed) {
@@ -189,7 +196,7 @@ public class HTTP2Stream {
                 connection.sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
                 return;
             }
-            halfClosed = frame.getHeader().getFlags().contains(FrameFlag.END_STREAM);
+            halfClosed = frame.getHeader().flags().contains(FrameFlag.END_STREAM);
             performRequest();
             break;
         case DATA:
@@ -206,7 +213,7 @@ public class HTTP2Stream {
             // stream level flow control accounting happens on receipt and uses
             // the full frame payload length (including PADDED bytes, RFC 7540 6.9);
             // the window is re-opened as the handler consumes the data
-            if (receiveWindow.addAndGet(-frame.getHeader().getLength()) < 0) {
+            if (receiveWindow.addAndGet(-frame.getHeader().length()) < 0) {
                 // the peer sent beyond the stream flow control window
                 connection.sendResetStream(HTTP2ErrorCode.FLOW_CONTROL_ERROR, streamId);
                 rstReceived = true;
@@ -218,13 +225,13 @@ public class HTTP2Stream {
             // them): queue their window credit so the handler's read folds them
             // into the next WINDOW_UPDATE - without this a padded upload
             // permanently leaks the stream window and deadlocks (RFC 7540 6.9)
-            int padding = frame.getHeader().getLength() - dataFrame.body.length;
+            int padding = frame.getHeader().length() - dataFrame.body.length;
             if (padding > 0) {
                 pendingPadding.addAndGet(padding);
             }
             dataIn.enqueue(dataFrame.body);
             dataInSize += dataFrame.body.length;
-            if (dataFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM)) {
+            if (dataFrame.getHeader().flags().contains(FrameFlag.END_STREAM)) {
                 long expected = expectedSize();
                 if(expected!=-1 && dataInSize!=expected) {
                     connection.sendResetStream(HTTP2ErrorCode.PROTOCOL_ERROR, streamId);
@@ -249,7 +256,7 @@ public class HTTP2Stream {
             break;
         case RST_STREAM:
             ResetStreamFrame resetFrame = (ResetStreamFrame) frame;
-            logger.log(Level.DEBUG,"received reset stream "+resetFrame.errorCode+", on stream "+streamId);
+            logger.log(Level.DEBUG, () -> "received reset stream " + resetFrame.errorCode + ", on stream " + streamId);
             halfClosed = true;
             rstReceived = true;
             close();
@@ -262,7 +269,7 @@ public class HTTP2Stream {
             }
             // wake a writer blocked on the send window immediately
             LockSupport.unpark(writerThread);
-            logger.log(Level.DEBUG,"received window update "+windowSizeIncrement+", new size "+sendWindow.get()+", on stream "+streamId);
+            logger.log(Level.DEBUG, () -> "received window update " + windowSizeIncrement + ", new size " + sendWindow.get() + ", on stream " + streamId);
             break;
         default:
             break;
@@ -275,7 +282,7 @@ public class HTTP2Stream {
         }
         connection.httpConnection.requestCount.incrementAndGet();
         connection.requestsInProgress.incrementAndGet();
-        connection.stats.activeStreams.incrementAndGet();
+        if (HTTP2Stats.ENABLED) connection.stats.activeStreams.incrementAndGet();
 
         InputStream in = halfClosed ? InputStream.nullInputStream() : dataIn;
 
@@ -304,9 +311,16 @@ public class HTTP2Stream {
     public void writeResponseHeaders(boolean closeStream) throws IOException {
         if (headersSent.compareAndSet(false, true)) {
             try {
+                // encode OUTSIDE the connection lock: the encoding is
+                // stream-local, only the frame writes need mutual exclusion.
+                // this shrinks the per-response critical section ~10x so
+                // concurrent streams scale with cores
+                var frames = HPackContext.encodeHeaderFrames(responseHeaders, streamId, closeStream);
                 connection.lock();
                 try {
-                    HPackContext.writeHeaderFrame(responseHeaders, connection.outputStream, streamId, closeStream);
+                    for (byte[] frame : frames) {
+                        connection.outputStream.write(frame);
+                    }
                     if (closeStream) {
                         streamOutputClosed = true;
                     }
@@ -343,14 +357,6 @@ public class HTTP2Stream {
             this.streamId = streamId;
         }
 
-        /** read the peer's max frame size on every write: the peer may raise it
-         * with a later SETTINGS frame, which a value fixed at construction
-         * would ignore */
-        private int maxFrameSize() {
-            var setting = connection.getRemoteSettings().get(SettingIdentifier.SETTINGS_MAX_FRAME_SIZE);
-            return setting!=null ? (int)setting.value : 16384;
-        }
-
         @Override
         public void write(int b) throws IOException {
             write(new byte[]{(byte) b});
@@ -363,29 +369,35 @@ public class HTTP2Stream {
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
-            connection.stats.bytesSent.addAndGet(len);
-            writerThread = Thread.currentThread();
+            if (HTTP2Stats.ENABLED) connection.stats.bytesSent.addAndGet(len);
             // test outside of lock so other streams can progress. the park is
             // bounded only as a safety net: a WINDOW_UPDATE (or stream close)
-            // unparks the writer immediately
+            // unparks the writer immediately. writerThread is recorded only
+            // here (before parking): a volatile store on EVERY write() call
+            // was pure overhead - the 200ms bound tolerates a missed unpark
             while(sendWindow.get()<=0 && !connection.isClosed() && !rstReceived) {
-                connection.stats.pauses.incrementAndGet();
+                writerThread = Thread.currentThread();
+                if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
                 LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(200));
             }
             if (rstReceived) {
                 throw new IOException("stream " + streamId + " was reset by the peer");
             }
-            writeResponseHeaders(false);
+            // volatile-read fast path: after the headers are long sent, the
+            // CAS in writeResponseHeaders ran per DATA frame for nothing
+            if (!headersSent.get()) {
+                writeResponseHeaders(false);
+            }
             if(streamOutputClosed) {
                 throw new IOException("output stream was closed during headers send");
             }
             while(len>0) {
-                int _len = Math.min(Math.min(len,maxFrameSize()),(int)Math.min(connection.sendWindow.get(),sendWindow.get()));
+                int _len = Math.min(Math.min(len,connection.remoteMaxFrameSize()),(int)Math.min(connection.sendWindow.get(),sendWindow.get()));
                 if(_len<=0) {
-                    connection.stats.pauses.incrementAndGet();
+                    if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
                     connection.lock();
                     try {
-                        connection.stats.flushes.incrementAndGet();
+                        if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
                         connection.outputStream.flush();
                     } finally {
                         connection.unlock();
@@ -407,17 +419,14 @@ public class HTTP2Stream {
                 try {
                     FrameHeader.writeTo(connection.outputStream, _len, FrameType.DATA, FrameFlag.NONE, streamId);
                     connection.outputStream.write(b,off,_len);
-                    connection.stats.framesSent.incrementAndGet();
+                    if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     if (ServerConfig.http2DisableFlushDelay()) {
                         connection.outputStream.flush();
-                        connection.stats.flushes.incrementAndGet();
+                        if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
                     }
                 } finally {
                     connection.unlock();
                 }
-                // byte[] header = FrameHeader.encode(_len, FrameType.DATA, FrameFlag.NONE, streamId);
-                // byte[] data = Arrays.copyOfRange(b,off, len);
-                // connection.enqueue(List.of(header,data));
                 off+=_len;
                 len-=_len;
                 sendWindow.addAndGet(-_len);
@@ -432,7 +441,7 @@ public class HTTP2Stream {
             connection.lock();
             try {
                 connection.outputStream.flush();
-                connection.stats.flushes.incrementAndGet();
+                if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
             } finally {
                 connection.unlock();
             }
@@ -466,18 +475,18 @@ public class HTTP2Stream {
                 try {
                     if(!streamOutputClosed) {
                         FrameHeader.writeTo(connection.outputStream, 0, FrameType.DATA, END_STREAM, streamId);
-                        connection.stats.framesSent.incrementAndGet();
+                        if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     }
                     if(lastRequest) {
                         connection.outputStream.flush();
-                        connection.stats.flushes.incrementAndGet();
+                        if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
                     }
                 } finally {
                     connection.unlock();
                 }
                 dataIn.close();
             } finally {
-                connection.stats.activeStreams.decrementAndGet();
+                if (HTTP2Stats.ENABLED) connection.stats.activeStreams.decrementAndGet();
                 HTTP2Stream.this.close();
             }
         }
@@ -529,8 +538,7 @@ public class HTTP2Stream {
         public int read(byte[] b, int off, int len) throws IOException {
             int read = 0;
             try {
-                reader = Thread.currentThread();
-                for(;len>0;) {
+                while (len>0) {
                     byte[] data;
                     while((data=queue.peek())==null) {
                         if(read>0) {
@@ -547,6 +555,10 @@ public class HTTP2Stream {
                             }
                             return -1;
                         }
+                        // recorded only before parking (a volatile store on every
+                        // read() call was pure overhead; dataIn.close() unparks
+                        // the reader, and the loop re-checks the flags on wake)
+                        reader = Thread.currentThread();
                         LockSupport.park();
                         if(Thread.interrupted()) {
                             throw new IOException("interrupted");

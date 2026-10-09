@@ -3,6 +3,11 @@ package robaho.net.httpserver.http2;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class HTTP2Stats {
+    /** hot-path counters are gated behind this compile-time constant: they
+     * cost ~8 volatile RMWs per request otherwise, but are only read via
+     * /__stats when robaho.net.httpserver.EnableStats is set */
+    public static final boolean ENABLED = robaho.net.httpserver.ServerConfig.statsEnabled();
+
     public final AtomicLong activeStreams = new AtomicLong();
     public final AtomicLong bytesSent = new AtomicLong();
     public final AtomicLong framesSent = new AtomicLong();
@@ -32,7 +37,7 @@ public class HTTP2Stats {
                 "Http2 Active Streams: "+activeStreams.get()+"\n" +
                 "Http2 Frames Sent/sec: "+(long)(_frames/(secs))+"\n"+
                 "Http2 Bytes Sent/sec: "+(long)(_bytes/(secs))+"\n"+
-                "Http2 Avg Frame Size: "+(long)(_frames==0 ? 0 : _bytes/_frames)+"\n"+
+                "Http2 Avg Frame Size: "+ (_frames==0 ? 0 : _bytes/_frames) +"\n"+
                 "Http2 Flushes/sec: "+(long)(flushes.getAndSet(0)/(secs))+"\n"+
                 "Http2 Pauses/sec: "+(long)(pauses.getAndSet(0)/(secs))+"\n"+
                 "Http2 Pings Sent Since: "+pingsSent.getAndSet(0)+"\n";

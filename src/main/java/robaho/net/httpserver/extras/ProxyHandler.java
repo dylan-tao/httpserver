@@ -34,10 +34,12 @@ import com.sun.net.httpserver.HttpHandler;
 public class ProxyHandler implements HttpHandler {
     public record HostPort(String server,int port,String scheme){}
 
-    /** the proxy selected for the request currently being sent on this thread.
-     * falls back to the (bounded) proxies map when the client invokes the
-     * selector on one of its own executor threads. */
-    private static final ThreadLocal<HostPort> CURRENT_PROXY = new ThreadLocal<>();
+    /** the proxy selected for the request currently being sent. bound with a
+     * ScopedValue (JDK 25, JEP 506): immutable per scope, no ThreadLocalMap
+     * per virtual thread, and cannot leak if a remove() is skipped. falls
+     * back to the (bounded) proxies map when the client invokes the selector
+     * on one of its own executor threads - outside the scope. */
+    private static final ScopedValue<HostPort> CURRENT_PROXY = ScopedValue.newInstance();
 
     /** proxy selections keyed by URI authority - bounded by the set of distinct
      * upstream targets rather than by full request URIs */
@@ -58,7 +60,9 @@ public class ProxyHandler implements HttpHandler {
         proxyClient = HttpClient.newBuilder().proxy(new ProxySelector(){
             @Override
             public List<Proxy> select(URI uri) {
-                var hp = CURRENT_PROXY.get();
+                // ScopedValue.get() throws when unbound (the selector can run
+                // on HttpClient threads outside the scope): isBound() first
+                var hp = CURRENT_PROXY.isBound() ? CURRENT_PROXY.get() : null;
                 if (hp == null) {
                     hp = proxies.get(authorityOf(uri));
                 }
@@ -152,32 +156,44 @@ public class ProxyHandler implements HttpHandler {
             }
         }
         proxies.put(authorityOf(uri),proxy);
+        // effectively final for the lambda below (uri may have been rebuilt above)
+        final URI target = uri;
         try {
-            CURRENT_PROXY.set(proxy);
-            var requestBuilder = HttpRequest.newBuilder(uri);
-            String[] forwardedHeaders = headers(exchange.getRequestHeaders());
-            // HttpRequest.Builder.headers() rejects an empty array: a request
-            // whose headers were all restricted (e.g. only Host and Connection)
-            // must skip the call entirely
-            if (forwardedHeaders.length > 0) {
-                requestBuilder = requestBuilder.headers(forwardedHeaders);
-            }
-            var response = proxyClient.send(requestBuilder.method(exchange.getRequestMethod(),HttpRequest.BodyPublishers.ofInputStream(() -> exchange.getRequestBody())).build(),HttpResponse.BodyHandlers.ofInputStream());
-            exchange.getResponseHeaders().putAll(response.headers().map());
-            // strip hop-by-hop and framing headers: this server performs its own
-            // chunked framing, so forwarding them would emit both
-            // Content-length and Transfer-encoding (RFC 7230 6.1)
-            for (String h : HOP_BY_HOP_HEADERS) {
-                exchange.getResponseHeaders().remove(h);
-            }
-            exchange.sendResponseHeaders(response.statusCode(),0);
-            try (var os = exchange.getResponseBody ()) {
-                transfer(response.body(),os);
-            }
+            // call() propagates checked exceptions; the scope is bound for the
+            // whole forwarding so the selector sees CURRENT_PROXY on the
+            // calling (virtual) thread, and unbinds automatically afterwards
+            ScopedValue.where(CURRENT_PROXY, proxy).call(() -> {
+                var requestBuilder = HttpRequest.newBuilder(target);
+                String[] forwardedHeaders = headers(exchange.getRequestHeaders());
+                // HttpRequest.Builder.headers() rejects an empty array: a request
+                // whose headers were all restricted (e.g. only Host and Connection)
+                // must skip the call entirely
+                if (forwardedHeaders.length > 0) {
+                    requestBuilder = requestBuilder.headers(forwardedHeaders);
+                }
+                var response = proxyClient.send(requestBuilder.method(exchange.getRequestMethod(),HttpRequest.BodyPublishers.ofInputStream(() -> exchange.getRequestBody())).build(),HttpResponse.BodyHandlers.ofInputStream());
+                exchange.getResponseHeaders().putAll(response.headers().map());
+                // strip hop-by-hop and framing headers: this server performs its own
+                // chunked framing, so forwarding them would emit both
+                // Content-length and Transfer-encoding (RFC 7230 6.1)
+                for (String h : HOP_BY_HOP_HEADERS) {
+                    exchange.getResponseHeaders().remove(h);
+                }
+                exchange.sendResponseHeaders(response.statusCode(),0);
+                try (var os = exchange.getResponseBody ()) {
+                    transfer(response.body(),os);
+                }
+                return null;
+            });
         } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
             throw new IOException("unable to proxy request to "+exchange.getRequestURI(),ex);
-        } finally {
-            CURRENT_PROXY.remove();
+        } catch (IOException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            // call()'s exception inference widens to Exception for a body that
+            // throws both IOException and InterruptedException
+            throw new IOException("unable to proxy request to "+exchange.getRequestURI(),ex);
         }
     }
 
@@ -197,7 +213,7 @@ public class ProxyHandler implements HttpHandler {
         return false;
     }
 
-    private static int DEFAULT_BUFFER_SIZE = 16384;
+    private static final int DEFAULT_BUFFER_SIZE = 16384;
     private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
 
     private static void closeQuietly(Socket s) {
@@ -250,8 +266,8 @@ public class ProxyHandler implements HttpHandler {
     protected Optional<HostPort> proxyTo(HttpExchange exchange) {
         return defaultProxy;
     }
-    
+
     protected void connectFailed(URI uri, SocketAddress sa, IOException ieo) {
     }
-    
+
 }

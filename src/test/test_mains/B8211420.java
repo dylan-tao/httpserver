@@ -42,7 +42,7 @@ import jdk.test.lib.net.URIBuilder;
 
 public class B8211420 {
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         Logger logger = Logger.getLogger("com.sun.net.httpserver");
         ConsoleHandler c = new ConsoleHandler();
         c.setLevel(Level.WARNING);

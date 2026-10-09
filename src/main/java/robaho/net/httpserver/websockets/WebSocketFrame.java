@@ -8,18 +8,18 @@ package robaho.net.httpserver.websockets;
  * %%
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the nanohttpd nor the names of its contributors
  *    may be used to endorse or promote products derived from this software without
  *    specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -39,6 +39,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -46,7 +47,7 @@ import robaho.net.httpserver.ServerConfig;
 
 public class WebSocketFrame {
 
-    public static final Charset TEXT_CHARSET = Charset.forName("UTF-8");
+    public static final Charset TEXT_CHARSET = StandardCharsets.UTF_8;
 
     public static String binary2Text(byte[] payload) throws CharacterCodingException {
         return binary2Text(payload, 0, payload.length);
@@ -216,7 +217,7 @@ public class WebSocketFrame {
             if (getOpCode() == OpCode.Text) {
                 String text = getTextPayload();
                 if (text.length() > 100) {
-                    sb.append(text.substring(0, 100)).append("...");
+                    sb.append(text, 0, 100).append("...");
                 } else {
                     sb.append(text);
                 }
@@ -271,7 +272,7 @@ public class WebSocketFrame {
         } else if (this._payloadLength == 127) {
             long _payloadLength = (long) checkedRead(in.read()) << 56 | (long) checkedRead(in.read()) << 48
                     | (long) checkedRead(in.read()) << 40 | (long) checkedRead(in.read()) << 32
-                    | checkedRead(in.read()) << 24 | checkedRead(in.read()) << 16 | checkedRead(in.read()) << 8
+                    | (long) checkedRead(in.read()) << 24 | checkedRead(in.read()) << 16 | checkedRead(in.read()) << 8
                     | checkedRead(in.read());
             if (_payloadLength < 65536) {
                 throw new WebSocketException(CloseCode.ProtocolError,
@@ -343,13 +344,12 @@ public class WebSocketFrame {
 
     @Override
     public String toString() {
-        final StringBuilder sb = new StringBuilder("WS[");
-        sb.append(getOpCode());
-        sb.append(", ").append(isFin() ? "fin" : "inter");
-        sb.append(", ").append(isMasked() ? "masked" : "unmasked");
-        sb.append(", ").append(payloadToString());
-        sb.append(']');
-        return sb.toString();
+        String sb = "WS[" + getOpCode() +
+                ", " + (isFin() ? "fin" : "inter") +
+                ", " + (isMasked() ? "masked" : "unmasked") +
+                ", " + payloadToString() +
+                ']';
+        return sb;
     }
 
     // ------------------------------------------------------------------------

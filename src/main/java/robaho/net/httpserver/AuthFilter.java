@@ -60,17 +60,14 @@ public class AuthFilter extends Filter {
     public void doFilter(HttpExchange t, Filter.Chain chain) throws IOException {
         if (authenticator != null) {
             Authenticator.Result r = authenticator.authenticate(t);
-            if (r instanceof Authenticator.Success) {
-                Authenticator.Success s = (Authenticator.Success) r;
+            if (r instanceof Authenticator.Success s) {
                 PrincipalExchange e = (PrincipalExchange)t;
                 e.setPrincipal(s.getPrincipal());
                 chain.doFilter(t);
-            } else if (r instanceof Authenticator.Retry) {
-                Authenticator.Retry ry = (Authenticator.Retry) r;
+            } else if (r instanceof Authenticator.Retry ry) {
                 consumeInput(t);
                 t.sendResponseHeaders(ry.getResponseCode(), -1);
-            } else if (r instanceof Authenticator.Failure) {
-                Authenticator.Failure f = (Authenticator.Failure) r;
+            } else if (r instanceof Authenticator.Failure f) {
                 consumeInput(t);
                 t.sendResponseHeaders(f.getResponseCode(), -1);
             }
@@ -79,8 +76,8 @@ public class AuthFilter extends Filter {
         }
     }
 
-    static interface PrincipalExchange {
-        public void setPrincipal(HttpPrincipal p);
-        public Principal getPrincipal();
+    interface PrincipalExchange {
+        void setPrincipal(HttpPrincipal p);
+        Principal getPrincipal();
     }
 }

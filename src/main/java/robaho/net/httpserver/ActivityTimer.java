@@ -9,6 +9,9 @@ import java.util.TimerTask;
 class ActivityTimer {
     private static volatile long now = System.currentTimeMillis();
     private static volatile String dateAndTime = formatDate();
+    /** the Date header value pre-encoded: written on every response, encoding
+     * the string each time is pure waste */
+    private static volatile byte[] dateAndTimeBytes = dateAndTime.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
 
     private static final java.util.Timer TIMER = new java.util.Timer("httpserver-activity-timer", true);
 
@@ -60,9 +63,15 @@ class ActivityTimer {
         return dateAndTime;
     }
 
+    /** the cached Date header value, pre-encoded as ISO-8859-1 */
+    static byte[] dateAndTimeBytes() {
+        return dateAndTimeBytes;
+    }
+
     static void updateNow() {
         now = System.currentTimeMillis();
         dateAndTime = formatDate();
+        dateAndTimeBytes = dateAndTime.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 
     static TimerTask createTask() {

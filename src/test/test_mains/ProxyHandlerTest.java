@@ -16,10 +16,10 @@ import robaho.net.httpserver.extras.ProxyHandler;
  * @summary test the ProxyHandler
  */
 public class ProxyHandlerTest {
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
 
         InetAddress loopback = InetAddress.getLoopbackAddress();
-        InetSocketAddress addr = new InetSocketAddress (loopback, 0);   
+        InetSocketAddress addr = new InetSocketAddress (loopback, 0);
 
         var server1 = HttpServer.create(addr,100);
         var proxy = HttpServer.create(addr,100);

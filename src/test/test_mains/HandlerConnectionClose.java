@@ -62,7 +62,7 @@ import javax.net.ssl.SSLSession;
 public class HandlerConnectionClose
 {
     static final int ONEK = 1024;
-    static final long POST_SIZE = ONEK * 1L;
+    static final long POST_SIZE = ONEK;
     SSLContext sslContext;
     Logger logger;
 
@@ -149,12 +149,10 @@ public class HandlerConnectionClose
             OutputStream os = socket.getOutputStream();
 
             // send request headers
-            String request = new StringBuilder()
-                    .append("POST ").append(path).append(" HTTP/1.1").append("\r\n")
-                    .append("host: ").append(host).append(':').append(port).append("\r\n")
-                    .append("Content-Length: ").append(POST_SIZE).append("\r\n")
-                    .append("\r\n")
-                    .toString();
+            String request = "POST " + path + " HTTP/1.1" + "\r\n" +
+                    "host: " + host + ':' + port + "\r\n" +
+                    "Content-Length: " + POST_SIZE + "\r\n" +
+                    "\r\n";
             os.write(request.getBytes(StandardCharsets.US_ASCII));
 
             /* create a 1K byte array with data to POST */
@@ -297,12 +295,10 @@ public class HandlerConnectionClose
                     // connection is closed. If the server has not closed the
                     // connection, it will reply. If we receive a response,
                     // we should fail...
-                    String endrequest = new StringBuilder()
-                            .append("GET ").append("/close/end").append(" HTTP/1.1").append("\r\n")
-                            .append("host: ").append(host).append(':').append(port).append("\r\n")
-                            .append("Content-Length: ").append(0).append("\r\n")
-                            .append("\r\n")
-                            .toString();
+                    String endrequest = "GET " + "/close/end" + " HTTP/1.1" + "\r\n" +
+                            "host: " + host + ':' + port + "\r\n" +
+                            "Content-Length: " + 0 + "\r\n" +
+                            "\r\n";
                     os.write(endrequest.getBytes(StandardCharsets.US_ASCII));
                     os.flush();
                     StringBuilder resp = new StringBuilder();
@@ -424,7 +420,7 @@ public class HandlerConnectionClose
     void check(boolean cond) {if (cond) pass(); else fail();}
     void check(boolean cond, String failMessage) {if (cond) pass(); else fail(failMessage);}
     void debug(String message) {if(debug) { System.out.println(message); }  }
-    public static void main(String[] args) throws Throwable {
+    static void main(String[] args) throws Throwable {
         Class<?> k = new Object(){}.getClass().getEnclosingClass();
         try {k.getMethod("instanceMain",String[].class)
                 .invoke( k.newInstance(), (Object) args);}

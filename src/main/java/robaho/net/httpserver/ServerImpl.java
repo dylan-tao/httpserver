@@ -35,7 +35,6 @@ import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -96,27 +95,12 @@ class ServerImpl {
     // schedule for the timer task that's responsible for request/response timeout
     // management
     static final long MAX_REQ_TIME = getTimeMillis(ServerConfig.getMaxReqTime());
-    static final long MAX_RSP_TIME = getTimeMillis(ServerConfig.getMaxRspTime());
     // the maximum idle duration for a connection which is currently idle but has
     // served
     // some request in the past
     static final long IDLE_INTERVAL = ServerConfig.getIdleIntervalMillis();
-    // the maximum idle duration for a newly accepted connection which hasn't yet
-    // received
-    // the first byte of data on that connection
-    static final long NEWLY_ACCEPTED_CONN_IDLE_INTERVAL;
-
-    static {
-        // the idle duration of a newly accepted connection is considered to be the
-        // least of the
-        // configured idle interval and the configured max request time (if any).
-        NEWLY_ACCEPTED_CONN_IDLE_INTERVAL = MAX_REQ_TIME > 0
-                ? Math.min(IDLE_INTERVAL, MAX_REQ_TIME)
-                : IDLE_INTERVAL;
-    }
-
-    private Timer timer;
-    private Logger logger;
+    private final Timer timer;
+    private final Logger logger;
     private Thread dispatcherThread;
 
     // statistics
@@ -210,6 +194,9 @@ class ServerImpl {
             executor = new DefaultExecutor();
         }
         logger.log(Level.INFO, "using " + executor + " as executor");
+        // report the JVM-level performance features (ZGC / compact object
+        // headers) once; see ServerConfig.logJvmFeatures for the fallback story
+        ServerConfig.logJvmFeatures(logger);
         dispatcherThread = new Thread(null, dispatcher, "HTTP-Dispatcher", 0, false);
         started = true;
         dispatcherThread.start();
@@ -278,7 +265,7 @@ class ServerImpl {
             // since we created it, shut it done when stopping because it is private
             de.shutdown();
         }
-        long latest = System.currentTimeMillis() + delay * 1000;
+        long latest = System.currentTimeMillis() + delay * 1000L;
         while (System.currentTimeMillis() < latest) {
             // sleep the remaining interval (in coarse steps) instead of a
             // fixed yield+sleep that overshoots the deadline
@@ -440,10 +427,10 @@ class ServerImpl {
                     sslSocket.setSoTimeout(0);
                 }
                 if ("h2".equals(sslSocket.getApplicationProtocol())) {
-                    logger.log(Level.DEBUG, () -> "http2 connection "+sslSocket.toString());
+                    logger.log(Level.DEBUG, () -> "http2 connection "+ sslSocket);
                     http2 = true;
                 } else {
-                    logger.log(Level.DEBUG, () -> "http/1.1 connection "+sslSocket.toString());
+                    logger.log(Level.DEBUG, () -> "http/1.1 connection "+ sslSocket);
                 }
                 s = sslSocket;
             }
@@ -590,9 +577,9 @@ class ServerImpl {
         @Override
         public void handleStream(HTTP2Stream stream,InputStream in, OutputStream out) throws IOException {
             connection.requestCount.incrementAndGet();
-            stats.requestCount.incrementAndGet();
+            if (ServerStats.ENABLED) stats.requestCount.incrementAndGet();
 
-            http2Stats.totalStreams.incrementAndGet();
+            if (HTTP2Stats.ENABLED) http2Stats.totalStreams.incrementAndGet();
 
             var request = stream.getRequestHeaders();
             var response = stream.getResponseHeaders();
@@ -602,7 +589,7 @@ class ServerImpl {
             String path = request.getFirst(":path");
             String query = request.getFirst(":query");
 
-            logger.log(Level.TRACE, () -> "http2 stream started "+stream.toString());
+            logger.log(Level.TRACE, () -> "http2 stream started "+ stream);
 
             if (authority == null || path == null) {
                 throw new IOException("Invalid HTTP/2 headers: missing :authority or :path");
@@ -690,7 +677,7 @@ class ServerImpl {
             this.rawin = connection.getInputStream();
             this.rawout = connection.getOutputStream();
 
-            logger.log(Level.TRACE, () -> "exchange started "+connection.toString());
+            logger.log(Level.TRACE, () -> "exchange started "+ connection);
 
             while (!connection.closed) {
                 try {
@@ -706,14 +693,6 @@ class ServerImpl {
                     break;
                 } catch (Exception e) {
                     logger.log(Level.WARNING, "ServerImpl unexpected exception", e);
-                    // the following seems to be a better handling - to return a server internal error rather than simply
-                    // closing the connection, but test cases fail
-                    //
-                    // if (!connection.closed) {
-                    //     if (!tx.sentHeaders) {
-                    //         reject(500, "internal error", e.toString());
-                    //     }
-                    // }
                     if (tx == null || !tx.sentHeaders || !tx.closed) {
                         closeConnection(connection);
                         break;
@@ -734,7 +713,7 @@ class ServerImpl {
                     throw t;
                 }
             }
-            logger.log(Level.TRACE, () -> "exchange finished "+connection.toString());
+            logger.log(Level.TRACE, () -> "exchange finished "+ connection);
         }
 
         private void runPerRequest() throws IOException {
@@ -770,7 +749,7 @@ class ServerImpl {
                 return;
             }
             connection.requestCount.incrementAndGet();
-            stats.requestCount.incrementAndGet();
+            if (ServerStats.ENABLED) stats.requestCount.incrementAndGet();
 
             logger.log(Level.DEBUG, () -> "Exchange request line: "+ requestLine);
             int space = requestLine.indexOf(" ");
@@ -806,14 +785,6 @@ class ServerImpl {
                 return;
             }
 
-            /* check key for illegal characters, impossible since Headers class validates on mutation */
-            // for (var k : headers.keySet()) {
-            //     if (!isValidName(k)) {
-            //         reject(Code.HTTP_BAD_REQUEST, requestLine,
-            //                 "Header key contains illegal characters");
-            //         return;
-            //     }
-            // }
             /* checks for unsupported combinations of lengths and encodings */
             if (headers.containsKey("Content-length")
                     && (headers.containsKey("Transfer-encoding") || headers.get("Content-length").size() > 1)) {
@@ -967,7 +938,7 @@ class ServerImpl {
                     if (!informational) {
                         // no body for 1xx responses
                         builder.append("Content-length: 0\r\n");
-                    } 
+                    }
                     text = "";
                 }
                 if (closeNow) {
@@ -1024,15 +995,10 @@ class ServerImpl {
                     logger.log(Level.DEBUG, "closing idle connection");
                     stats.idleCloseCount.incrementAndGet();
                     closeConnection(c);
-                    // idle.add(c);
-                } else if (c.noActivity && (now - c.lastActivityTime >= NEWLY_ACCEPTED_CONN_IDLE_INTERVAL)) {
-                    logger.log(Level.WARNING, "closing newly accepted idle connection");
-                    closeConnection(c);
                 } else if (MAX_REQ_TIME != -1 && c.inRequest && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
                     logger.log(Level.WARNING, "closing connection due to request processing time");
                     closeConnection(c);
                 }
-                // TODO is MAX_RSP_TIME needed?
             }
             // enforce the idle connection count limit: close the OLDEST idle
             // connections beyond MAX_IDLE_CONNECTIONS. the enforcement existed
@@ -1041,7 +1007,13 @@ class ServerImpl {
             if (MAX_IDLE_CONNECTIONS > 0) {
                 List<HttpConnection> idle = new ArrayList<>();
                 for (var c : allConnections) {
-                    if (!c.inRequest) {
+                    // "idle" = no request in flight AND quiet for a while. h2
+                    // connections never set inRequest (the h2c branch returns
+                    // before it is set), so recency of lastActivityTime is the
+                    // only signal that an h2 connection is still serving:
+                    // without the recency condition the cap would count - and
+                    // eventually close - ACTIVE h2 connections
+                    if (!c.inRequest && now - c.lastActivityTime >= IDLE_INTERVAL / 2) {
                         idle.add(c);
                     }
                 }

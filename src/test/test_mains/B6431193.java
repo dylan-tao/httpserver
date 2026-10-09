@@ -50,7 +50,7 @@ public class B6431193 {
     /**
      * @param args
      */
-    public static void main(String[] args) {
+    static void main(String[] args) {
         class MyHandler implements HttpHandler {
             public void handle(HttpExchange t) throws IOException {
                 InputStream is = t.getRequestBody();

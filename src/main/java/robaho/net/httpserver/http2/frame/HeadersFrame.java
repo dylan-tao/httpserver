@@ -3,7 +3,6 @@ package robaho.net.httpserver.http2.frame;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Arrays;
-import java.util.EnumSet;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
@@ -106,7 +105,7 @@ public class HeadersFrame extends BaseFrame {
 	}
 
 	/**
-	 * 
+	 *
 	 * @param frameBody
 	 *            payload of the HeadersFrame after consuming the FrameHeader
 	 * @param header
@@ -121,7 +120,7 @@ public class HeadersFrame extends BaseFrame {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
 
-        if(header.getLength() != frameBody.length) {
+        if(header.length() != frameBody.length) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
 
@@ -130,17 +129,17 @@ public class HeadersFrame extends BaseFrame {
         HeadersFrame headersFrame = new HeadersFrame(header);
 
         //check for PADDED flag and if set then store padding length
-        if (header.getFlags().contains(FrameFlag.PADDED)) {
+        if (header.flags().contains(FrameFlag.PADDED)) {
             int padLength = Utils.convertToInt(frameBody, paramIndex, 1);
-            if(padLength >= header.getLength()) {
+            if(padLength >= header.length()) {
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
             }
             headersFrame.setPadLength(padLength);
             paramIndex += 1;
         }
-        
+
         //check for PRIORITY flag and if set then store the Exclusive bit (isExclusive) and store streamID
-        if (header.getFlags().contains(FrameFlag.PRIORITY)) {
+        if (header.flags().contains(FrameFlag.PRIORITY)) {
 
             var streamId = Utils.convertToInt(frameBody, paramIndex, 4);
             paramIndex += 4;
@@ -149,7 +148,7 @@ public class HeadersFrame extends BaseFrame {
                 headersFrame.setIsExclusive(true);
             }
             headersFrame.setDependentStream(streamId & 0x7FFFFFFFL);
-            if (headersFrame.dependentStreamId == header.getStreamIdentifier()) {
+            if (headersFrame.dependentStreamId == header.streamIdentifier()) {
                 // cannot depend on itself
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
             }
@@ -158,7 +157,16 @@ public class HeadersFrame extends BaseFrame {
             paramIndex += 1;
         }
 
-        headersFrame.setHeaderBlock(Arrays.copyOfRange(frameBody, paramIndex, (header.getLength() - headersFrame.getPadLength())));
+        // the common case (no PADDED, no PRIORITY) has paramIndex == 0 and no
+        // padding: the frame body is freshly allocated per frame and owned
+        // exclusively by this frame, so the copyOfRange duplicated the whole
+        // header block for nothing
+        int end = header.length() - headersFrame.getPadLength();
+        if (paramIndex == 0 && end == frameBody.length) {
+            headersFrame.setHeaderBlock(frameBody);
+        } else {
+            headersFrame.setHeaderBlock(Arrays.copyOfRange(frameBody, paramIndex, end));
+        }
 
 		return headersFrame;
 	}
@@ -166,7 +174,7 @@ public class HeadersFrame extends BaseFrame {
     @Override
     public void writeTo(OutputStream os) throws IOException {
         byte[] buffer = getHeaderBlock();
-        FrameHeader.writeTo(os, buffer.length, FrameType.HEADERS, FlagSet.of(FrameFlag.END_HEADERS), getHeader().getStreamIdentifier());
+        FrameHeader.writeTo(os, buffer.length, FrameType.HEADERS, FlagSet.of(FrameFlag.END_HEADERS), getHeader().streamIdentifier());
         os.write(buffer);
         os.flush();
     }

@@ -291,14 +291,14 @@ public final class Utils {
      * @return An array of options, or an empty array if no options.
      */
     public static String[] getFilteredTestJavaOpts(String... filters) {
-        String options[] = getTestJavaOpts();
+        String[] options = getTestJavaOpts();
 
         if (filters.length == 0) {
             return options;
         }
 
         List<String> filteredOptions = new ArrayList<String>(options.length);
-        Pattern patterns[] = new Pattern[filters.length];
+        Pattern[] patterns = new Pattern[filters.length];
         for (int i = 0; i < filters.length; i++) {
             patterns[i] = Pattern.compile(filters[i]);
         }
@@ -404,7 +404,7 @@ public final class Utils {
      */
     public static int getFreePort() throws IOException {
         try (ServerSocket serverSocket =
-                new ServerSocket(0, 5, InetAddress.getLoopbackAddress());) {
+                new ServerSocket(0, 5, InetAddress.getLoopbackAddress())) {
             return serverSocket.getLocalPort();
         }
     }
@@ -574,7 +574,7 @@ public final class Utils {
      *
      * @param condition a condition to wait for
      */
-    public static final void waitForCondition(BooleanSupplier condition) {
+    public static void waitForCondition(BooleanSupplier condition) {
         waitForCondition(condition, -1L, 100L);
     }
 
@@ -586,8 +586,8 @@ public final class Utils {
      * specifying -1 will wait forever
      * @return condition value, to determine if wait was successful
      */
-    public static final boolean waitForCondition(BooleanSupplier condition,
-            long timeout) {
+    public static boolean waitForCondition(BooleanSupplier condition,
+                                           long timeout) {
         return waitForCondition(condition, timeout, 100L);
     }
 
@@ -600,8 +600,8 @@ public final class Utils {
      * @param sleepTime a time to sleep value in milliseconds
      * @return condition value, to determine if wait was successful
      */
-    public static final boolean waitForCondition(BooleanSupplier condition,
-            long timeout, long sleepTime) {
+    public static boolean waitForCondition(BooleanSupplier condition,
+                                           long timeout, long sleepTime) {
         long startTime = System.currentTimeMillis();
         while (!(condition.getAsBoolean() || (timeout != -1L
                 && ((System.currentTimeMillis() - startTime) > timeout)))) {
@@ -619,7 +619,7 @@ public final class Utils {
      * Interface same as java.lang.Runnable but with
      * method {@code run()} able to throw any Throwable.
      */
-    public static interface ThrowingRunnable {
+    public interface ThrowingRunnable {
         void run() throws Throwable;
     }
 
@@ -769,7 +769,7 @@ public final class Utils {
         }
         return result;
     }
-    private static Map<Class<?>, Object> NULL_VALUES = new HashMap<>();
+    private static final Map<Class<?>, Object> NULL_VALUES = new HashMap<>();
     static {
         NULL_VALUES.put(boolean.class, false);
         NULL_VALUES.put(byte.class, (byte) 0);

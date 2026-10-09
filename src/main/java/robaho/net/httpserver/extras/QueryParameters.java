@@ -21,7 +21,7 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
         }
         QueryParameters qp = new QueryParameters();
         for (var entry : query.split("&")) {
-            String parts[] = entry.split("=", 2);
+            String[] parts = entry.split("=", 2);
             if (parts.length == 0 || parts[0].length() == 0) {
                 continue;
             }

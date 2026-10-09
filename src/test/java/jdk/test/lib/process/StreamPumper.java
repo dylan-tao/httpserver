@@ -171,15 +171,15 @@ public final class StreamPumper implements Runnable {
         }
     }
 
-    final void addOutputStream(OutputStream out) {
+    void addOutputStream(OutputStream out) {
         outStreams.add(out);
     }
 
-    final void addLineProcessor(LinePump lp) {
+    void addLineProcessor(LinePump lp) {
         linePumps.add(lp);
     }
 
-    public final StreamPumper addPump(Pump ... pump) {
+    public StreamPumper addPump(Pump... pump) {
         if (processing.get()) {
             throw new IllegalStateException("Can not modify pumper while " +
                                             "processing is in progress");
@@ -190,7 +190,7 @@ public final class StreamPumper implements Runnable {
         return this;
     }
 
-    public final Future<Void> process() {
+    public Future<Void> process() {
         if (!processing.compareAndSet(false, true)) {
             throw new IllegalStateException("Can not re-run the processing");
         }

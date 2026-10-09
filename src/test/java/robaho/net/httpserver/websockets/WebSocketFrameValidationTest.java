@@ -159,7 +159,7 @@ public class WebSocketFrameValidationTest {
             } else {
                 buf.write(0x80 | 127);
                 for (int i = 7; i >= 0; i--) {
-                    buf.write((int) (payload.length >>> (8 * i)) & 0xFF);
+                    buf.write((payload.length >>> (8 * i)) & 0xFF);
                 }
             }
             buf.write(mask);
@@ -183,7 +183,7 @@ public class WebSocketFrameValidationTest {
                 } else if (len == 127) {
                     len = 0;
                     for (int i = 0; i < 8; i++) {
-                        len = (int) ((len << 8) | (in.read() & 0xFF));
+                        len = (len << 8) | (in.read() & 0xFF);
                     }
                 }
                 byte[] payload = new byte[len];

@@ -57,16 +57,16 @@ public class MultiFrameTrailerTest {
             client.writeRawFrame(H2Client.TYPE_CONTINUATION, H2Client.FLAG_END_HEADERS, stream, third);
 
             var response = client.awaitResponse(stream);
-            Assert.assertFalse(response.goaway, "multi-frame trailer must not trigger GOAWAY");
-            Assert.assertNull(response.rstErrorCode, "stream must not be reset");
-            Assert.assertEquals(response.status, 200, "request must complete normally");
-            Assert.assertEquals(new String(response.data, StandardCharsets.UTF_8), "hello");
+            Assert.assertFalse(response.goaway(), "multi-frame trailer must not trigger GOAWAY");
+            Assert.assertNull(response.rstErrorCode(), "stream must not be reset");
+            Assert.assertEquals(response.status(), 200, "request must complete normally");
+            Assert.assertEquals(new String(response.data(), StandardCharsets.UTF_8), "hello");
 
             // the connection survives: a new stream is served
             int stream2 = client.sendRequest("GET", "/echo", true);
             var response2 = client.awaitResponse(stream2);
-            Assert.assertFalse(response2.goaway);
-            Assert.assertEquals(response2.status, 200);
+            Assert.assertFalse(response2.goaway());
+            Assert.assertEquals(response2.status(), 200);
         }
     }
 

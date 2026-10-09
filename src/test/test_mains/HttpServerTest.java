@@ -46,7 +46,7 @@ import jdk.test.lib.net.URIBuilder;
 
 public class HttpServerTest implements HttpHandler {
     private static final int HTTP_STATUS_CODE_OK = 200;
-    private static CountDownLatch serverStopped = new CountDownLatch(1);
+    private static final CountDownLatch serverStopped = new CountDownLatch(1);
     private final HttpServer server;
 
 
@@ -73,7 +73,7 @@ public class HttpServerTest implements HttpHandler {
         }
     }
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    static void main(String[] args) throws IOException, InterruptedException {
         HttpServer server = HttpServer.create(
                 new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
 

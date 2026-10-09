@@ -55,7 +55,7 @@ public class TaskRejectedTest {
     private static final int TIMEOUT = 10000; // 10 sec
 
     private static void runClient(InetSocketAddress listenAddr)
-                                     throws MalformedURLException, IOException {
+                                     throws IOException {
         URL url = new URL("http", listenAddr.getHostString(),
                                             listenAddr.getPort(), REQUEST_PATH);
         HttpURLConnection con = (HttpURLConnection)url.openConnection();
@@ -74,7 +74,7 @@ public class TaskRejectedTest {
         }
     }
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         Logger logger = Logger.getLogger(
                             HttpServer.class.getPackage().getName());
         Handler consoleHandler = new ConsoleHandler();

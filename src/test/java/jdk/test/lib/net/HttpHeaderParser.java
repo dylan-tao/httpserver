@@ -40,8 +40,8 @@ public final class HttpHeaderParser {
     private static final char HT = '\t';
     private static final char SP = ' ';
     // ABNF primitives defined in RFC 7230
-    private static boolean[] tchar      = new boolean[256];
-    private static boolean[] fieldvchar = new boolean[256];
+    private static final boolean[] tchar      = new boolean[256];
+    private static final boolean[] fieldvchar = new boolean[256];
 
     static {
         char[] allowedTokenChars =
@@ -59,8 +59,8 @@ public final class HttpHeaderParser {
 
     private StringBuilder sb = new StringBuilder();
 
-    private Map <String, List<String>>  headerMap = new LinkedHashMap<>();
-    private List <String> keyList = new ArrayList<>();
+    private final Map <String, List<String>>  headerMap = new LinkedHashMap<>();
+    private final List <String> keyList = new ArrayList<>();
     private String requestOrStatusLine;
     private int responseCode;
     private boolean eof;
@@ -87,7 +87,7 @@ public final class HttpHeaderParser {
     }
 
 
-    public HttpHeaderParser(InputStream is) throws IOException, ProtocolException {
+    public HttpHeaderParser(InputStream is) throws IOException {
         parse(is);
     }
 

@@ -68,7 +68,7 @@ public class B6393710 {
         "Cache-Control: no-cache"+CRLF+ CRLF+
         "<item desc=\"excuse\" />";
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         Handler handler = new Handler();
         InetAddress loopback = InetAddress.getLoopbackAddress();
         InetSocketAddress addr = new InetSocketAddress (loopback, 0);

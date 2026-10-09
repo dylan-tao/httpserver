@@ -62,7 +62,7 @@ public class B6433018 {
         "Pragma: no-cache"+CRLF+
         "Cache-Control: no-cache"+CRLF+CRLF;
 
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         CountDownLatch finished = new CountDownLatch(2);
         Handler handler = new Handler(finished);
         InetAddress loopback = InetAddress.getLoopbackAddress();

@@ -185,17 +185,31 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 }
                 int available = in.available();
                 if (available <= 0) {
-                    // nothing has arrived yet: wait briefly in case the rest of
-                    // the body is still in flight, then give up on this connection
-                    if (System.currentTimeMillis() >= deadline) {
+                    // nothing has arrived yet: block for the remaining window
+                    // instead of 10ms polling. one bounded read reacts
+                    // instantly to straggler bytes (the old loop cost up to
+                    // 100 sleep/wake cycles plus ~100 available() calls per
+                    // teardown). the socket read timeout is set to the
+                    // remaining window and restored afterwards
+                    long remaining = deadline - System.currentTimeMillis();
+                    if (remaining <= 0) {
                         break;
                     }
                     t.connection.drainingAt = ActivityTimer.now();
+                    var socket = t.connection.getSocket();
+                    int previousTimeout = socket.getSoTimeout();
                     try {
-                        Thread.sleep(10);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                        socket.setSoTimeout((int) Math.min(remaining, Integer.MAX_VALUE));
+                        int len = readImpl(drainBuffer, 0, (int) Math.min(drainBuffer.length, l));
+                        if (len == -1) {
+                            eof = true;
+                            return true;
+                        }
+                        l -= len;
+                    } catch (java.net.SocketTimeoutException e) {
                         break;
+                    } finally {
+                        socket.setSoTimeout(previousTimeout);
                     }
                     continue;
                 }
@@ -213,8 +227,5 @@ abstract class LeftOverInputStream extends FilterInputStream {
         } finally {
             t.connection.drainingAt = 0;
         }
-    }
-    public InputStream getRawInputStream() {
-        return super.in;
     }
 }

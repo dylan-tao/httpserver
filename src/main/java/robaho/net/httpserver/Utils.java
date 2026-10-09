@@ -56,19 +56,6 @@ public class Utils {
     }
 
     /*
-     * Validates an RFC 7230 field-name.
-     */
-    public static boolean isValidName(String token) {
-        for (int i = 0; i < token.length(); i++) {
-            char c = token.charAt(i);
-            if (c > 255 || !TCHAR[c]) {
-                return false;
-            }
-        }
-        return !token.isEmpty();
-    }
-
-    /*
      * Validates an RFC 7230 quoted-string.
      */
     public static boolean isQuotedStringContent(String token) {

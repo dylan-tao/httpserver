@@ -47,7 +47,7 @@ import jdk.test.lib.net.URIBuilder;
 
 public class B6339483 {
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         InetAddress loopback = InetAddress.getLoopbackAddress();
         InetSocketAddress addr = new InetSocketAddress (loopback, 0);
         HttpServer server = HttpServer.create (addr, 0);

@@ -30,7 +30,7 @@ public class PriorityFrame extends BaseFrame {
         var tmp = Utils.convertToInt(body, 0, 4);
         frame.exclusive = (tmp & 0x80000000) != 0;
         frame.streamDependency = tmp & 0x7FFFFFFF;
-        if(frame.streamDependency == frameHeader.getStreamIdentifier()) {
+        if(frame.streamDependency == frameHeader.streamIdentifier()) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }
         frame.weight = (body[4] & 0xFF) + 1;

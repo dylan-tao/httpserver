@@ -46,7 +46,7 @@ public class B6526158 {
     /* keep under 64 k */
     final static int SIZE = 60 * 1024;
 
-    public static void main (String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         Handler handler = new Handler();
         InetAddress loopback = InetAddress.getLoopbackAddress();
         InetSocketAddress addr = new InetSocketAddress (loopback, 0);
