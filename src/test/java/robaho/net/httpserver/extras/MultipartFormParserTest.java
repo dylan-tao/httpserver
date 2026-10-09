@@ -145,4 +145,28 @@ public class MultipartFormParserTest {
         Assert.assertEquals(values.size(), 1);
 
     }
+
+    /** filename="" is what browsers send for a file input left empty: the
+     *  upload must succeed (part stored as a field), not crash with
+     *  IllegalArgumentException from sanitizeFilename */
+    @Test
+    public void testEmptyFilename() throws IOException {
+        var body = "trash\r\n";
+        body += "--boundary\r\n";
+        body += "Content-Disposition: form-data; name=\"upload\"; filename=\"\"\r\n";
+        body += "Content-Type: application/octet-stream\r\n";
+        body += "\r\n\r\n";
+        body += "\r\n--boundary--\r\n";
+
+        Path storage = Path.of("/tmp", "parser_test");
+        storage.toFile().mkdirs();
+
+        var results = parse("UTF-8", "Content-Type: multipart/form-data; boundary=boundary",
+            new ByteArrayInputStream(body.getBytes("UTF-8")), storage);
+
+        Assert.assertEquals(results.size(), 1);
+        List<Part> values = results.get("upload");
+        Assert.assertEquals(values.size(), 1);
+        Assert.assertNull(values.get(0).file(), "an empty filename must not create a file part");
+    }
 }

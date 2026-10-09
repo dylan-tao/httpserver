@@ -19,19 +19,22 @@ public class DataFrame extends BaseFrame {
         outputStream.write(body);
     }   
     public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {
-        int index = 0;
-        int padding = 0;
         if(frameHeader.getFlags().contains(FrameFlag.PADDED)) {
-            padding = (body[index] & 0xFF)+1;
-            if(padding > body.length) {
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"padding exceeds frame size");
+            if (body.length == 0) {
+                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "PADDED DATA frame with empty body");
             }
+            int padLength = body[0] & 0xFF;
+            // the frame layout is [Pad Length][data][padding] (RFC 7540 6.1):
+            // total padding = the pad length octet itself + padLength octets
+            if (padLength + 1 > body.length) {
+                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "padding exceeds frame size");
+            }
+            // the data starts AFTER the pad length octet and ends BEFORE the
+            // padding: getting either boundary wrong silently corrupts the
+            // request body (the pad octet delivered as data / last byte lost)
+            return new DataFrame(frameHeader, Arrays.copyOfRange(body, 1, body.length - padLength));
         }
-        if(padding>0) {
-            return new DataFrame(frameHeader, Arrays.copyOfRange(body,index,body.length-padding));
-        } else {
-            return new DataFrame(frameHeader, body);
-        }
+        return new DataFrame(frameHeader, body);
     }
     public byte[] encode() {
         throw new UnsupportedOperationException();

@@ -693,6 +693,16 @@ class ServerImpl {
                         closeConnection(connection);
                         break;
                     }
+                    // the handler already responded, but its request body may
+                    // not have been fully consumed: apply the same EOF guard as
+                    // the normal path, otherwise leftover body bytes get parsed
+                    // as the next request on this connection (desync/smuggling)
+                    LeftOverInputStream is = tx.getOriginalInputStream();
+                    if (is == null || !is.isEOF()) {
+                        logger.log(Level.DEBUG, "connection not at EOF after exchange exception, closing");
+                        closeConnection(connection);
+                        break;
+                    }
                 } catch (Throwable t) {
                     closeConnection(connection);
                     logger.log(Level.ERROR, "ServerImpl critical error", t);

@@ -123,7 +123,10 @@ public class MultipartFormParser {
 
             Runnable addToResults;
             OutputStream os;
-            if (meta.filename == null) {
+            // an empty filename is what browsers send for a file input that was
+            // left empty: treat it as a plain field instead of crashing the
+            // whole upload in sanitizeFilename
+            if (meta.filename == null || meta.filename.isEmpty()) {
                 var bos = new BoundedOutputStream(MAX_FIELD_SIZE);
                 os = bos;
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, null, bos.toString(charset), null));

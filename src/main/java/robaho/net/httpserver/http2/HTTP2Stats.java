@@ -17,7 +17,9 @@ public class HTTP2Stats {
 
     public String stats() {
         long now = System.currentTimeMillis();
-        double secs = (now-lastStatsTime)/1000.0;
+        // clamp like ServerStats: two reads in the same millisecond must not
+        // divide by ~0 and print Infinity
+        double secs = Math.max((now-lastStatsTime)/1000.0, 0.001);
         lastStatsTime = now;
 
         long _bytes = bytesSent.getAndSet(0);

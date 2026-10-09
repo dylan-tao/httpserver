@@ -206,6 +206,10 @@ public class HTTP2Connection {
         // END_STREAM flag of a trailer HEADERS that is still being completed by
         // CONTINUATION frames
         boolean pendingTrailerEndStream = false;
+        // END_STREAM flag of a NEW stream's HEADERS that is still being
+        // completed by CONTINUATION frames: CONTINUATION cannot carry the flag,
+        // so it must be remembered and re-applied when the block completes
+        boolean pendingEndStream = false;
 
         List<byte[]> headerBlockFragments = new ArrayList();
 
@@ -327,6 +331,11 @@ public class HTTP2Connection {
                     }
                     headerBlockFragments.add(headersFrame.getHeaderBlock());
                     if (!headersFrame.getHeader().getFlags().contains(FrameFlag.END_HEADERS)) {
+                        // remember the END_STREAM flag of the HEADERS frame: it
+                        // cannot ride on the CONTINUATION frames that complete
+                        // the block, and losing it leaves a body-reading
+                        // handler parked forever
+                        pendingEndStream = headersFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM);
                         inHeaders = true;
                         openStreamId = streamId;
                         continue;
@@ -400,6 +409,7 @@ public class HTTP2Connection {
                     sendResetStream(HTTP2ErrorCode.REFUSED_STREAM, streamId);
                     headerBlockFragments.clear();
                     headerBlockBytes = 0;
+                    pendingEndStream = false;
                     continue;
                 }
                 highNumberStreams = Math.max(highNumberStreams, currentSize);
@@ -435,6 +445,14 @@ public class HTTP2Connection {
             }
 
             targetStream.processFrame(frame);
+            if (pendingEndStream && frame.getHeader().getType() == FrameType.CONTINUATION) {
+                // a new stream's header block just completed via CONTINUATION:
+                // re-apply the END_STREAM flag recorded from the HEADERS frame
+                // (processFrame saw only the CONTINUATION, which cannot carry
+                // it) so the request body is at EOF for the handler
+                targetStream.receiveTrailer(true);
+                pendingEndStream = false;
+            }
         }
     }
 

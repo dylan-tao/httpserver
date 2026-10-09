@@ -136,6 +136,11 @@ public class ProxyHandler implements HttpHandler {
                 }
                 logger.fine("proxy connection to "+s.getRemoteSocketAddress()+" ended");
             }
+            // the CONNECT exchange is complete: return instead of falling
+            // through into the forwarding path below (the P2-35 cleanup
+            // removed the old finally-return without replacing it, so every
+            // finished tunnel errored into the proxy-forwarding code)
+            return;
         }
         var proxy = proxyTo(exchange).orElseThrow(() -> new IOException("proxy not configured for "+exchange.getRequestURI()));
         var uri = exchange.getRequestURI();

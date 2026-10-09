@@ -37,6 +37,7 @@ class H2Client implements AutoCloseable {
     static final int FLAG_END_STREAM = 0x01;
     static final int FLAG_ACK = 0x01;
     static final int FLAG_END_HEADERS = 0x04;
+    static final int FLAG_PADDED = 0x08;
 
     /** error codes used by the tests (RFC 7540 7) */
     static final int REFUSED_STREAM = 7;
@@ -98,19 +99,30 @@ class H2Client implements AutoCloseable {
         }
     }
 
+    Response awaitResponse(int streamId) throws IOException {
+        return awaitResponse(streamId, 15_000);
+    }
+
     /**
      * Read frames until the response for {@code streamId} completes (END_STREAM
      * or RST_STREAM). SETTINGS / PING are answered, WINDOW_UPDATE is skipped.
      * Frames for other streams are held back locally and re-queued on exit -
      * putting them straight back into {@code pending} would make readFrame()
-     * re-poll them forever.
+     * re-poll them forever. The deadline is wall-clock: the server's 1s idle
+     * pings keep resetting the socket read timeout, so a socket timeout alone
+     * would never fire.
      */
-    Response awaitResponse(int streamId) throws IOException {
+    Response awaitResponse(int streamId, long timeoutMillis) throws IOException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
         ByteArrayOutputStream headers = new ByteArrayOutputStream();
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         List<Frame> heldBack = new ArrayList<>();
         try {
             while (true) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new IOException("timed out (wall clock) waiting for response on stream " + streamId
+                        + " (goaway=" + goawayReceived + ")");
+                }
                 Frame f;
                 try {
                     f = readFrame();
@@ -218,6 +230,41 @@ class H2Client implements AutoCloseable {
     /** raw frame write, for hand-built HEADERS+CONTINUATION sequences */
     void writeRawFrame(int type, int flags, int streamId, byte[] payload) throws IOException {
         writeFrame(type, flags, streamId, payload);
+    }
+
+    /**
+     * Blocking read of the next WINDOW_UPDATE (stream-level or connection
+     * level), answering SETTINGS / PING keepalives on the way. Returns
+     * {@code {streamId, increment}}. Used by upload probes that track both
+     * flow-control windows while sending.
+     */
+    int[] readWindowUpdate() throws IOException {
+        while (true) {
+            Frame f = readFrame();
+            switch (f.type) {
+                case TYPE_SETTINGS:
+                    if (!f.has(FLAG_ACK)) {
+                        writeFrame(TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
+                    }
+                    break;
+                case TYPE_PING:
+                    if (!f.has(FLAG_ACK)) {
+                        writeFrame(TYPE_PING, FLAG_ACK, 0, f.payload);
+                    }
+                    break;
+                case TYPE_WINDOW_UPDATE:
+                    int inc = ((f.payload[0] & 0xFF) << 24) | ((f.payload[1] & 0xFF) << 16)
+                        | ((f.payload[2] & 0xFF) << 8) | (f.payload[3] & 0xFF);
+                    return new int[] { f.streamId, inc };
+                case TYPE_GOAWAY:
+                    recordGoaway(f);
+                    throw new IOException("GOAWAY received: error " + goawayErrorCode);
+                default:
+                    // response frames only appear after the upload completes;
+                    // anything else here is skipped
+                    break;
+            }
+        }
     }
 
     /**

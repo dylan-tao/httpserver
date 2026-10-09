@@ -547,6 +547,12 @@ public class HTTP2Stream {
                         try {
                             WindowUpdateFrame frame = new WindowUpdateFrame(streamId, (int)pendingWindowUpdate);
                             frame.writeTo(connection.outputStream);
+                            // flush: the peer may have exhausted its stream window
+                            // and be blocked waiting for exactly this update -
+                            // without the flush the frame sits in the connection
+                            // buffer until the 1s idle ping releases it, which
+                            // throttles a single-stream upload to ~window/second
+                            connection.outputStream.flush();
                             logger.log(Level.TRACE, () -> "sent stream window update, receive window "+receiveWindow.get()+" on stream "+streamId);
                         } finally {
                             connection.unlock();

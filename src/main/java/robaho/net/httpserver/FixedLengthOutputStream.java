@@ -94,7 +94,10 @@ class FixedLengthOutputStream extends FilterOutputStream {
         // then collects within its bounded wait
         flush();
 
-        if (!is.isClosed()) {
+        // is is null for upgrade/CONNECT requests (the request body is the raw
+        // stream): nothing to drain, and dereferencing it would NPE and tear
+        // down the connection after a perfectly good response
+        if (is != null && !is.isClosed()) {
             try {
                 is.close();
             } catch (IOException e) {

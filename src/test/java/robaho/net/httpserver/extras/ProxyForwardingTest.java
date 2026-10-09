@@ -71,6 +71,68 @@ public class ProxyForwardingTest {
             "request with only restricted headers must still be proxied: " + response);
     }
 
+    /** a completed CONNECT tunnel must not fall through into the forwarding
+     *  path (the P2-35 cleanup removed the old finally-return): the tunnel
+     *  itself must round-trip bytes in both directions */
+    @Test
+    public void testConnectTunnelRoundTrip() throws Exception {
+        try (java.net.ServerSocket target = new java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())) {
+            Thread echoThread = new Thread(() -> {
+                try (java.net.Socket t = target.accept()) {
+                    byte[] b = new byte[1024];
+                    int n;
+                    while ((n = t.getInputStream().read(b)) != -1) {
+                        t.getOutputStream().write(b, 0, n);
+                        t.getOutputStream().flush();
+                    }
+                } catch (IOException ignored) {
+                }
+            });
+            echoThread.setDaemon(true);
+            echoThread.start();
+
+            // the default authorizeConnect denies; allow this test's tunnel
+            ProxyHandler allowing = new ProxyHandler() {
+                @Override
+                protected boolean authorizeConnect(HttpExchange exchange) {
+                    return true;
+                }
+            };
+            HttpServer proxy = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            proxy.createContext("/", allowing);
+            proxy.start();
+            // NOTE: the CONNECT target must be a hostname: an IP literal
+            // ("127.0.0.1:port") is rejected by the generic request-line URI
+            // parse (not a valid URI scheme) - a known upstream-shared
+            // limitation, recorded in todo.md
+            String host = java.net.InetAddress.getLoopbackAddress().getHostName();
+            try (Socket socket = new Socket("127.0.0.1", proxy.getAddress().getPort())) {
+                socket.setSoTimeout(10_000);
+                socket.getOutputStream().write(("CONNECT " + host + ":" + target.getLocalPort() + " HTTP/1.1\r\n"
+                    + "Host: " + host + ":" + target.getLocalPort() + "\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+                socket.getOutputStream().flush();
+                String head = readHead(socket);
+                Assert.assertTrue(head.startsWith("HTTP/1.1 200"), "CONNECT must be tunneled: " + head);
+                // bytes must flow both ways through the tunnel
+                socket.getOutputStream().write("ping".getBytes(StandardCharsets.UTF_8));
+                socket.getOutputStream().flush();
+                byte[] b = new byte[4];
+                int off = 0;
+                while (off < 4) {
+                    int n = socket.getInputStream().read(b, off, 4 - off);
+                    if (n == -1) {
+                        throw new IOException("tunnel closed after " + off + " of 4 bytes");
+                    }
+                    off += n;
+                }
+                Assert.assertEquals(new String(b, StandardCharsets.UTF_8), "ping", "tunnel must echo");
+            } finally {
+                proxy.stop(0);
+            }
+            echoThread.join(5000);
+        }
+    }
+
     /** send an absolute-form GET through the proxy and return the raw response */
     private String proxyGet(String extraHeaders) throws IOException {
         String request = "GET http://127.0.0.1:" + backend.getAddress().getPort() + "/ HTTP/1.1\r\n"
@@ -96,6 +158,21 @@ public class ProxyForwardingTest {
     private static String headOf(String response) {
         int idx = response.indexOf("\r\n\r\n");
         return idx >= 0 ? response.substring(0, idx) : response;
+    }
+
+    private static String readHead(Socket socket) throws IOException {
+        InputStream in = socket.getInputStream();
+        StringBuilder sb = new StringBuilder();
+        int c;
+        while ((c = in.read()) != -1) {
+            sb.append((char) c);
+            int n = sb.length();
+            if (n >= 4 && sb.charAt(n - 4) == '\r' && sb.charAt(n - 3) == '\n'
+                && sb.charAt(n - 2) == '\r' && sb.charAt(n - 1) == '\n') {
+                break;
+            }
+        }
+        return sb.toString();
     }
 
     private static void serveFixedLength(HttpExchange exchange) throws IOException {

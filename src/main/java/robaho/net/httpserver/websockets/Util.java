@@ -84,7 +84,12 @@ public class Util {
         // the content type describes the RESPONSE, not the request
         exchange.getResponseHeaders().set(CONTENT_TYPE, "text/plain");
         exchange.sendResponseHeaders(code, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.getRequestBody().close();
+        // closing the response stream flushes it: the handshake error must
+        // actually reach the client. do NOT close the request stream here -
+        // for upgrade requests it is the raw socket stream, and closing it
+        // kills the socket before the response is flushed
+        try (var os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
     }
 }

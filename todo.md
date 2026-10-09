@@ -25,7 +25,8 @@
 > 顺修 ProxyHandler 空 headers IAE 边缘缺陷、清理两处无用 import；六个丢失的验证测试
 > 重建并集成进 src/test（H2Compliance/MultiFrameTrailer/Review3/SlowBodyKeepAlive/
 > Huffman/ProxyForwarding + h2c 裸 socket 测试客户端 H2Client）。
-> 验证方式：JDK 21 编译 0 错误；TestNG 套件 104/104 通过（2026-10-09 起为 118/118）；
+> 验证方式：JDK 21 编译 0 错误；TestNG 套件 104/104 通过（2026-10-09 第 13 批后 118/118，
+> 第 14 批后 127/127）；
 > 九套冒烟与专项验证在修复当时全部通过（**注意：其源文件位于 /tmp/hs_smoke，
 > 已被系统清理丢失**——正式集成进 src/test 的必要性由此实证，见"遗漏与残留清单"D 类）。
 >
@@ -779,6 +780,113 @@
 稳定微基准（7×1000 中位数，两次一致）：逐字节两层虚调用链解析 1KB 头 0.11µs/请求 vs
 数组扫描 0.06µs——**差 0.04µs/请求，10 万 QPS 占 0.4% 单核**。收益上限远低于核心解析
 路径结构性重构的风险（首次尝试即破坏 body 流起点）。详见 P3-42 条目。
+
+---
+
+## 二次排查（2026-10-09，全量 bug 猎查 + 内存/性能审计）
+
+> 六路分区排查（h2 状态机 / HTTP/1.1 核心 / websockets+extras / 并发生命周期 / 内存 / 性能），
+> 重点发现经 JDK 21 运行时探针实证。**第 14 批（2026-10-09）：下述 1-9 项已全部修复**，
+> 10-15 项及内存/性能清单仍开放。
+
+### 第 14 批修复记录（2026-10-09）
+
+> 1. `DataFrame.parse` 正确跳过 Pad Length 八位组并按 padLength 截尾（探针回显 hello）；
+> 2. 新流 HEADERS+CONTINUATION 记录 `pendingEndStream`，块完成后经 `receiveTrailer(true)`
+>    重放（REFUSED 分支同步清除）；
+> 3. 流级 WINDOW_UPDATE 写后 flush（单流 512KB 上传 7034ms → 9ms，约 1000 倍）；
+> 4. `Exchange.run` 异常分支补与正常路径相同的 isEOF 检查（走私请求不再被服务）；
+> 5. `FixedLengthOutputStream.close` 对 `uis_orig==null`（升级请求）判空；
+> 6. `Util.sendResponseHeaders` 改为 try-with-resources 关闭响应流（触发 flush），
+>    不再关闭原始请求流（握手错误响应实测送达）；
+> 7. `ProxyHandler` CONNECT 块后补 `return`（不再跌落转发路径）；
+> 8. multipart `filename=""` 按字段处理（浏览器空文件输入不再 500）；
+> 9. `HTTP2Stats.stats()` 除零下限 0.001（对齐 P4-7 ServerStats）。
+> 验证：7 个探针全部翻绿（rst-buffered 维持证伪结论）；新增 9 个回归测试
+> （H2ComplianceTest+3、Http1RegressionTest×2、WebSocketHandshakeErrorTest×2、
+> MultipartFormParserTest+1、ProxyForwardingTest+1——探针场景已全部转正为 testng 用例），
+> 全量套件 118 → **127 全绿**（JDK 21）。
+> 顺带发现：CONNECT 以 IP 字面量为目标（`127.0.0.1:443`）被请求行 URI 解析拒绝
+> （非合法 scheme，上游同样如此）——已记录未修。
+
+### 实证确认的 bug（探针复现）
+
+1. **[P1] PADDED DATA 帧体损坏**：`http2/frame/DataFrame.java:25-31`——解析未跳过 1 字节
+   Pad Length，该字节被当作 body 首字节、末字节丢失（实测回显 `\x03hell`）；空帧+PADDED
+   另有 AIOOBE。任何带 padding 的合规客户端（Chrome/nghttp2）上传即静默损坏。
+2. **[P1] 新流 HEADERS+CONTINUATION 丢失 END_STREAM**：`HTTP2Connection.java:329-333`——
+   新流路径未记录 HEADERS 帧的 END_STREAM（复查-2 只修了 trailer 路径），CONTINUATION
+   完成后 halfClosed=false，读 body 的 handler 永久 park（实测 15s 无响应无 GOAWAY，
+   线程泄漏）。大头块（>16KB cookie/Authorization）GET 触发。
+3. **[P1 级性能缺陷] 单流 h2 上传限速 ~64-72KB/s**：`HTTP2Stream.java:544-555`——流级
+   WINDOW_UPDATE 写入连接缓冲后**不 flush**，仅靠 1s 空闲 ping 兜底释放（实测 512KB
+   单流 7034ms ≈ 72KB/s；多流被连接级更新部分掩盖）。
+4. **[P2] 异常路径跳过 isEOF 检查（请求走私向量）**：`ServerImpl.java:692-695`——handler
+   已响应后抛异常时直接续用连接，>64KB 未读 body 残余被当作下一请求解析（实测：走私
+   的 pipelined 请求被正常服务）。正常路径（:898-909）有检查，catch 分支漏了。
+5. **[P2] 升级请求的定长响应 NPE 断连**：`FixedLengthOutputStream.java:97`——
+   `getRequestBody()` 对 Connection:Upgrade 请求返回原始流（`uis_orig` 为 null），
+   close() 未判空（Chunked/UndefLength 均有判空）。实测：200 响应到达后连接被拆 +
+   每请求一条 NPE WARNING。
+6. **[P1] WebSocket 握手错误响应不送达**：`websockets/Util.java:82-89`——
+   sendResponseHeaders 不关闭/flush 响应流，且随后 close 原始请求流直接杀 socket。
+   实测：坏 Sec-WebSocket-Version 的握手**收不到任何 HTTP 响应**（RFC 6455 §4.2.1
+   要求 HTTP 错误响应）。
+
+### 代码级确认的 bug（未运行时复现，代码路径明确）
+
+7. `extras/ProxyHandler.java` CONNECT 隧道完成后**跌落转发路径**（P2-35 修复删了 finally
+   里的 return 未在块后补上）——每条隧道结束后必抛异常/误走转发；
+8. `extras/MultipartFormParser.java` `filename=""`（浏览器空文件输入的标准编码）→
+   sanitizeFilename 抛 IAE → 整个上传 500；
+9. `LeftOverInputStream` 无 skip() 覆写——FilterInputStream.skip 绕过 HTTP 成帧
+   （Content-Length/chunked 状态不随 skip 前进，走私原语）；
+10. 流量控制：padding 记账只扣（全帧长）不还（仅 body 字节）→ padded 上传窗口泄漏
+    终致死锁；END_STREAM/CL 不匹配路径漏设 rstReceived（RST 后仍发帧）；
+11. h2 状态机：WINDOW_UPDATE（流≠0）/PUSH_PROMISE 可在 header block 中途落入公共路径
+    （部分头块被当请求分发）；REFUSED_STREAM 分支不清 inHeaders（重试即 GOAWAY 全杀）；
+    trailer 块不经 HPACK 解码直接丢弃（动态表失步，后续请求 COMPRESSION_ERROR/错头）；
+    迟到帧 continue 路径不清 headerBlockFragments/inHeaders；
+12. WebSocket：未知关闭码 3000-4999 丢失（CloseCode.find 返 null → onClose 恒 1011，
+    P1-18 只修了枚举内码）；UTF-8 校验按帧不按消息（合法分片文本被拒 1007，continuation
+    帧的非法 UTF-8 反而漏检）；doClose 非原子（onClose 可能双回调）；ping 载荷 >125
+    不拒绝（写出非法控制帧）；BufferedWebSocket 毒丸 offer 可静默丢失 + drain 线程自等 2s；
+13. 并发：DataIn.read check-then-act 竞态可截断末段 body（peek null 与 halfClosed 置位
+    之间）；ping 任务的 lastActivityTime 恢复可覆盖并发真实活动（活跃连接被误判空闲）；
+    stop() 泄漏"已接受未处理"连接（清理器已取消，JVM 退出可挂起）；HTTP2Stats.stats()
+    除零（ServerStats 修了 P4-7，它漏了）；
+14. `ProxyHandler.java:239` `toUpperCase()` 无 Locale.ROOT（tr/az 区域 restrictedHeaders
+    失效 → 转发必失败）；
+15. `maxIdleConnections` 死配置（`ServerImpl.java:1003` 执行逻辑被注释）——空闲连接数
+    无上限，10k 慢轮询连接 ~340MB 常驻。
+
+### 证伪（代理误报）
+
+- **"RST_STREAM + 缓冲响应数据杀整条连接"**（两个代理独立报告为 P1）：实测连接存活、
+  后续流正常服务——`HTTP2Stream.close()` 捕获该 IOException 仅记 WARNING（"IOException
+  closing http2 stream"），不升级为 connection.close()。残留问题仅为每次该场景一条
+  WARNING 日志噪音（可降 DEBUG）。
+
+### 内存优化清单（按收益排序，均未实施）
+
+| # | 项 | 位置 | 量级 |
+|---|---|---|---|
+| M1 | h2 流级 16KB 输出缓冲 × 默认无限并发流（-1）| `HTTP2Stream.java:77` + `ServerConfig.java:56` | 单连接 1000 流 = 16MB 缓冲 + 1000 平台线程；建议默认 100-250 + 缓冲懒分配 |
+| M2 | WebSocket 64MB 默认帧/消息上限 + 帧载荷预分配 + 文本帧 byte[]/String 双份保留 | `WebSocketFrame.java:230,243` | 最坏 ~128-256MB/连接；建议默认 1-4MB + 懒文本解码 |
+| M3 | 每连接固定 32KB 缓冲不可配置 + maxIdleConnections 不生效 | `NoSyncBuffered*Stream` + `ServerImpl.java:1003` | 10k 连接 ~340MB；建议 bufferSize 配置化 + 空闲上限执行 |
+| M4 | FormParser 整体缓冲 4-5 倍峰值放大（BAOS 翻倍 + toByteArray + String + split） | `FormParser.java:35-66` | 10MB 表单峰值 ~50MB |
+| M5 | MultipartFormParser deleteOnExit 静态累积 + BufferedWebSocket 队列按帧数不按字节 | `MultipartFormParser.java:132`、`BufferedWebSocket.java:24` | 千万上传 ~1-2GB；1024×帧大小无字节上限 |
+
+### 性能优化清单（按收益排序，均未实施）
+
+| # | 项 | 位置 | 收益 |
+|---|---|---|---|
+| P1 | **流级 WINDOW_UPDATE 不 flush（已实证）** | `HTTP2Stream.java:544-555` | 单流上传 ~64KB/s → 线速（~1000 倍） |
+| P2 | HPACK 响应头编码整体在连接锁内 | `HTTP2Stream.java:288-298` | 临界区 ~10 倍缩小，h2 RPS 随核扩展 |
+| P3 | 每流 16KB 缓冲分配 | `HTTP2Stream.java:77` | 100k h2 RPS 省 ~1.6GB/s 分配（GC 压力） |
+| P4 | 16KB DATA 帧的 9 字节帧头单独 syscall | `HTTP2Stream.java:388` + 连接缓冲 | 大响应 syscall 减半 |
+| P5 | HTTP/1.1 响应头逐头 4 write + 2 编码（P3-41 未完部分） | `ExchangeImpl.java:217-358` | ~0.5µs/响应 + GC 缓解 |
+| P6 | 次级：HPACK 编/解码分配风暴（每头 6-10 小对象）；http2Streams 换 ConcurrentHashMap；stats volatile 门控；TCP_NODELAY 默认 false（h2 小帧 + 延迟确认可 40ms 停顿）；Huffman 编码（已知 C-9）；热路径日志 lambda 化 | 各处 | 累积可观 |
 
 ---
 
