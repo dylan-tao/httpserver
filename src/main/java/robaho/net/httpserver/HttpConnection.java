@@ -108,40 +108,50 @@ public class HttpConnection {
         return socket;
     }
 
-    synchronized void close() {
-        if (closed) {
-            return;
-        }
-        closed = true;
+    /** guards the close transition. a ReentrantLock, NOT a synchronized
+     * monitor: close() flushes and closes streams (blocking IO) while holding
+     * it, which would pin a virtual thread's carrier (JEP 444) */
+    private final java.util.concurrent.locks.ReentrantLock closeLock = new java.util.concurrent.locks.ReentrantLock();
 
-        if(requestCount.get()==0) {
-            // a client probing the port (connect + close) lands here - debug,
-            // not a warning, or TCP health checks flood the log
-            logger.log(Level.DEBUG, () -> "closing connection: remote " + socket.getRemoteSocketAddress() + " with 0 requests");
-        } else {
-            logger.log(Level.TRACE, () -> "closing connection: remote " + socket.getRemoteSocketAddress());
-        }
+    void close() {
+        closeLock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            closed = true;
 
-        if (socket.isClosed()) {
-            return;
-        }
-        try {
-            /* need to ensure temporary selectors are closed */
-            is.close();
-        } catch (IOException e) {
-            logger.log(Level.TRACE, "error closing input stream", e);
-        }
-        try {
-            // see issue #19, flush before closing, in case of pending data
-            os.flush();
-            os.close();
-        } catch (IOException e) {
-            logger.log(Level.TRACE, "error closing output stream", e);
-        }
-        try {
-            socket.close();
-        } catch (IOException e) {
-            logger.log(Level.TRACE, "error closing socket", e);
+            if(requestCount.get()==0) {
+                // a client probing the port (connect + close) lands here - debug,
+                // not a warning, or TCP health checks flood the log
+                logger.log(Level.DEBUG, () -> "closing connection: remote " + socket.getRemoteSocketAddress() + " with 0 requests");
+            } else {
+                logger.log(Level.TRACE, () -> "closing connection: remote " + socket.getRemoteSocketAddress());
+            }
+
+            if (socket.isClosed()) {
+                return;
+            }
+            try {
+                /* need to ensure temporary selectors are closed */
+                is.close();
+            } catch (IOException e) {
+                logger.log(Level.TRACE, "error closing input stream", e);
+            }
+            try {
+                // see issue #19, flush before closing, in case of pending data
+                os.flush();
+                os.close();
+            } catch (IOException e) {
+                logger.log(Level.TRACE, "error closing output stream", e);
+            }
+            try {
+                socket.close();
+            } catch (IOException e) {
+                logger.log(Level.TRACE, "error closing socket", e);
+            }
+        } finally {
+            closeLock.unlock();
         }
     }
 

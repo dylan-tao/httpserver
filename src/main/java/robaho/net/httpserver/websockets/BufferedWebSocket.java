@@ -7,9 +7,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 import com.sun.net.httpserver.HttpExchange;
 
 import robaho.net.httpserver.Attributes;
+import robaho.net.httpserver.ServerConfig;
 
 /**
  * a BufferedWebSocket allows the producer to buffer in user space (by limited
@@ -20,6 +23,11 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     private static ExecutorService executor;
 
+    /** guards lazy executor creation; a ReentrantLock rather than a static
+     * synchronized method (monitor-based locking is banned for virtual thread
+     * safety, JEP 444) */
+    private static final ReentrantLock EXECUTOR_LOCK = new ReentrantLock();
+
     /** bounds the queue so a fast producer cannot exhaust memory */
     private static final int MAX_PENDING_FRAMES = 1024;
 
@@ -28,21 +36,38 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     private final LinkedBlockingQueue<WebSocketFrame> queue = new LinkedBlockingQueue<>(MAX_PENDING_FRAMES);
     private final AtomicInteger pending = new AtomicInteger();
+    /** the thread running the drain task, so doClose can detect being called
+     * FROM the drain task (waiting on our own future would always time out
+     * and self-interrupt via cancel(true)) */
+    private volatile Thread drainThread;
 
-    private synchronized static ExecutorService getExecutor() {
-        if (executor == null) {
-            executor = Executors.newCachedThreadPool();
+    private static ExecutorService getExecutor() {
+        EXECUTOR_LOCK.lock();
+        try {
+            if (executor == null) {
+                executor = ServerConfig.virtualThreads()
+                    ? Executors.newThreadPerTaskExecutor(
+                        Thread.ofVirtual().name("buffered-ws-", 0).factory())
+                    : Executors.newCachedThreadPool();
+            }
+            return executor;
+        } finally {
+            EXECUTOR_LOCK.unlock();
         }
-        return executor;
     }
 
     private final Future<?> future;
 
-    public static synchronized void setExecutor(ExecutorService executor) {
-        if (executor != null) {
-            throw new IllegalStateException("executor is already set");
+    public static void setExecutor(ExecutorService executor) {
+        EXECUTOR_LOCK.lock();
+        try {
+            if (robaho.net.httpserver.websockets.BufferedWebSocket.executor != null) {
+                throw new IllegalStateException("executor is already set");
+            }
+            BufferedWebSocket.executor = executor;
+        } finally {
+            EXECUTOR_LOCK.unlock();
         }
-        BufferedWebSocket.executor = executor;
     }
 
     /**
@@ -64,7 +89,10 @@ public abstract class BufferedWebSocket extends WebSocket {
         if (kernelBufferSizeBytes != 0) {
             exchange.setAttribute(Attributes.SOCKET_WRITE_BUFFER, kernelBufferSizeBytes);
         }
-        future = getExecutor().submit(() -> sendFrames());
+        future = getExecutor().submit(() -> {
+            drainThread = Thread.currentThread();
+            sendFrames();
+        });
     }
 
     @Override
@@ -72,11 +100,18 @@ public abstract class BufferedWebSocket extends WebSocket {
         // do NOT cancel the drain task outright: a queued CloseFrame may still
         // need to be written. enqueue a poison pill behind it and give the
         // drain task a moment to flush before the streams are closed.
+        // no lock needed here: the once-only close transition is enforced by
+        // the locked super.doClose; this body is safe to run twice.
         queue.offer(POISON_PILL);
-        try {
-            future.get(2, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (Exception ignored) {
-            future.cancel(true);
+        if (Thread.currentThread() != drainThread) {
+            // called from the read/user thread: wait for the drain task.
+            // from the drain task itself this would deadlock on our own
+            // future for the full 2s timeout and then self-interrupt
+            try {
+                future.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                future.cancel(true);
+            }
         }
         super.doClose(code, reason, initiatedByRemote);
     }

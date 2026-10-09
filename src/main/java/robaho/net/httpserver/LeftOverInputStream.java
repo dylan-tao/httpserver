@@ -29,6 +29,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.EOFException;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * a (filter) input stream which can tell us if bytes are "left over"
@@ -54,15 +55,26 @@ abstract class LeftOverInputStream extends FilterInputStream {
         this.server = t.getServerImpl();
     }
 
-    /** synchronized to match read(): a concurrent close (e.g. from a timeout
-     * task) must not interleave with a read and corrupt stream state */
-    public synchronized void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        closed = true;
-        if (!eof) {
-            eof = drain(ServerConfig.getDrainAmount());
+    /** guards read/skip/close against each other. a ReentrantLock, NOT a
+     * synchronized monitor: these methods block on socket IO while holding
+     * it, and a virtual thread that blocks inside a monitor pins its carrier
+     * platform thread (JEP 444), destroying thread-per-request scalability */
+    private final ReentrantLock lock = new ReentrantLock();
+
+    /** matches read(): a concurrent close (e.g. from a timeout task) must not
+     * interleave with a read and corrupt stream state */
+    public void close() throws IOException {
+        lock.lock();
+        try {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            if (!eof) {
+                eof = drain(ServerConfig.getDrainAmount());
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -84,23 +96,58 @@ abstract class LeftOverInputStream extends FilterInputStream {
         return eof;
     }
 
-    public synchronized int read() throws IOException {
-        if (closed) {
-            throw new EOFException("Stream is closed");
-        }
-        int c = readImpl(one, 0, 1);
-        if (c == -1 || c == 0) {
-            return c;
-        } else {
-            return one[0] & 0xFF;
+    public int read() throws IOException {
+        lock.lock();
+        try {
+            if (closed) {
+                throw new EOFException("Stream is closed");
+            }
+            int c = readImpl(one, 0, 1);
+            if (c == -1 || c == 0) {
+                return c;
+            } else {
+                return one[0] & 0xFF;
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
-    public synchronized int read(byte[] b, int off, int len) throws IOException {
-        if (closed) {
-            throw new EOFException("Stream is closed");
+    public int read(byte[] b, int off, int len) throws IOException {
+        lock.lock();
+        try {
+            if (closed) {
+                throw new EOFException("Stream is closed");
+            }
+            return readImpl(b, off, len);
+        } finally {
+            lock.unlock();
         }
-        return readImpl(b, off, len);
+    }
+
+    /** FilterInputStream.skip would delegate to the raw socket stream and
+     * bypass HTTP framing entirely (Content-Length/chunked state would not
+     * advance), desyncing the connection: discard through the framing-aware
+     * readImpl instead */
+    public long skip(long n) throws IOException {
+        lock.lock();
+        try {
+            if (closed) {
+                throw new EOFException("Stream is closed");
+            }
+            long remaining = n;
+            while (remaining > 0) {
+                int len = (int) Math.min(drainBuffer.length, remaining);
+                len = readImpl(drainBuffer, 0, len);
+                if (len == -1) {
+                    break;
+                }
+                remaining -= len;
+            }
+            return n - remaining;
+        } finally {
+            lock.unlock();
+        }
     }
 
     // ok to concurrently share this since the data isn't used

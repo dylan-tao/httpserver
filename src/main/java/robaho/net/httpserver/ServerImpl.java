@@ -38,6 +38,7 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -222,7 +223,15 @@ class ServerImpl {
     }
 
     private static class DefaultExecutor implements Executor {
-        private final ExecutorService executor = Executors.newCachedThreadPool();
+        // virtual threads by default (JDK 21, JEP 444): connection handling is
+        // blocking-IO-heavy (request reads, drains, SSL handshakes) and
+        // thread-per-connection scales far better virtually than on the
+        // platform-thread pool. all monitor-based locking has been removed
+        // from the blocking paths so nothing pins a carrier thread.
+        // opt out with robaho.net.httpserver.virtualThreads=false
+        private final ExecutorService executor = ServerConfig.virtualThreads()
+            ? Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("httpserver-vt-", 0).factory())
+            : Executors.newCachedThreadPool();
 
         @Override
         public void execute(Runnable task) {
@@ -375,6 +384,17 @@ class ServerImpl {
             }
         }
         private void acceptConnection(Socket s) throws IOException {
+            if (isFinishing()) {
+                // a queued accept task running after stop()'s connection sweep:
+                // the connection would be registered into the freshly swept set
+                // with the cleaner timer already cancelled, so nothing would
+                // ever close it (leaked socket + blocked exchange thread)
+                try {
+                    s.close();
+                } catch (IOException ignored) {
+                }
+                return;
+            }
             if(logger.isLoggable(Level.TRACE)) {
                 logger.log(Level.TRACE, "accepted connection: " + s.toString());
             }
@@ -510,7 +530,12 @@ class ServerImpl {
                             try {
                                 // the ping write refreshes lastActivityTime via the
                                 // activity timer stream; restore it afterwards so a
-                                // dead connection still appears idle to the cleaner
+                                // dead connection still appears idle to the cleaner.
+                                // NOTE: a real activity landing inside the microsecond
+                                // window of the ping write is clobbered by the restore;
+                                // any live request generates further socket activity
+                                // that re-updates the timestamp, so this micro-race is
+                                // accepted (see todo.md 二次排查 item 13)
                                 var before = exchange.connection.lastActivityTime;
                                 exchange.http2.sendPing();
                                 exchange.connection.lastActivityTime = before;
@@ -1009,8 +1034,26 @@ class ServerImpl {
                 }
                 // TODO is MAX_RSP_TIME needed?
             }
-            // close idle connections if over limit
-            // idle.stream().limit(Math.max(idle.size() - MAX_IDLE_CONNECTIONS, 0)).forEach(c -> closeConnection(c));
+            // enforce the idle connection count limit: close the OLDEST idle
+            // connections beyond MAX_IDLE_CONNECTIONS. the enforcement existed
+            // only as a comment before, so idle keep-alive connections (and
+            // their buffers) were unbounded despite the config
+            if (MAX_IDLE_CONNECTIONS > 0) {
+                List<HttpConnection> idle = new ArrayList<>();
+                for (var c : allConnections) {
+                    if (!c.inRequest) {
+                        idle.add(c);
+                    }
+                }
+                if (idle.size() > MAX_IDLE_CONNECTIONS) {
+                    idle.sort(java.util.Comparator.comparingLong(c -> c.lastActivityTime));
+                    for (int i = 0; i < idle.size() - MAX_IDLE_CONNECTIONS; i++) {
+                        logger.log(Level.DEBUG, "closing idle connection (over max idle limit)");
+                        stats.idleCloseCount.incrementAndGet();
+                        closeConnection(idle.get(i));
+                    }
+                }
+            }
         }
     }
 

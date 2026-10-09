@@ -241,7 +241,9 @@ public class ProxyHandler implements HttpHandler {
 
     private static String[] headers(Headers headers) {
         List<String> copy = new ArrayList<>();
-        headers.entrySet().stream().filter(e -> !restrictedHeaders.contains(e.getKey().toUpperCase())).forEach(e -> e.getValue().forEach(v -> { copy.add(e.getKey()); copy.add(v);}));
+        // Locale.ROOT: the default locale maps i -> İ in tr/az, which would
+        // break the restricted-header match and fail every proxied request
+        headers.entrySet().stream().filter(e -> !restrictedHeaders.contains(e.getKey().toUpperCase(java.util.Locale.ROOT))).forEach(e -> e.getValue().forEach(v -> { copy.add(e.getKey()); copy.add(v);}));
         return copy.toArray(String[]::new);
     }
 

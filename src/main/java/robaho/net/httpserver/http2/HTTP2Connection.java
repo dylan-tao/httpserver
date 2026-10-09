@@ -248,6 +248,13 @@ public class HTTP2Connection {
                     }
                     continue;
                 case WINDOW_UPDATE:
+                    if (inHeaders && streamId != 0) {
+                        // RFC 7540 6.2: only CONTINUATION may follow an incomplete
+                        // header block. letting a stream-level WINDOW_UPDATE fall
+                        // through to the common path would dispatch a request from
+                        // the PARTIAL header block and wedge the state machine
+                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE frame received during headers receive");
+                    }
                     if (streamId == 0) {
                         int windowSizeIncrement = ((WindowUpdateFrame) frame).getWindowSizeIncrement();
                         sendWindow.addAndGet(windowSizeIncrement);
@@ -309,6 +316,12 @@ public class HTTP2Connection {
                                 openStreamId = streamId;
                                 continue;
                             }
+                            // decode the trailer block to keep the HPACK dynamic table in
+                            // sync: a trailer field sent with incremental indexing adds an
+                            // entry on the client side, and an undecoded block here desyncs
+                            // every later request on this connection (wrong headers or
+                            // COMPRESSION_ERROR)
+                            hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
                             headerBlockFragments.clear();
                             headerBlockBytes = 0;
                             stream.receiveTrailer(trailerFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM));
@@ -363,6 +376,9 @@ public class HTTP2Connection {
                     // of feeding the CONTINUATION into performRequest (which would
                     // treat it as a duplicate request and kill the connection)
                     if (http2Streams.get(streamId) != null) {
+                        // decode the trailer block to keep the HPACK dynamic table in
+                        // sync (see the single frame trailer path above)
+                        hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
                         headerBlockFragments.clear();
                         headerBlockBytes = 0;
                         inHeaders = false;
@@ -394,6 +410,14 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame received on non-existent stream");
                     }
                     break;
+                default:
+                    if (inHeaders) {
+                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, frame.getHeader().getType() + " frame received during headers receive");
+                    }
+                    // unknown or unsupported frame types (e.g. PUSH_PROMISE from a
+                    // client, extension frames) must not reach the stream dispatch
+                    // below: they would create a phantom stream from nothing
+                    continue;
             }
 
             // we can only get here if we have a complete set of headers
@@ -410,6 +434,10 @@ public class HTTP2Connection {
                     headerBlockFragments.clear();
                     headerBlockBytes = 0;
                     pendingEndStream = false;
+                    // reset the header block state or the client's legitimate
+                    // retry (RFC 7540 5.1.2 invites retry after REFUSED_STREAM)
+                    // hits the inHeaders guard and kills ALL streams with GOAWAY
+                    inHeaders = false;
                     continue;
                 }
                 highNumberStreams = Math.max(highNumberStreams, currentSize);

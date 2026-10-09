@@ -282,68 +282,25 @@ public class WebSocketResponseHandlerTest {
         }, writtenBytes);
     }
 
-    @Test
+    /** control frame payloads are capped at 125 bytes (RFC 6455 5.5): these
+     *  tests previously codified writing oversized Ping frames, which makes
+     *  every compliant peer fail the connection */
+    @Test(expectedExceptions = IllegalArgumentException.class)
     public void testWriteWhenNotMaskedPayloadLengthGreaterThan125() throws IOException {
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, true, new byte[257]);
-        webSocketFrame.write(byteArrayOutputStream);
-        byte[] writtenBytes = byteArrayOutputStream.toByteArray();
-        Assert.assertEquals(261, writtenBytes.length);
-        Assert.assertEquals(-119, writtenBytes[0], "Header byte incorrect.");
-        Assert.assertEquals(new byte[] {
-                126,
-                1,
-                1
-        }, new byte[] {
-                writtenBytes[1],
-                writtenBytes[2],
-                writtenBytes[3]
-        }, "Payload length bytes incorrect.");
+        webSocketFrame.write(new ByteArrayOutputStream());
     }
 
-    @Test
+    @Test(expectedExceptions = IllegalArgumentException.class)
     public void testWriteWhenMaskedPayloadLengthGreaterThan125() throws IOException {
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, false, new byte[257]);
-        webSocketFrame.setMaskingKey(new byte[] {
-                19,
-                25,
-                79,
-                11
-        });
-        webSocketFrame.write(byteArrayOutputStream);
-        byte[] writtenBytes = byteArrayOutputStream.toByteArray();
-        Assert.assertEquals(265, writtenBytes.length);
-        Assert.assertEquals(9, writtenBytes[0], "Header byte incorrect.");
-        Assert.assertEquals(new byte[] {
-                -2,
-                1,
-                1
-        }, new byte[] {
-                writtenBytes[1],
-                writtenBytes[2],
-                writtenBytes[3]
-        }, "Payload length bytes incorrect.");
+        webSocketFrame.setMaskingKey(new byte[] { 19, 25, 79, 11 });
+        webSocketFrame.write(new ByteArrayOutputStream());
     }
 
-    @Test
+    @Test(expectedExceptions = IllegalArgumentException.class)
     public void testWriteWhenNotMaskedPayloadLengthGreaterThan65535() throws IOException {
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, true, new byte[65536]);
-        webSocketFrame.write(byteArrayOutputStream);
-        byte[] writtenBytes = byteArrayOutputStream.toByteArray();
-        Assert.assertEquals(65546, writtenBytes.length);
-        Assert.assertEquals(-119, writtenBytes[0], "Header byte incorrect.");
-        Assert.assertEquals(new byte[] {
-                127,
-                0,
-                0,
-                0,
-                0,
-                0,
-                1,
-                0,
-                0
-        }, Arrays.copyOfRange(writtenBytes, 1, 10), "Payload length bytes incorrect.");
+        webSocketFrame.write(new ByteArrayOutputStream());
     }
 }

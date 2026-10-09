@@ -124,6 +124,13 @@ public class WebSocketFrame {
 
     public WebSocketFrame(OpCode opCode, boolean fin, byte[] payload, byte[] maskingKey) {
         this(opCode, fin);
+        if ((opCode == OpCode.Close || opCode == OpCode.Ping || opCode == OpCode.Pong)
+                && payload != null && payload.length > 125) {
+            // control frame payloads are capped at 125 bytes (RFC 6455 5.5):
+            // emitting a larger one makes every compliant peer fail the
+            // connection
+            throw new IllegalArgumentException("control frame payload exceeds 125 bytes: " + payload.length);
+        }
         setMaskingKey(maskingKey);
         setBinaryPayload(payload);
     }
@@ -239,8 +246,10 @@ public class WebSocketFrame {
             }
         }
 
-        // Test for Unicode errors
-        if (getOpCode() == OpCode.Text) {
+        // Test for Unicode errors - only for a COMPLETE unfragmented text
+        // message: a fragment may legally end mid code point (RFC 6455 5.6,
+        // 8.2), so fragmented messages are validated on aggregation instead
+        if (getOpCode() == OpCode.Text && isFin()) {
             this._payloadString = binary2Text(getBinaryPayload());
         }
     }

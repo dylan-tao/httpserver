@@ -13,24 +13,33 @@ class ServerStats {
 
     private long lastStatsTime = System.currentTimeMillis();
 
-    /** synchronized: concurrent calls must not interleave the time snapshot
-     * and the counter resets (which produced bogus requests/sec values) */
-    public synchronized String stats() {
-        long now = System.currentTimeMillis();
-        // guard against division by ~0 when two calls land in the same millisecond
-        double secs = Math.max((now - lastStatsTime) / 1000.0, 0.001);
-        lastStatsTime = now;
+    /** guards the time snapshot and counter resets: concurrent calls must not
+     * interleave them (which produced bogus requests/sec values). a
+     * ReentrantLock rather than a synchronized method: monitor-based locking
+     * is banned for virtual thread safety (JEP 444 pinning) */
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
 
-        long _requests = requestCount.getAndSet(0);
+    public String stats() {
+        lock.lock();
+        try {
+            long now = System.currentTimeMillis();
+            // guard against division by ~0 when two calls land in the same millisecond
+            double secs = Math.max((now - lastStatsTime) / 1000.0, 0.001);
+            lastStatsTime = now;
 
-        return
-                "Connections Since: "+connectionCount.getAndSet(0)+"\n" +
-                "Requests Since: "+_requests+"\n" +
-                "Requests/sec: "+(long)(_requests/secs)+"\n"+
-                "Total Handler Exceptions: "+handleExceptionCount.get()+"\n"+
-                "Total Socket Exceptions: "+socketExceptionCount.get()+"\n"+
-                "Total Max Connections Exceeded: "+maxConnectionsExceededCount.get()+"\n"+
-                "Total Idle Closes: "+idleCloseCount.get()+"\n"+
-                "Total Reply Errors: "+replyErrorCount.get()+"\n";
+            long _requests = requestCount.getAndSet(0);
+
+            return
+                    "Connections Since: "+connectionCount.getAndSet(0)+"\n" +
+                    "Requests Since: "+_requests+"\n" +
+                    "Requests/sec: "+(long)(_requests/secs)+"\n"+
+                    "Total Handler Exceptions: "+handleExceptionCount.get()+"\n"+
+                    "Total Socket Exceptions: "+socketExceptionCount.get()+"\n"+
+                    "Total Max Connections Exceeded: "+maxConnectionsExceededCount.get()+"\n"+
+                    "Total Idle Closes: "+idleCloseCount.get()+"\n"+
+                    "Total Reply Errors: "+replyErrorCount.get()+"\n";
+        } finally {
+            lock.unlock();
+        }
     }
 }

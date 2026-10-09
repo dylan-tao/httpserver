@@ -193,6 +193,120 @@ public class H2ComplianceTest {
         }
     }
 
+    /** padded uploads must not leak the stream window: the padding octets are
+     *  discarded on receipt, so their window credit must be returned - without
+     *  it the client's window shrinks by the padding of every frame until the
+     *  upload deadlocks */
+    @Test
+    public void testPaddedUploadThroughput() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int stream = client.sendRequest("POST", "/sink", false);
+            long start = System.nanoTime();
+            int total = 160 * 1024;
+            int sent = 0;
+            int pad = 256;
+            int overhead = 1 + pad; // pad length octet + padding
+            long streamWindow = 65535, connWindow = 65535;
+            byte[] chunk = new byte[16000];
+            while (sent < total) {
+                // the window debit is the FULL frame length: the data size must
+                // leave room for the padding overhead or the frame overdraws
+                if (streamWindow <= overhead || connWindow <= overhead) {
+                    int[] update = client.readWindowUpdate();
+                    if (update[0] == stream) { streamWindow += update[1]; }
+                    else if (update[0] == 0) { connWindow += update[1]; }
+                    continue;
+                }
+                int n = (int) Math.min(Math.min(chunk.length, total - sent),
+                    Math.min(streamWindow - overhead, connWindow - overhead));
+                boolean end = sent + n == total;
+                // [Pad Length][data][pad octets], total frame length <= 16384
+                byte[] frame = new byte[overhead + n];
+                frame[0] = (byte) pad;
+                System.arraycopy(chunk, 0, frame, 1, n);
+                client.writeRawFrame(H2Client.TYPE_DATA,
+                    (end ? H2Client.FLAG_END_STREAM : 0) | H2Client.FLAG_PADDED, stream, frame);
+                sent += n;
+                streamWindow -= frame.length;
+                connWindow -= frame.length;
+            }
+            var response = client.awaitResponse(stream);
+            Assert.assertEquals(response.status, 200);
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            Assert.assertTrue(ms < 1500, "160KB padded upload took " + ms + "ms (padding window credit lost?)");
+        }
+    }
+
+    /** only CONTINUATION may follow an incomplete header block (RFC 7540 6.2):
+     *  a stream-level WINDOW_UPDATE falling into the stream dispatch would
+     *  create a request from the PARTIAL header block */
+    @Test
+    public void testWindowUpdateDuringHeaderBlockRejected() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            // HEADERS without END_HEADERS: header block now incomplete
+            client.writeRawFrame(H2Client.TYPE_HEADERS, 0, 1, H2Client.encodeHeaders(
+                ":method", "GET", ":scheme", "http", ":path", "/echo", ":authority", "127.0.0.1"));
+            // a stream-level WINDOW_UPDATE mid-block must be a connection error
+            client.writeRawFrame(H2Client.TYPE_WINDOW_UPDATE, 0, 1, new byte[] { 0, 0, 0x0F, 0x00 });
+            try {
+                var response = client.awaitResponse(1);
+                Assert.assertTrue(response.goaway,
+                    "WINDOW_UPDATE during an incomplete header block must terminate the connection");
+            } catch (IOException expected) {
+                // connection closed without a GOAWAY is also an acceptable
+                // rejection; serving the partial request is not
+            }
+        }
+    }
+
+    /** trailer header blocks must run through the HPACK decoder: a trailer
+     *  field sent with incremental indexing adds a dynamic table entry on the
+     *  client side, and a discarded block desyncs the next request on the
+     *  connection (COMPRESSION_ERROR or wrong headers) */
+    @Test
+    public void testTrailerHpackStateSync() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int stream = client.sendRequest("POST", "/echo", false);
+            client.sendData(stream, "hello".getBytes(StandardCharsets.UTF_8), false);
+
+            // trailer field encoded as "literal with incremental indexing, new
+            // name" (0x40): the client's dynamic table gains entry 62
+            java.io.ByteArrayOutputStream trailer = new java.io.ByteArrayOutputStream();
+            trailer.write(0x40);
+            trailer.write("x-checksum".length());
+            trailer.writeBytes("x-checksum".getBytes(StandardCharsets.ISO_8859_1));
+            trailer.write("abc".length());
+            trailer.writeBytes("abc".getBytes(StandardCharsets.ISO_8859_1));
+            client.writeRawFrame(H2Client.TYPE_HEADERS,
+                H2Client.FLAG_END_STREAM | H2Client.FLAG_END_HEADERS, stream, trailer.toByteArray());
+
+            var response = client.awaitResponse(stream);
+            Assert.assertFalse(response.goaway);
+            Assert.assertEquals(response.status, 200);
+
+            // the next request references the dynamic table entry 62 (0xBE):
+            // it must decode to the trailer field, not fail with COMPRESSION_ERROR.
+            // pseudo-headers must come first (a regular header before them is
+            // rejected by HeaderFields validation)
+            java.io.ByteArrayOutputStream block = new java.io.ByteArrayOutputStream();
+            for (String[] kv : new String[][] {
+                    {":method", "GET"}, {":scheme", "http"}, {":path", "/echo"}, {":authority", "127.0.0.1"}}) {
+                block.write(0x00);
+                block.write(kv[0].length());
+                block.writeBytes(kv[0].getBytes(StandardCharsets.ISO_8859_1));
+                block.write(kv[1].length());
+                block.writeBytes(kv[1].getBytes(StandardCharsets.ISO_8859_1));
+            }
+            block.write(0xBE); // indexed header field, dynamic index 62
+            client.writeRawFrame(H2Client.TYPE_HEADERS,
+                H2Client.FLAG_END_STREAM | H2Client.FLAG_END_HEADERS, 3, block.toByteArray());
+
+            var response2 = client.awaitResponse(3);
+            Assert.assertFalse(response2.goaway, "dynamic table must stay in sync after a trailer");
+            Assert.assertEquals(response2.status, 200, "request referencing the trailer's dynamic entry must be served");
+        }
+    }
+
     private static void echo(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readAllBytes();
         exchange.getResponseHeaders().set("X-Echo-Len", String.valueOf(body.length));

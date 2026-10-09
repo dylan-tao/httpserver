@@ -28,6 +28,7 @@ package robaho.net.httpserver;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 
 class ContextList {
 
@@ -35,12 +36,22 @@ class ContextList {
     private final Map<CacheKey,HttpContextImpl> cache = new ConcurrentHashMap<>();
     private record CacheKey(String protocol,String path){}
 
-    public synchronized void add(HttpContextImpl ctx) {
-        assert ctx.getPath() != null;
-        if (contains(ctx)) {
-            throw new IllegalArgumentException("cannot add context to list");
+    /** serializes add/remove against each other (rare admin operations). a
+     * ReentrantLock rather than synchronized methods: monitor-based locking
+     * is banned for virtual thread safety (JEP 444 pinning) */
+    private final ReentrantLock lock = new ReentrantLock();
+
+    public void add(HttpContextImpl ctx) {
+        lock.lock();
+        try {
+            assert ctx.getPath() != null;
+            if (contains(ctx)) {
+                throw new IllegalArgumentException("cannot add context to list");
+            }
+            list.add(ctx);
+        } finally {
+            lock.unlock();
         }
-        list.add(ctx);
     }
 
     boolean contains(HttpContextImpl ctx) {
@@ -90,27 +101,37 @@ class ContextList {
         return lc;
     }
 
-    public synchronized void remove(String protocol, String path)
+    public void remove(String protocol, String path)
             throws IllegalArgumentException {
-        HttpContextImpl ctx = findContext(protocol, path, true);
-        if (ctx == null) {
-            throw new IllegalArgumentException("cannot remove element from list");
+        lock.lock();
+        try {
+            HttpContextImpl ctx = findContext(protocol, path, true);
+            if (ctx == null) {
+                throw new IllegalArgumentException("cannot remove element from list");
+            }
+            list.remove(ctx);
+            // invalidate cached lookups pointing at the removed context
+            cache.values().removeIf(c -> c == ctx);
+        } finally {
+            lock.unlock();
         }
-        list.remove(ctx);
-        // invalidate cached lookups pointing at the removed context
-        cache.values().removeIf(c -> c == ctx);
     }
 
-    public synchronized void remove(HttpContextImpl context)
+    public void remove(HttpContextImpl context)
             throws IllegalArgumentException {
-        for (HttpContextImpl ctx : list) {
-            if (ctx.equals(context)) {
-                list.remove(ctx);
-                // invalidate cached lookups pointing at the removed context
-                cache.values().removeIf(c -> c == context);
-                return;
+        lock.lock();
+        try {
+            for (HttpContextImpl ctx : list) {
+                if (ctx.equals(context)) {
+                    list.remove(ctx);
+                    // invalidate cached lookups pointing at the removed context
+                    cache.values().removeIf(c -> c == context);
+                    return;
+                }
             }
+            throw new IllegalArgumentException("no such context in list");
+        } finally {
+            lock.unlock();
         }
-        throw new IllegalArgumentException("no such context in list");
     }
 }

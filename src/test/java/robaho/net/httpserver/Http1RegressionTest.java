@@ -111,6 +111,44 @@ public class Http1RegressionTest {
         }
     }
 
+    /** InputStream.skip on the request body must go through the HTTP framing
+     *  (Content-Length state): the inherited FilterInputStream.skip bypassed
+     *  it, so the framework's drain then consumed pipelined request bytes as
+     *  body and desynced the connection */
+    @Test
+    public void testSkipKeepsFraming() throws Exception {
+        server.createContext("/skip", exchange -> {
+            exchange.getRequestBody().skip(5);
+            exchange.sendResponseHeaders(200, 2);
+            try (var os = exchange.getResponseBody()) {
+                os.write("ok".getBytes(StandardCharsets.UTF_8));
+            }
+        });
+        server.createContext("/after", exchange -> {
+            exchange.sendResponseHeaders(200, 2);
+            try (var os = exchange.getResponseBody()) {
+                os.write("ok".getBytes(StandardCharsets.UTF_8));
+            }
+        });
+        server.start();
+        try (Socket socket = new Socket("127.0.0.1", server.getAddress().getPort())) {
+            socket.setSoTimeout(8000);
+            // POST with a 10-byte body, immediately followed by a pipelined GET
+            socket.getOutputStream().write("POST /skip HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n0123456789GET /after HTTP/1.1\r\nHost: x\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+            socket.getOutputStream().flush();
+
+            String head1 = readHead(socket.getInputStream());
+            Assert.assertTrue(head1.startsWith("HTTP/1.1 200"), head1);
+            Assert.assertEquals(readFully(socket.getInputStream(), 2), "ok");
+
+            // the pipelined GET must be served as a REQUEST, not drained as body
+            String head2 = readHead(socket.getInputStream());
+            Assert.assertTrue(head2.startsWith("HTTP/1.1 200"),
+                "pipelined request after skip() must be served, got: " + head2);
+            Assert.assertEquals(readFully(socket.getInputStream(), 2), "ok");
+        }
+    }
+
     private static String readHead(InputStream in) throws IOException {
         StringBuilder sb = new StringBuilder();
         int c;

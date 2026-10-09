@@ -26,7 +26,7 @@
 > 重建并集成进 src/test（H2Compliance/MultiFrameTrailer/Review3/SlowBodyKeepAlive/
 > Huffman/ProxyForwarding + h2c 裸 socket 测试客户端 H2Client）。
 > 验证方式：JDK 21 编译 0 错误；TestNG 套件 104/104 通过（2026-10-09 第 13 批后 118/118，
-> 第 14 批后 127/127）；
+> 第 14 批后 127/127，第 15 批后 135/135，第 16 批虚拟线程化后 135/135 保持全绿）；
 > 九套冒烟与专项验证在修复当时全部通过（**注意：其源文件位于 /tmp/hs_smoke，
 > 已被系统清理丢失**——正式集成进 src/test 的必要性由此实证，见"遗漏与残留清单"D 类）。
 >
@@ -786,8 +786,8 @@
 ## 二次排查（2026-10-09，全量 bug 猎查 + 内存/性能审计）
 
 > 六路分区排查（h2 状态机 / HTTP/1.1 核心 / websockets+extras / 并发生命周期 / 内存 / 性能），
-> 重点发现经 JDK 21 运行时探针实证。**第 14 批（2026-10-09）：下述 1-9 项已全部修复**，
-> 10-15 项及内存/性能清单仍开放。
+> 重点发现经 JDK 21 运行时探针实证。**第 14 批（2026-10-09）：下述 1-9 项已修复；第 15 批
+> （2026-10-09）：9-15 项全部修复**。仅内存/性能清单仍开放。
 
 ### 第 14 批修复记录（2026-10-09）
 
@@ -808,6 +808,135 @@
 > 全量套件 118 → **127 全绿**（JDK 21）。
 > 顺带发现：CONNECT 以 IP 字面量为目标（`127.0.0.1:443`）被请求行 URI 解析拒绝
 > （非合法 scheme，上游同样如此）——已记录未修。
+
+### 第 15 批修复记录（2026-10-09，代码级确认项 9-15）
+
+> 9. `LeftOverInputStream` 覆写 `skip()`——经成帧感知的 readImpl 丢弃（FilterInputStream.skip
+>    会绕过 Content-Length/chunked 状态导致连接失步/走私）；
+> 10. 流量控制：PADDED 八位组在接收时即记入 `pendingPadding`（AtomicLong，读线程累加），
+>     handler 读取时折入窗口返还（padded 上传不再泄漏窗口死锁）；END_STREAM/CL 不匹配
+>     路径补 `rstReceived=true`（RST 后不再发帧）；
+> 11. h2 状态机：流级 WINDOW_UPDATE 在 header block 中途抛 PROTOCOL_ERROR（不再把部分
+>     头块当请求分发）；switch 补 default 分支（未知帧类型如 PUSH_PROMISE 不再创建幻影流，
+>     中途则报错）；REFUSED_STREAM 分支清 `inHeaders`（客户端重试不再 GOAWAY 全杀）；
+>     trailer 块（单帧与多帧路径）经 `hpack.decodeFieldSegments` 解码后再丢弃（动态表保持
+>     同步，后续请求不再 COMPRESSION_ERROR/错头）；
+> 12. WebSocket：未知关闭码 3xxx/4xxx 经 `pendingCloseRecorded` 不再伪报 1011"Handler
+>     terminated"（onClose 收到真实 reason/initiator；code 为 null 是 CloseCode 枚举 API
+>     的固有限制，`CloseFrame.getCloseCodeValue()` 新增暴露原始码）；UTF-8 校验改为整消息
+>     （合法跨分片码点通过、continuation 帧中的非法 UTF-8 以 1007 拒绝）；`close()/doClose()`
+>     加 synchronized（onClose 不再可能双回调）；控制帧载荷 >125 构造时抛
+>     IllegalArgumentException（RFC 6455 5.5）；BufferedWebSocket 的 drain 线程自等 2s
+>     消除（drainThread 识别自调用）；首分片补消息大小检查；
+> 13. 并发：DataIn.read 观察到 halfClosed 后重查队列（末段 body 不再被 EOF 截断）；
+>     `acceptConnection` 入口检查 `isFinishing()`（stop() 后排队的 accept 不再泄漏连接）；
+>     `maxIdleConnections` 真正生效（清理任务关闭最旧的超额空闲连接）；HTTP2Stats 除零
+>     已在第 14 批修；**ping 的 lastActivityTime 恢复微竞态经评估接受**（窗口为 ping 写入的
+>     微秒级，活跃请求的后续 socket 活动会重新刷新时间戳，热路径修复代价大于收益，代码
+>     注释已说明）；
+> 14. `ProxyHandler.headers()` 的 `toUpperCase()` 加 `Locale.ROOT`（tr/az 区域不再失效）；
+> 15. 见 13（maxIdleConnections）。
+> 验证：新增 8 个回归测试（H2ComplianceTest+3：padded 上传吞吐/状态机中途拒绝/trailer
+> HPACK 同步；Http1RegressionTest+1：skip 成帧；WebSocketFrameValidationTest×4：跨分片
+> 码点/continuation 非法 UTF-8/ping>125/应用关闭码——含自建的带掩码裸帧客户端）；
+> 既有 WebSocketResponseHandlerTest 3 个固化"写 >125 字节 Ping 帧"非法行为的用例改为
+> 期望 IllegalArgumentException。全量套件 127 → **135 全绿**（JDK 21）。
+> 顺带发现（已记录未修）：WebSocket 所有错误路径（如 1002/1007）均为静默断连，不发
+> wire 级关闭帧（RFC 6455 建议 close 帧告知错误码）——独立改进项。
+> 注：测试侧教训——TestNG 同一类实例跑全部方法，跨方法共享的 latch/引用必须在
+> @BeforeMethod 重置（WebSocketFrameValidationTest 踩坑）。
+
+### 第 16 批修复记录（2026-10-09，虚拟线程适配：清除全部 synchronized）
+
+> **背景**：本服务目标运行于 JDK 21 虚拟线程（JEP 444）。虚拟线程在 synchronized
+> 块/方法内阻塞会**钉住（pin）载体平台线程**（JDK 24 / JEP 491 才修复）——对
+> thread-per-connection 的阻塞 IO 模型是致命的。全库共 13 处 synchronized 全部清除，
+> 其中 8 处是"持锁做阻塞 IO"的真实钉住源（含第 15 批引入的 3 处，已一并纠正）。
+
+> 1. `LeftOverInputStream` read/read[]/skip/close → ReentrantLock（**最严重钉住源**：
+>    每个请求体读取都持 monitor 阻塞读 socket；close 内 drain 最长持锁 1s）；
+> 2. `WebSocket` close/doClose → 复用 sendFrame 既有的 ReentrantLock（顺带修复
+>    sendFrame 与 doClose 并发写流的竞态）；`BufferedWebSocket.doClose` 去锁
+>    （once-only 由基类锁保证）；
+> 3. `HttpConnection.close` → ReentrantLock（持锁 flush/close IO）；
+> 4. `Http2OutputStream.close`（复查-5 的 synchronized）→ **AtomicBoolean CAS**
+>    （零锁，双 decrement 守卫语义不变）；
+> 5. 政策性清除（短临界区、无钉住风险）：`OpenAddressIntMap`×4、`ServerStats.stats`、
+>    `ContextList` add/remove×3、`BufferedWebSocket` 静态 executor 锁×2 → ReentrantLock；
+> 6. **默认执行器切虚拟线程**：`DefaultExecutor` 与 `BufferedWebSocket` drain 线程改为
+>    `Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name(...).factory())`，
+>    默认开启，`robaho.net.httpserver.virtualThreads=false` 回退平台线程池。
+>    h2 的 performRequest 复用 ServerImpl 执行器，同样虚拟化。
+> 验证：处理器实测运行于虚拟线程（开关双向验证）；全量套件 **135/135 全绿**。
+> 注意：本机 JDK 21 运行时在会话中途被移除（现为 JDK 25），最终验证以 JDK 25 运行
+> `--release 21` 编译产物；`-Djdk.tracePinnedThreads` 的运行时钉住验证需 JDK 21
+> 运行时（代码级已保证：全部阻塞路径无 monitor）。JDK 24+（JEP 491）已根治钉住，
+> 本改造对 21 必需、对 24+ 无害。
+
+### 虚拟线程视角的性能清单修订（2026-10-09）
+
+> - **已完成**：原 P13（虚拟线程）——每连接线程成本从 ~512KB-1MB 平台栈降至 KB 级；
+> - **优先级上升**：M1/M3（每连接 32KB + 每流 16KB 缓冲）——线程栈开销消失后，
+>   缓冲成为每连接内存的主导项（10k 连接 ~340MB 主要是缓冲）；
+> - **仍然成立**：P2（HPACK 编码在连接锁内——虚拟线程使锁等待更便宜但串行化仍在）、
+>   O-6（http2Streams → ConcurrentHashMap，读线程每帧一次锁获取）；
+> - **新增**：JVM 层建议分代 ZGC（JDK 21 JEP 439，`-XX:+UseZGC -XX:+ZGenerational`，
+>   对症本服务的分配密集负载）；JDK 21 运维用 `-Djdk.tracePinnedThreads=full` 监控
+>   钉住（升级 24+ 后无需）；微项：分片文本消息 UTF-8 校验与 getTextPayload 双解码、
+>   drain 的 10ms 轮询（虚拟线程下 park 无钉住，可接受）、JUL 内部 monitor 在虚拟
+>   线程上可能短暂钉住（仅 INFO 级连接日志，DEBUG/TRACE 默认关）；
+> - **不采用**：结构化并发 / ScopedValue 为 JDK 21 预览特性，生产不用（未来项）。
+> 今日（第 14/15 批）修正影响评估：第 15 批引入的 3 处 synchronized 属"利用不当"
+> （虚拟线程钉住源），本轮已全部纠正；其余修正性能中性或正面（WINDOW_UPDATE flush
+> 为 ~1000 倍单流吞吐收益；Http2OutputStream.close 的 CAS 化比锁更廉价）。
+
+### JDK 25 视角的锁选型与清单修订（2026-10-09）
+
+> **synchronized vs ReentrantLock（JDK 25）**：JEP 491（JDK 24）重写了对象监视器，
+> 虚拟线程在 monitor 内阻塞不再钉住——禁用 synchronized 的技术理由在 24+ 消失。
+> 结论：**保留现有 ReentrantLock/CAS 设计不变**。理由：
+> 1. 无竞争路径 synchronized 确实略快（thin-lock CAS ~15ns vs AQS ~20-25ns）且省一个
+>    锁对象（~40B），但本库最热的锁点（OpenAddressIntMap.get 每帧一次）差距仅
+>    ~5ns/帧 ≈ 10 万 QPS 下 0.05% 单核——噪声级；
+> 2. build.gradle 工具链仍为 21：阻塞路径回退 synchronized 会重新引入 21 上的钉住；
+> 3. ReentrantLock 留有 API 余量（tryLock/超时/可中断/Condition）；
+> 4. 热点锁的正确终局是**消除锁**（O-6 换 ConcurrentHashMap），不是换更便宜的锁。
+> 若项目永久只跑 25+：仅 5 处短临界区（OpenAddressIntMap×4、ServerStats、ContextList、
+> BufferedWS 静态）可回退 synchronized 换取微弱收益——不建议为此翻动，优先做 O-6。
+> Http2OutputStream.close 的 CAS 化在两个版本上都是严格最优。
+
+> **JDK 版本特性映射**（避免混淆）：虚拟线程 JEP 444=21；monitor 不钉住 JEP 491=24；
+> 分代 ZGC 默认 JEP 474=23（21 需 `-XX:+ZGenerational`，24+ 非分代已移除）；
+> 紧凑对象头 JEP 450=24（`-XX:+UseCompactObjectHeaders`）；AOT 类缓存 JEP 483=24。
+
+> **JDK 25 + 虚拟线程基线下的最新性能清单**（按收益排序，均未实施）：
+> | # | 项 | 收益 | 备注 |
+> |---|---|---|---|
+> | 1 | HPACK 响应头编码移出连接锁（锁外编码、锁内只写） | 临界区 ~10 倍缩小，h2 RPS 随核扩展 | 不变，仍是首选 |
+> | 2 | 每流 16KB 缓冲分配（连接级 free-list / 懒分配） | 100k h2 RPS 省 ~1.6GB/s 年轻代分配 | VT 下成为 GC 压力主项 |
+> | 3 | 16KB DATA 帧的 9 字节帧头合并写 / 连接缓冲 ≥2× 帧大小 | 大响应 syscall 减半 | 不变 |
+> | 4 | HTTP/1.1 响应头整块拼装 + 状态行/Date 字节缓存 | ~0.5µs/响应 + GC 缓解 | P3-41 未完部分 |
+> | 5 | http2Streams → ConcurrentHashMap | 消除读线程每帧锁获取（比换 synchronized 更优） | 取代"换更便宜的锁" |
+> | 6 | HPACK 编/解码分配风暴（每头 6-10 小对象 → 单次定长分配） | 每请求省 30-40 个对象 | 与紧凑对象头互补 |
+> | 7 | stats volatile RMW 门控（static final boolean） | ~0.2µs/请求 | 不变 |
+> | 8 | TCP_NODELAY 默认开启 | h2 小帧 + 延迟确认的 ~40ms 停顿消除 | 25 上更值得（VT 调度更密） |
+> | 9 | Huffman 编码端（已知 C-9） | 上行头带宽 ~10-30% | 不变 |
+> | 10 | 热路径日志 lambda 化 / isLoggable 守卫 | 每帧 3-5 个分配 | 不变 |
+> | N1 | **JVM：紧凑对象头**（`-XX:+UseCompactObjectHeaders`） | 全部小对象（帧/HPACK 字段/头列表）头开销 -20~30%，缓存密度提升 | 零代码风险，24+ 标志 |
+> | N2 | **JVM：ZGC（25 上即分代）** | 分配密集负载下亚毫秒停顿 | 吞吐优先则 G1+调优 |
+> | N3 | **JVM：AOT 类缓存**（`java -XX:AOTMode`） | 启动加速 + 元数据内存下降 | 适合短生命周期部署 |
+> | N4 | VT 调度调优（`jdk.virtualThreadScheduler.parallelism`）+ JFR `jdk.VirtualThreadPinned` 事件监控 | CPU 密集 handler 混载下的核利用 | 25 上 Pinned 事件应≈0 |
+
+> **JDK 25 + 虚拟线程基线下的最新内存清单**（按收益排序，均未实施）：
+> | # | 项 | 量级 | 备注 |
+> |---|---|---|---|
+> | 1 | 每连接 32KB + 每流 16KB 缓冲（配置化/懒分配） | 10k 连接 ~340MB——VT 后的绝对主导 | 优先级最高 |
+> | 2 | WebSocket 64MB 默认上限 + 预分配 + byte[]/String 双份 | 最坏 ~128-256MB/连接 | 不变 |
+> | 3 | h2 默认无限并发流（-1）→ 默认 100-250 | 单连接 1000 流 = 16MB 缓冲（线程已廉价） | 与 #1 联动 |
+> | 4 | FormParser 4-5 倍峰值放大 | 10MB 表单 ~50MB 峰值 | 不变 |
+> | 5 | multipart deleteOnExit 累积 + BufferedWS 按帧不按字节 | 慢性泄漏 | 不变 |
+> | N1 | 紧凑对象头（同上） | 小对象总量 -20~30% | 与所有项正交叠加 |
+> | N2 | AOT 缓存 | metaspace 下降 | 同上 |
 
 ### 实证确认的 bug（探针复现）
 
@@ -833,7 +962,7 @@
    实测：坏 Sec-WebSocket-Version 的握手**收不到任何 HTTP 响应**（RFC 6455 §4.2.1
    要求 HTTP 错误响应）。
 
-### 代码级确认的 bug（未运行时复现，代码路径明确）
+### 代码级确认的 bug（7-15 项已分别于第 14/15 批修复，见上方修复记录）
 
 7. `extras/ProxyHandler.java` CONNECT 隧道完成后**跌落转发路径**（P2-35 修复删了 finally
    里的 return 未在块后补上）——每条隧道结束后必抛异常/误走转发；

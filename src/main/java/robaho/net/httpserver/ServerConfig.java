@@ -85,6 +85,10 @@ public class ServerConfig {
     // the value of the TCP_NODELAY socket-level option
     private static boolean noDelay;
 
+    // run connection handling on virtual threads (JDK 21, JEP 444). the
+    // default executor and the BufferedWebSocket drain threads both honor it
+    private static boolean virtualThreads;
+
     private static boolean http2OverSSL;
     private static boolean http2OverNonSSL;
     private static int http2MaxFrameSize;
@@ -152,6 +156,11 @@ public class ServerConfig {
                         debug = Boolean.getBoolean(pkg + ".debug");
 
                         noDelay = Boolean.getBoolean(pkg + ".nodelay");
+
+                        // default ON: the blocking-IO-heavy connection handling
+                        // scales far better on virtual threads. opt out with
+                        // robaho.net.httpserver.virtualThreads=false
+                        virtualThreads = Boolean.parseBoolean(System.getProperty(pkg + ".virtualThreads", "true"));
 
                         http2OverSSL = Boolean.getBoolean(pkg + ".http2OverSSL");
                         http2OverNonSSL = Boolean.getBoolean(pkg + ".http2OverNonSSL");
@@ -284,6 +293,10 @@ public class ServerConfig {
     }
     public static boolean http2OverNonSSL() {
         return http2OverNonSSL;
+    }
+    /** true (default) when connection handling runs on virtual threads */
+    public static boolean virtualThreads() {
+        return virtualThreads;
     }
     public static int http2MaxFrameSize() {
         return http2MaxFrameSize;

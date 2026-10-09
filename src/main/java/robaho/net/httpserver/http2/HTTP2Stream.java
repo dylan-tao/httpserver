@@ -62,6 +62,11 @@ public class HTTP2Stream {
      * WINDOW_UPDATE arrives so it does not have to spin on a 1ms poll */
     private volatile Thread writerThread;
 
+    /** stream window credit for PADDED octets, accumulated by the reader thread
+     * (which discards them on receipt) and folded into the next WINDOW_UPDATE
+     * by the handler thread as it consumes the data */
+    private final java.util.concurrent.atomic.AtomicLong pendingPadding = new java.util.concurrent.atomic.AtomicLong();
+
     private long dataInSize = 0;
 
     public HTTP2Stream(int streamId, HTTP2Connection connection, Headers requestHeaders, HTTP2Connection.StreamHandler handler) throws IOException {
@@ -209,12 +214,24 @@ public class HTTP2Stream {
                 close();
                 return;
             }
+            // the padding octets are discarded on receipt (DataFrame.parse strips
+            // them): queue their window credit so the handler's read folds them
+            // into the next WINDOW_UPDATE - without this a padded upload
+            // permanently leaks the stream window and deadlocks (RFC 7540 6.9)
+            int padding = frame.getHeader().getLength() - dataFrame.body.length;
+            if (padding > 0) {
+                pendingPadding.addAndGet(padding);
+            }
             dataIn.enqueue(dataFrame.body);
             dataInSize += dataFrame.body.length;
             if (dataFrame.getHeader().getFlags().contains(FrameFlag.END_STREAM)) {
                 long expected = expectedSize();
                 if(expected!=-1 && dataInSize!=expected) {
                     connection.sendResetStream(HTTP2ErrorCode.PROTOCOL_ERROR, streamId);
+                    // mark the stream reset before close(): close() flushes the
+                    // stream buffer and must not emit frames for a stream the
+                    // server just reset (RFC 7540 5.1 closed state)
+                    rstReceived = true;
                     // set halfClosed before close(): the data input must not
                     // block waiting for more data on a reset stream
                     halfClosed = true;
@@ -317,7 +334,10 @@ public class HTTP2Stream {
         private static final FlagSet END_STREAM = FlagSet.of(FrameFlag.END_STREAM);
 
         private final int streamId;
-        private boolean closed;
+        /** CAS-guarded: the handler thread and the reader thread (RST_STREAM)
+         * race into close(); only the winner may run the close body and
+         * decrement requestsInProgress */
+        private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
 
         public Http2OutputStream(int streamId) {
             this.streamId = streamId;
@@ -418,11 +438,12 @@ public class HTTP2Stream {
             }
         }
         @Override
-        public synchronized void close() throws IOException {
-            // synchronized: the handler thread and the connection reader (on
-            // RST_STREAM) can race here, and the non-volatile 'closed' check
-            // alone let both through, double-decrementing requestsInProgress
-            if(closed) return;
+        public void close() throws IOException {
+            // CAS (not a monitor): the handler thread and the connection
+            // reader (on RST_STREAM) can race here, and only the winner may
+            // decrement requestsInProgress. a synchronized method would also
+            // pin a virtual thread's carrier while writing frames (JEP 444)
+            if(!closed.compareAndSet(false, true)) return;
             try {
                 if(connection.isClosed()) {
                     if(headersSent.compareAndSet(false,true)) {
@@ -457,7 +478,6 @@ public class HTTP2Stream {
                 dataIn.close();
             } finally {
                 connection.stats.activeStreams.decrementAndGet();
-                closed=true;
                 HTTP2Stream.this.close();
             }
         }
@@ -516,7 +536,17 @@ public class HTTP2Stream {
                         if(read>0) {
                             return read;
                         }
-                        if(closed || halfClosed) return -1;
+                        if(closed || halfClosed) {
+                            // the producer enqueues BEFORE setting halfClosed, so
+                            // data may have arrived together with the flag: re-check
+                            // the queue or the final body bytes are stranded behind
+                            // the EOF (check-then-act race)
+                            data = queue.peek();
+                            if (data != null) {
+                                break;
+                            }
+                            return -1;
+                        }
                         LockSupport.park();
                         if(Thread.interrupted()) {
                             throw new IOException("interrupted");
@@ -539,9 +569,13 @@ public class HTTP2Stream {
             } finally {
                 if(read>0) {
                     // the stream window is debited on frame receipt (processFrame);
-                    // re-open it as the handler consumes the queued data
-                    receiveWindow.addAndGet(read);
-                    pendingWindowUpdate += read;
+                    // re-open it as the handler consumes the queued data. the
+                    // padding credit (folded here) keeps padded uploads from
+                    // permanently leaking the window
+                    long padding = pendingPadding.getAndSet(0);
+                    long credited = read + padding;
+                    receiveWindow.addAndGet(credited);
+                    pendingWindowUpdate += credited;
                     if(pendingWindowUpdate >= initialWindowSize/2) {
                         connection.lock();
                         try {

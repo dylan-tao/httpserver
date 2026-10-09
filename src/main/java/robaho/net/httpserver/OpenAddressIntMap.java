@@ -42,7 +42,22 @@ public class OpenAddressIntMap<T> {
         this.entries = new Entry[capacity];
     }
 
-    public synchronized T put(int key, T value) {
+    /** guards all access. a ReentrantLock rather than synchronized methods:
+     * the codebase bans monitor-based locking for virtual thread safety
+     * (JEP 444 pinning); the sections here are short and non-blocking, so
+     * this is policy compliance rather than a pinning fix */
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+
+    public T put(int key, T value) {
+        lock.lock();
+        try {
+            return putLocked(key, value);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private T putLocked(int key, T value) {
         if(used>=capacity/2) {
             resize();
         }
@@ -92,24 +107,29 @@ public class OpenAddressIntMap<T> {
         this.used = newMap.used;
     }
 
-    /** synchronized to match put/resize: concurrent readers could otherwise
-     * observe a torn view of entries/mask while resize replaces them */
-    public synchronized T get(int key) {
-        int index = key & mask;
-        int start = index;
-        Entry entry;
-        while ((entry = entries[index]) != null) {
-            if (entry.key==key) {
-                return (T)entry.value;
+    /** locked to match put/resize: concurrent readers could otherwise observe
+     * a torn view of entries/mask while resize replaces them */
+    public T get(int key) {
+        lock.lock();
+        try {
+            int index = key & mask;
+            int start = index;
+            Entry entry;
+            while ((entry = entries[index]) != null) {
+                if (entry.key==key) {
+                    return (T)entry.value;
+                }
+                index = (index + 1) & mask;
+                if(index==start) {
+                    break;
+                }
             }
-            index = (index + 1) & mask;
-            if(index==start) {
-                break;
-            }
+            return null;
+        } finally {
+            lock.unlock();
         }
-        return null;
     }
-    
+
     public T getOrDefault(int key, T defaultValue) {
         T value = get(key);
         return value != null ? value : defaultValue;
@@ -125,24 +145,34 @@ public class OpenAddressIntMap<T> {
         used=0;
     }
 
-    public synchronized Iterable<T> values() {
-        List<T> result = new ArrayList<>();
-        for (Entry entry : entries) {
-            if (entry != null && entry.value != null) {
-                result.add((T)entry.value);
+    public Iterable<T> values() {
+        lock.lock();
+        try {
+            List<T> result = new ArrayList<>();
+            for (Entry entry : entries) {
+                if (entry != null && entry.value != null) {
+                    result.add((T)entry.value);
+                }
             }
+            return Collections.unmodifiableList(result);
+        } finally {
+            lock.unlock();
         }
-        return Collections.unmodifiableList(result);
     }
 
-    public synchronized <T2> Set<Map.Entry<Integer, T2>> entrySet(Function<T, T2> valueMapper) {
-        Set<Map.Entry<Integer, T2>> result = new HashSet<>();
-        for (Entry entry : entries) {
-            // Map.entry forbids null values, so tombstones must be skipped
-            if (entry != null && entry.value != null) {
-                result.add(Map.entry(entry.key, valueMapper != null ? valueMapper.apply((T)entry.value) : (T2) entry.value));
+    public <T2> Set<Map.Entry<Integer, T2>> entrySet(Function<T, T2> valueMapper) {
+        lock.lock();
+        try {
+            Set<Map.Entry<Integer, T2>> result = new HashSet<>();
+            for (Entry entry : entries) {
+                // Map.entry forbids null values, so tombstones must be skipped
+                if (entry != null && entry.value != null) {
+                    result.add(Map.entry(entry.key, valueMapper != null ? valueMapper.apply((T)entry.value) : (T2) entry.value));
+                }
             }
+            return Collections.unmodifiableSet(result);
+        } finally {
+            lock.unlock();
         }
-        return Collections.unmodifiableSet(result);
     }
 }
