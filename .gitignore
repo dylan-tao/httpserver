@@ -10,3 +10,4 @@ fileserver/
 .project
 test-output/
 .idea/
+.zcodeignore

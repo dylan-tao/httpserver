@@ -91,7 +91,7 @@ public class Test {
 There is a [simple file server](https://github.com/robaho/httpserver/blob/72775986b38120b30dc4bc0438d21136ff8ec192/src/test/extras/SimpleFileServer.java#L48) that can be used to for basic testing. It has download, echo, and "hello" capabilities. Use
 
 ```
-gradle runSimpleFileServer
+mvn -q compile test-compile exec:java -Dexec.mainClass=com.example.SimpleFileServer -Dexec.classpathScope=test
 ```
 
 ## websockets

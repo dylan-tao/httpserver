@@ -7,9 +7,8 @@ WORKDIR /app
 # Install curl
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Copy the application files
-COPY build/libs/httpserver.jar .
-COPY build/libs/httpserver-test.jar .
+# Copy the application jar (Maven build output)
+COPY target/httpserver-*.jar /app/httpserver.jar
 
 RUN mkdir -p /app/fileserver
 

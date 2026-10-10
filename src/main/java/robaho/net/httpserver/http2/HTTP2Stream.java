@@ -538,6 +538,11 @@ public class HTTP2Stream {
         public int read(byte[] b, int off, int len) throws IOException {
             int read = 0;
             try {
+                // recorded at method entry: dataIn.close() unparks this field,
+                // and assigning it only before the park opened a lost-unpark
+                // window (close between the flag check and the assignment
+                // unparks a stale reader; park() has no timeout to self-heal)
+                reader = Thread.currentThread();
                 while (len>0) {
                     byte[] data;
                     while((data=queue.peek())==null) {
@@ -555,10 +560,6 @@ public class HTTP2Stream {
                             }
                             return -1;
                         }
-                        // recorded only before parking (a volatile store on every
-                        // read() call was pure overhead; dataIn.close() unparks
-                        // the reader, and the loop re-checks the flags on wake)
-                        reader = Thread.currentThread();
                         LockSupport.park();
                         if(Thread.interrupted()) {
                             throw new IOException("interrupted");
