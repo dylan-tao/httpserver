@@ -71,7 +71,6 @@ public class CloseFrame extends WebSocketFrame {
     }
 
     private CloseCode _closeCode;
-    private int _closeCodeValue = -1;
 
     private String _closeReason;
 
@@ -83,8 +82,8 @@ public class CloseFrame extends WebSocketFrame {
         super(wrap);
         assert wrap.getOpCode() == OpCode.Close;
         if (wrap.getBinaryPayload().length >= 2) {
-            _closeCodeValue = (wrap.getBinaryPayload()[0] & 0xFF) << 8 | wrap.getBinaryPayload()[1] & 0xFF;
-            this._closeCode = CloseCode.find(_closeCodeValue);
+            int codeValue = (wrap.getBinaryPayload()[0] & 0xFF) << 8 | wrap.getBinaryPayload()[1] & 0xFF;
+            this._closeCode = CloseCode.find(codeValue);
             this._closeReason = binary2Text(getBinaryPayload(), 2, getBinaryPayload().length - 2);
         }
     }
@@ -93,11 +92,6 @@ public class CloseFrame extends WebSocketFrame {
         return this._closeCode;
     }
 
-    /** the raw close code from the wire: application-defined 3xxx/4xxx codes
-     * have no CloseCode mapping and surface as null from getCloseCode() */
-    public int getCloseCodeValue() {
-        return this._closeCodeValue;
-    }
 
     public String getCloseReason() {
         return this._closeReason;

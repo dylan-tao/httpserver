@@ -86,6 +86,12 @@ public class ServerConfig {
 
     // the value of the TCP_NODELAY socket-level option
     private static boolean noDelay;
+    // TCP_NODELAY for h2 connections, differentiated from h1 (measured
+    // trade-off): h1 defaults ON (SSE/small-write 40ms stall protection, no
+    // measured downside); h2 defaults OFF (Nagle coalesces the small
+    // multiplexed frame writes - NODELAY measured -8% h2 mux throughput;
+    // h2 SSE users opt in with robaho.net.httpserver.http2Nodelay=true)
+    private static boolean http2NoDelay;
 
     // run connection handling on virtual threads (JDK 21, JEP 444). the
     // default executor and the BufferedWebSocket drain threads both honor it
@@ -163,6 +169,7 @@ public class ServerConfig {
                         // SSE-style writes, Nagle + delayed ACK can add ~40ms
                         // stalls. opt out with robaho.net.httpserver.nodelay=false
                         noDelay = Boolean.parseBoolean(System.getProperty(pkg + ".nodelay", "true"));
+                        http2NoDelay = Boolean.parseBoolean(System.getProperty(pkg + ".http2Nodelay", "false"));
 
                         // default ON: the blocking-IO-heavy connection handling
                         // scales far better on virtual threads. opt out with
@@ -279,6 +286,9 @@ public class ServerConfig {
 
     static boolean noDelay() {
         return noDelay;
+    }
+    static boolean http2NoDelay() {
+        return http2NoDelay;
     }
 
     public static boolean http2OverSSL() {

@@ -305,6 +305,16 @@ public class HPackContext {
      * concurrent streams on a connection scale with cores
      */
     public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream) throws IOException {
+        return encodeHeaderFrames(headers, streamId, endStream, ServerConfig.http2MaxFrameSize());
+    }
+
+    /**
+     * encode a response header block into complete HEADERS (+CONTINUATION)
+     * frames, splitting at the PEER's advertised SETTINGS_MAX_FRAME_SIZE
+     * (RFC 7540 4.3/6.5.2: outbound frames must obey the receiver's limit).
+     * callers with a connection pass {@code connection.remoteMaxFrameSize()}.
+     */
+    public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream, int maxFrameSize) throws IOException {
         ByteArrayOutputStream fields = new ByteArrayOutputStream(256); // average http headers length is 800 bytes
 
         // ':status' is required and the only allowed outbound pseudo headers
@@ -343,14 +353,12 @@ public class HPackContext {
             });
         }
 
-        return encodeHeaderBlockFrames(fields.toByteArray(), streamId, endStream);
+        return encodeHeaderBlockFrames(fields.toByteArray(), streamId, endStream, maxFrameSize);
     }
 
     /** split an encoded header block into complete HEADERS/CONTINUATION frames
-     * (each a byte[] of frame header + fragment), per our advertised
-     * SETTINGS_MAX_FRAME_SIZE (RFC 7540 sections 4.3 / 6.5.2) */
-    private static List<byte[]> encodeHeaderBlockFrames(byte[] block, int streamId, boolean endStream) {
-        int maxFrameSize = ServerConfig.http2MaxFrameSize();
+     * (each a byte[] of frame header + fragment) at the given max frame size */
+    private static List<byte[]> encodeHeaderBlockFrames(byte[] block, int streamId, boolean endStream, int maxFrameSize) {
         List<byte[]> frames = new ArrayList<>(2);
         int off = 0;
         while (true) {

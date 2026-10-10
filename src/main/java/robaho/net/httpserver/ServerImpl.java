@@ -429,6 +429,8 @@ class ServerImpl {
                 if ("h2".equals(sslSocket.getApplicationProtocol())) {
                     logger.log(Level.DEBUG, () -> "http2 connection "+ sslSocket);
                     http2 = true;
+                    // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
+                    sslSocket.setTcpNoDelay(ServerConfig.http2NoDelay());
                 } else {
                     logger.log(Level.DEBUG, () -> "http/1.1 connection "+ sslSocket);
                 }
@@ -735,6 +737,8 @@ class ServerImpl {
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
                 logger.log(Level.DEBUG,"found http2 request on non-SSL assuming prior knowledge");
+                // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
+                connection.getSocket().setTcpNoDelay(ServerConfig.http2NoDelay());
                 Http2Exchange exchange = new Http2Exchange(protocol, connection);
                 exchange.run();
                 return;

@@ -36,13 +36,13 @@ public class WindowUpdateFrame extends BaseFrame {
         } catch (Exception e) {
             throw new HTTP2Exception(HTTP2ErrorCode.INTERNAL_ERROR);
         }
+        // the payload is [reserved bit][31-bit increment]: RFC 7540 4.1 says
+        // the reserved bit MUST be ignored when receiving - mask it off rather
+        // than erroring. a zero INCREMENT (after masking) is still a
+        // PROTOCOL_ERROR per RFC 7540 6.9
+        frame.windowSizeIncrement &= 0x7FFFFFFF;
         if(frame.windowSizeIncrement==0) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"window size increment == 0");
-        }
-        if(frame.windowSizeIncrement < 0) {
-            // the increment is a 31-bit unsigned value: the reserved high bit
-            // set (seen as a negative int) must be rejected (RFC 7540 6.9)
-            throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR,"invalid window size increment");
         }
         return frame;
 	}

@@ -45,35 +45,34 @@ public class MultipartFormParser {
 
     }
 
-    /** storage directories that already have an exit-cleanup hook registered.
-     * bounded by the number of distinct storage locations - unlike
-     * File.deleteOnExit(), whose static registry grows with every uploaded
-     * file (~100-200B each, for the lifetime of the JVM) and takes a
-     * JDK-internal monitor on every upload */
-    private static final java.util.Set<Path> CLEANUP_REGISTERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** parser-created files pending best-effort exit cleanup. bounded: the
+     * registry must not grow without limit (the File.deleteOnExit() leak this
+     * replaces grew ~100-200B per upload forever); beyond the cap the oldest
+     * entries are dropped and their files simply survive. only files the
+     * PARSER created are tracked - a shared storage directory's other
+     * contents are never touched */
+    private static final java.util.concurrent.ConcurrentLinkedQueue<Path> CREATED_FILES = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private static final java.util.concurrent.atomic.AtomicInteger trackedFileCount = new java.util.concurrent.atomic.AtomicInteger();
+    private static final int MAX_TRACKED_FILES = 10_000;
+    private static final java.util.concurrent.atomic.AtomicBoolean CLEANUP_HOOK_REGISTERED = new java.util.concurrent.atomic.AtomicBoolean();
 
-    /** register best-effort exit cleanup for the storage directory: ONE
-     * shutdown hook per distinct directory replaces the per-file
-     * File.deleteOnExit() registration. the directory's contents are deleted
-     * (the storage root itself is kept); the caller remains responsible for
-     * deleting files when they are no longer needed */
-    private static void registerExitCleanup(Path storage) {
-        if (CLEANUP_REGISTERED.add(storage)) {
+    private static void trackForExitCleanup(File file) {
+        if (CLEANUP_HOOK_REGISTERED.compareAndSet(false, true)) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                try (var walk = java.nio.file.Files.walk(storage)) {
-                    // deepest first so directories empty out as their files vanish
-                    walk.sorted(java.util.Comparator.reverseOrder())
-                        .filter(p -> !p.equals(storage))
-                        .forEach(p -> {
-                            try {
-                                java.nio.file.Files.deleteIfExists(p);
-                            } catch (IOException ignored) {
-                                // best effort: a locked file simply survives
-                            }
-                        });
-                } catch (IOException ignored) {
+                Path p;
+                while ((p = CREATED_FILES.poll()) != null) {
+                    try {
+                        java.nio.file.Files.deleteIfExists(p);
+                    } catch (IOException ignored) {
+                        // best effort: a locked file simply survives
+                    }
                 }
-            }, "multipart-storage-cleanup"));
+            }, "multipart-file-cleanup"));
+        }
+        if (trackedFileCount.incrementAndGet() <= MAX_TRACKED_FILES) {
+            CREATED_FILES.offer(file.toPath());
+        } else {
+            trackedFileCount.decrementAndGet();
         }
     }
 
@@ -168,7 +167,7 @@ public class MultipartFormParser {
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, null, bos.toString(charset), null));
             } else {
                 File file = Path.of(storage.toString(), sanitizeFilename(meta.filename)).toFile();
-                registerExitCleanup(storage);
+                trackForExitCleanup(file);
                 os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, meta.filename, null, file));
             }

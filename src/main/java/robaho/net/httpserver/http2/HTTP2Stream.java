@@ -315,7 +315,8 @@ public class HTTP2Stream {
                 // stream-local, only the frame writes need mutual exclusion.
                 // this shrinks the per-response critical section ~10x so
                 // concurrent streams scale with cores
-                var frames = HPackContext.encodeHeaderFrames(responseHeaders, streamId, closeStream);
+                var frames = HPackContext.encodeHeaderFrames(responseHeaders, streamId, closeStream,
+                    connection.remoteMaxFrameSize());
                 connection.lock();
                 try {
                     for (byte[] frame : frames) {
