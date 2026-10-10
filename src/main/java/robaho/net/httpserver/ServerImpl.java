@@ -796,7 +796,7 @@ class ServerImpl {
             }
             long clen = 0L;
             String headerValue = null;
-            List<String> teValueList = headers.get("Transfer-encoding");
+            List<String> teValueList = teHeader;
             if (teValueList != null && !teValueList.isEmpty()) {
                 headerValue = teValueList.get(0);
             }
