@@ -408,11 +408,15 @@ public class HTTP2Connection {
                     // is a multi frame trailer (RFC 7540 8.1.2.3) - discard it instead
                     // of feeding the CONTINUATION into performRequest (which would
                     // treat it as a duplicate request and kill the connection)
-                    if (http2Streams.get(streamId) != null) {
+                    // single lookup: a handler thread may close (and unregister) the
+                    // stream between two gets, and a second get returning null would
+                    // NPE here and take down the whole connection
+                    HTTP2Stream trailerStream = http2Streams.get(streamId);
+                    if (trailerStream != null) {
                         // a multi frame trailer: complete it (see the single frame
                         // trailer path above)
                         inHeaders = false;
-                        completeTrailer(http2Streams.get(streamId), pendingTrailerEndStream);
+                        completeTrailer(trailerStream, pendingTrailerEndStream);
                         continue;
                     }
                     break;
