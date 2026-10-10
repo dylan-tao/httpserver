@@ -1,349 +1,201 @@
+# robaho httpserver
 
-# httpserver
+零依赖的 JDK `com.sun.net.httpserver.HttpServer` [规范](https://docs.oracle.com/en/java/javase/21/docs/api/jdk.httpserver/com/sun/net/httpserver/package-summary.html)替代实现，专为 **JDK 25 + 虚拟线程** 设计。
 
-Zero-dependency implementation of the JDK `com.sun.net.httpserver.HttpServer` [specification](https://docs.oracle.com/en/java/javase/21/docs/api/jdk.httpserver/com/sun/net/httpserver/package-summary.html) with a few significant enhancements.
+## 特性
 
-- WebSocket support using modified source code from nanohttpd.
-- Server-side proxy support using [ProxyHandler](https://github.com/robaho/httpserver/blob/main/src/main/java/robaho/net/httpserver/extras/ProxyHandler.java). (Tunneling proxies are also supported using CONNECT for https.)
-- HTTP/2 [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html) support
-- Performance enhancements such as proper HTTP pipelining, optimized String parsing, etc.
+- **HTTP/1.1**：完整实现，支持 keep-alive、pipelining、chunked、trailer
+- **HTTP/2**：[RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html) 合规（h2c + ALPN），含 HPACK Huffman 编解码、流控、多路复用
+- **WebSocket**：基于 nanohttpd 修改的 RFC 6455 实现
+- **代理**：[ProxyHandler](https://github.com/robaho/httpserver/blob/main/src/main/java/robaho/net/httpserver/extras/ProxyHandler.java) 支持 HTTP 转发与 CONNECT 隧道
+- **虚拟线程原生**：默认执行器即虚拟线程，全链路无 monitor 锁（ReentrantLock/CAS），ScopedValue（JDK 25）
+- **零依赖**：仅 200KB jar，无任何第三方库
 
-All async functionality has been removed. All synchronized blocks were removed in favor of other Java concurrency concepts.
+## 性能
 
-The end result is an implementation that easily integrates with Virtual Threads available in JDK 21 - simply set a virtual thread based ExecutorService.
+- 比 JDK 内置实现快 **10 倍以上**（TechEmpower 基准，同硬件同 JDK）
+- 比 Jetty http2 快 **3 倍**、http1 快 **5 倍**（h2load 基准）
+- 单机回环实测：h1 ~31k RPS、h2 多路复用 ~28k RPS、单流上传 ~110MB/s（8 核 macOS，小响应）
+- h2 路径垃圾分配比优化前减少 **73%**（GC 停顿 4 倍减少）
 
-Improves performance by more than **10x** over the JDK implementation.
+## Maven
 
-Designed for embedding with only a 200kb jar and zero dependencies.
-
-## background
-
-The built-in JDK httpserver implementation has no support for connection upgrades, so it is not possible to add websocket support.
-
-Additionally, the code still has a lot of async - e.g. using SSLEngine to provide SSL support - which makes it more difficult to understand and enhance.
-
-The thread-per-connection synchronous design simplifies the code substantially.
-
-## testing/compliance
-
-Nearly all tests from the JDK are included, so this version should be highly compliant and reliable.
-
-Additional proxy and websockets tests are included.
-
-The http2 implementation passes all specification tests in [h2spec](https://github.com/summerwind/h2spec)
-
-## maven 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.robaho/httpserver.svg?label=Maven%20Central)](https://mvnrepository.com/artifact/io.github.robaho/httpserver)
 
 ```xml
 <dependency>
   <groupId>io.github.robaho</groupId>
   <artifactId>httpserver</artifactId>
-  <version>use version from badge above without leading v</version>
+  <version>使用徽章中的版本号（去掉前缀 v）</version>
 </dependency>
 ```
 
-## using
+**要求 JDK 25+**。
 
-The JDK will automatically use `robaho.net.httpserver.DefaultHttpServerProvider` instead of the JDK implementation when the jar is placed on the class/module path. If there are multiple `HttpServer` providers on the classpath, the `com.sun.net.httpserver.HttpServerProvider` system property can be used to specify the correct one:
+## 快速开始
 
-Eg. <code>-Dcom.sun.net.httpserver.HttpServerProvider=robaho.net.httpserver.DefaultHttpServerProvider</code>
+JDK 会自动使用 `robaho.net.httpserver.DefaultHttpServerProvider` 替代内置实现（jar 在 classpath/module path 上即可）。如有多个 provider，用系统属性指定：
 
-Alternatively, you can instantiate the server directly using [this](https://github.com/robaho/httpserver/blob/main/src/main/java/robaho/net/httpserver/DefaultHttpServerProvider.java#L33).
+```
+-Dcom.sun.net.httpserver.HttpServerProvider=robaho.net.httpserver.DefaultHttpServerProvider
+```
 
-### Example Usage
+也可以直接实例化：[DefaultHttpServerProvider.java](https://github.com/robaho/httpserver/blob/main/src/main/java/robaho/net/httpserver/DefaultHttpServerProvider.java#L33)
+
+### 示例
+
 ```java
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.util.concurrent.Executors;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 public class Test {
-
-  static void main(String[] args) throws Exception {
-    HttpServer server = HttpServer.create(new InetSocketAddress(8000), 0);
-    server.createContext("/", new MyHandler());
-    server.setExecutor(Executors.newVirtualThreadPerTaskExecutor()); // sets virtual thread executor
-    server.start();
+    static void main(String[] args) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(8000), 0);
+        server.createContext("/", new MyHandler());
+        // 虚拟线程执行器（默认已是虚拟线程，可省略）
+        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        server.start();
     }
 
-  static class MyHandler implements HttpHandler {
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-      String response = "This is the response";
-      byte[] bytes = response.getBytes();
-
-      // -1 means no content, 0 means unknown content length
-      var contentLength = bytes.length == 0 ? -1 : bytes.length;
-
-      try (OutputStream os = exchange.getResponseBody()) {
-        exchange.sendResponseHeaders(200, contentLength);
-        os.write(bytes);
-      }
+    static class MyHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            byte[] bytes = "This is the response".getBytes();
+            var contentLength = bytes.length == 0 ? -1 : bytes.length;
+            try (OutputStream os = exchange.getResponseBody()) {
+                exchange.sendResponseHeaders(200, contentLength);
+                os.write(bytes);
+            }
+        }
     }
-  }
 }
-
 ```
-There is a [simple file server](https://github.com/robaho/httpserver/blob/72775986b38120b30dc4bc0438d21136ff8ec192/src/test/extras/SimpleFileServer.java#L48) that can be used to for basic testing. It has download, echo, and "hello" capabilities. Use
+
+### 简单文件服务器
+
+用于基本测试（下载、echo、hello）：
 
 ```
 mvn -q compile test-compile exec:java -Dexec.mainClass=com.example.SimpleFileServer -Dexec.classpathScope=test
 ```
 
-## websockets
+## WebSocket
 
-For websocket usage, see the examples in the [websocket testing folder](https://github.com/robaho/httpserver/tree/main/src/test/java/robaho/net/httpserver/websockets).
+继承 `WebSocketHandler` 并注册端点：
 
-In general, create a handler that extends WebSocketHandler, and add an endpoint for the handler:
-
-```
-  HttpHandler h = new EchoWebSocketHandler();
-  HttpContext c = server.createContext("/ws", h);
+```java
+HttpHandler h = new EchoWebSocketHandler();
+HttpContext c = server.createContext("/ws", h);
 ```
 
-The low-level websocket api is [nanohttpd](https://github.com/NanoHttpd/nanohttpd) so there are many examples on the web.
+更多示例见 [websocket 测试目录](https://github.com/robaho/httpserver/tree/main/src/test/java/robaho/net/httpserver/websockets)。底层 API 来自 [nanohttpd](https://github.com/NanoHttpd/nanohttpd)。
 
-## logging
+## 日志
 
-All logging is performed using the [Java System Logger](https://docs.oracle.com/en/java/javase/19/docs/api/java.base/java/lang/System.Logger.html)
+使用 [Java System Logger](https://docs.oracle.com/en/java/javase/19/docs/api/java.base/java/lang/System.Logger.html)。
 
-## enable Http2
+## 服务器统计
 
-Http2 support is enabled via Java system properties.
-
-Use `-Drobaho.net.httpserver.http2OverSSL=true` to enable Http2 only via SSL connections.
-
-Use `-Drobaho.net.httpserver.http2OverNonSSL=true` to enable Http2 on Non-SSL connections (which requires prior knowledge). The Http2 upgrade mechanism was deprecated in RFC 9113 so it is not supported.
-
-See the additional Http2 options in `ServerConfig.java`
-
-## performance
-
-This version performs more than **10x** faster than the JDK version when tested using the [Tech Empower Benchmarks](https://github.com/TechEmpower/FrameworkBenchmarks/tree/master/frameworks/Java/httpserver) on an identical hardware/work setup with the same JDK 23 version.<sup>1</sup>
-
-The frameworks were also tested using [go-wrk](https://github.com/tsliwowicz/go-wrk)<sup>2</sup>
-
-<sup>1</sup>_The robaho version has been [submitted](https://github.com/TechEmpower/FrameworkBenchmarks/tree/master/frameworks/Java/httpserver-robaho) to the Tech Empower benchmarks project for 3-party confirmation._<br>
-<sup>2</sup>_`go-wrk` does not use http pipelining so, the large number of connections is the limiting factor._
-
-Performance tests against the latest Jetty version were run. The `robaho httpserver` outperformed the Jetty http2 by 3x, and http1 by 5x.
-
-The Javalin/Jetty project is available [here](https://github.com/robaho/javalin-http2-example)
-
-<details>
-    <summary>vs JDK performance details</summary>
-
-**robaho tech empower**
-```
-robertengels@macmini go-wrk % wrk -H 'Host: imac' -H 'Accept: text/plain,text/html;q=0.9,application/xhtml+xml;q=0.9,application/xml;q=0.8,*/*;q=0.7' -H 'Connection: keep-alive' --latency -d 60 -c 64 --timeout 8 -t 2 http://imac:8080/plaintext -s ~/pipeline.lua -- 16
-Running 1m test @ http://imac:8080/plaintext
-  2 threads and 64 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     1.20ms    9.22ms 404.09ms   85.37%
-    Req/Sec   348.78k    33.28k  415.03k    71.46%
-  Latency Distribution
-     50%    0.98ms
-     75%    1.43ms
-     90%    0.00us
-     99%    0.00us
-  41709198 requests in 1.00m, 5.52GB read
-Requests/sec: 693983.49
-Transfer/sec:     93.98MB
-```
-
-**jdk 23 tech empower**
-```
-robertengels@macmini go-wrk % wrk -H 'Host: imac' -H 'Accept: text/plain,text/html;q=0.9,application/xhtml+xml;q=0.9,application/xml;q=0.8,*/*;q=0.7' -H 'Connection: keep-alive' --latency -d 60 -c 64 --timeout 8 -t 2 http://imac:8080/plaintext -s ~/pipeline.lua -- 16
-Running 1m test @ http://imac:8080/plaintext
-  2 threads and 64 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     2.91ms   12.01ms 405.70ms   63.71%
-    Req/Sec   114.30k    18.07k  146.91k    87.10%
-  Latency Distribution
-     50%    4.06ms
-     75%    0.00us
-     90%    0.00us
-     99%    0.00us
-  13669748 requests in 1.00m, 1.72GB read
-Requests/sec: 227446.87
-Transfer/sec:     29.28MB
-
-```
-
-**robaho go-wrk**
-```
-robertengels@macmini go-wrk % ./go-wrk -c=1024 -d=30 -T=100000 http://imac:8080/plaintext
-Running 30s test @ http://imac:8080/plaintext
-  1024 goroutine(s) running concurrently
-3252278 requests in 30.118280233s, 387.70MB read
-Requests/sec:		107983.52
-Transfer/sec:		12.87MB
-Overall Requests/sec:	105891.53
-Overall Transfer/sec:	12.62MB
-Fastest Request:	83µs
-Avg Req Time:		9.482ms
-Slowest Request:	1.415359s
-Number of Errors:	0
-10%:			286µs
-50%:			1.018ms
-75%:			1.272ms
-99%:			1.436ms
-99.9%:			1.441ms
-99.9999%:		1.442ms
-99.99999%:		1.442ms
-stddev:			35.998ms
-```
-
-**jdk 23 go-wrk**
-```
-robertengels@macmini go-wrk % ./go-wrk -c=1024 -d=30 -T=100000 http://imac:8080/plaintext
-Running 30s test @ http://imac:8080/plaintext
-  1024 goroutine(s) running concurrently
-264198 requests in 30.047154195s, 29.73MB read
-Requests/sec:		8792.78
-Transfer/sec:		1013.23KB
-Overall Requests/sec:	8595.99
-Overall Transfer/sec:	990.55KB
-Fastest Request:	408µs
-Avg Req Time:		116.459ms
-Slowest Request:	1.930495s
-Number of Errors:	0
-10%:			1.166ms
-50%:			1.595ms
-75%:			1.725ms
-99%:			1.827ms
-99.9%:			1.83ms
-99.9999%:		1.83ms
-99.99999%:		1.83ms
-stddev:			174.373ms
-
-```
-</details>
-<details>
-    <summary>vs Jetty performance details</summary>
-
-The server is an iMac 4ghz quad-core i7 running OSX 13.7.2. JVM used is JDK 23.0.1. The `h2load` client was connected via a 20Gbs lightening network from an M1 Mac Mini.
-
-Using `h2load -n 1000000 -m 1000 -c 16 [--h1] http://imac:<port>` 
-
-Jetty jetty-11.0.24
-Javalin version 6.4.0
-
-Jetty 11 http2
-```
-starting benchmark...
-spawning thread #0: 16 total client(s). 1000000 total requests
-Application protocol: h2c
-finished in 3.47s, 288284.80 req/s, 10.17MB/s
-requests: 1000000 total, 1000000 started, 1000000 done, 1000000 succeeded, 0 failed, 0 errored, 0 timeout
-status codes: 1000000 2xx, 0 3xx, 0 4xx, 0 5xx
-traffic: 35.29MB (37002689) total, 7.63MB (8001809) headers (space savings 90.12%), 10.49MB (11000000) data
-                     min         max         mean         sd        +/- sd
-time for request:       94us    381.85ms      6.42ms     21.51ms    96.90%
-time for connect:      389us      5.88ms      3.15ms      1.75ms    62.50%
-time to 1st byte:     6.61ms     11.74ms      7.85ms      1.24ms    87.50%
-req/s           :   18020.94    23235.01    19829.09     1588.94    75.00%
-
-```
-
-Jetty 11 http1
-```
-starting benchmark...
-spawning thread #0: 16 total client(s). 1000000 total requests
-Application protocol: http/1.1
-finished in 3.63s, 275680.69 req/s, 36.02MB/s
-requests: 1000000 total, 1000000 started, 1000000 done, 1000000 succeeded, 0 failed, 0 errored, 0 timeout
-status codes: 1000021 2xx, 0 3xx, 0 4xx, 0 5xx
-traffic: 130.65MB (137000000) total, 86.78MB (91000000) headers (space savings 0.00%), 10.49MB (11000000) data
-                     min         max         mean         sd        +/- sd
-time for request:     1.59ms    336.00ms     53.17ms     51.56ms    85.36%
-time for connect:      422us      2.57ms      1.54ms       632us    62.50%
-time to 1st byte:     2.98ms    314.97ms     26.14ms     77.12ms    93.75%
-req/s           :   17232.15    21230.14    18780.35     1130.32    68.75
-
-```
-
-robaho http2
-```
-starting benchmark...
-spawning thread #0: 16 total client(s). 1000000 total requests
-Application protocol: h2c
-finished in 1.03s, 966710.36 req/s, 40.57MB/s
-requests: 1000000 total, 1000000 started, 1000000 done, 1000000 succeeded, 0 failed, 0 errored, 0 timeout
-status codes: 1000000 2xx, 0 3xx, 0 4xx, 0 5xx
-traffic: 41.96MB (44000480) total, 5.72MB (6000000) headers (space savings 76.92%), 10.49MB (11000000) data
-                     min         max         mean         sd        +/- sd
-time for request:      457us     71.41ms     14.71ms      8.63ms    73.09%
-time for connect:      336us      5.77ms      3.13ms      1.73ms    62.50%
-time to 1st byte:     6.59ms     15.30ms     10.40ms      3.32ms    50.00%
-req/s           :   60461.71    66800.04    62509.79     1544.65    75.00%
-```
-
-robaho http1
-```
-starting benchmark...
-spawning thread #0: 16 total client(s). 1000000 total requests
-Application protocol: http/1.1
-finished in 776.64ms, 1287592.88 req/s, 106.83MB/s
-requests: 1000000 total, 1000000 started, 1000000 done, 1000000 succeeded, 0 failed, 0 errored, 0 timeout
-status codes: 1000123 2xx, 0 3xx, 0 4xx, 0 5xx
-traffic: 82.97MB (87000000) total, 46.73MB (49000000) headers (space savings 0.00%), 10.49MB (11000000) data
-                     min         max         mean         sd        +/- sd
-time for request:      376us    380.30ms      9.12ms     32.43ms    99.20%
-time for connect:      240us      2.51ms      1.50ms       720us    62.50%
-time to 1st byte:     3.04ms     18.85ms      8.93ms      5.77ms    68.75%
-req/s           :   80530.13   167605.46   122588.82    42385.59    87.50%
-```
-
-</details>
-
-
-## server statistics
-
-The server tracks some basic statistics. To enable the access endpoint `/__stats`, set the system property `robaho.net.httpserver.EnableStatistics=true`.
-
-Sample usage:
+设置 `robaho.net.httpserver.EnableStats=true` 后，`/__stats` 端点返回实时统计：
 
 ```shell
 $ curl http://localhost:8080/__stats
-Connections: 4264
 Active Connections: 2049
-Requests: 2669256
+Requests Since: 2669256
 Requests/sec: 73719
-Handler Exceptions: 0
-Socket Exceptions: 0
-Mac Connections Exceeded: 0
-Idle Closes: 0
-Reply Errors: 0
+Total Handler Exceptions: 0
+...
 ```
 
-The counts and rates for non "Total" statistics are reset with each pull of the statistics.
+"Since" 统计在每次拉取时重置，"Total" 统计累计。
 
-## performance notes
+---
 
-Http2 performance has not been fully optimized. The http2 version is about 20-30% slower than http1. I expect this to be the case with most http2 implementations due to the complexity.
-http2 outperforms http1 when sending multiple simultaneous requests from the client with payloads, as most servers and clients do not implement http pipelining when payloads are involved.
+## 全部可配置参数
 
-TODO: sending hpack headers does not use huffman encoding or dynamic table management. see the following paper https://www.mew.org/~kazu/doc/paper/hpack-2017.pdf for optimizing the implementation further.
+以下参数均通过 **JVM 系统属性**（`-D`）设置，在服务器启动时一次性读取。
 
-The most expensive operations involve converting strings to URI instances. Unfortunately, since using URI is part of the [HttpExchange API](https://docs.oracle.com/en/java/javase/11/docs/api/jdk.httpserver/com/sun/net/httpserver/HttpExchange.html#getRequestURI())  little can be done in this regard. 
-It could be instantiated lazily, but almost all handlers need access to the URI components (e.g. path, query, etc.)
+### 核心服务器
 
-The standard JDK Headers implementation normalizes all headers to be first character capitalized and the rest lowercase. To ensure optimum performance, client code should use the same format to avoid the normalization cost, i.e. 
+| 属性 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `robaho.net.httpserver.virtualThreads` | boolean | `true` | 连接处理是否使用虚拟线程。`false` 回退到平台线程池（cachedThreadPool）。同时控制 BufferedWebSocket 的 drain 线程 |
+| `robaho.net.httpserver.nodelay` | boolean | `true` | **h1 连接**的 TCP_NODELAY。开启可防止 SSE/小响应的 Nagle+延迟确认 ~40ms 停顿；h1 无实测吞吐损失 |
+| `robaho.net.httpserver.http2Nodelay` | boolean | `false` | **h2 连接**的 TCP_NODELAY。默认关闭（Nagle 合并多路复用小帧写入，实测 NODELAY 开启会使 h2 多路复用吞吐 -8%）。h2 SSE 场景可设 `true` |
+| `robaho.net.httpserver.bufferSize` | int | `16384` | 连接级输入/输出缓冲大小（字节），同时用于 h2 流缓冲池和 multipart 预读。下限 512。影响每连接内存 ~2×bufferSize |
+| `robaho.net.httpserver.maxConnections` | int | `-1`（无限） | 最大并发连接数。超过时新连接直接关闭并计数 |
+| `robaho.net.httpserver.maxIdleConnections` | int | `200` | 最大空闲连接数。超过时清理器关闭最旧的空闲连接 |
+| `robaho.net.httpserver.idleInterval` | long | `30`（秒） | 连接空闲判定间隔。超过此时间无活动且不在请求中的连接被清理器关闭 |
+| `robaho.net.httpserver.clockTick` | long | `100`（毫秒） | 清理器运行周期 |
+| `robaho.net.httpserver.drainAmount` | long | `65536`（字节） | handler 未读完请求体时，连接复用前最多排空的字节数。超过则关闭连接（防走私）。排空等待上限 1 秒 |
+| `robaho.net.httpserver.maxReqTime` | long | `-1`（无限） | 请求处理最长允许时间（秒）。超时的请求中连接被清理器关闭 |
+| `robaho.net.httpserver.EnableStats` | boolean | `false` | 开启 `/__stats` 统计端点 |
+| `robaho.net.httpserver.EnableDebug` | boolean | `false` | 开启 `/__debug` 调试端点（连接/流明细） |
 
-```java
-Use
+### 请求限制（防 DoS）
 
-var value = request.getFirst("Content-length");
+| 属性 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `robaho.net.httpserver.maxReqLineSize` | int | `65536`（64KB） | 请求行或单个头行的最大字节数。超过返回 400 |
+| `robaho.net.httpserver.maxReqHeaders` | int | `200` | 请求头最大数量。超过返回 400 |
 
-instead of
+### SSL
 
-var value = request.getFirst("content-length"); 
-var value = request.getFirst("CONTENT-LENGTH");
-```
+| 属性 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `robaho.net.httpserver.sslHandshakeTimeout` | long | `30`（秒） | SSL 握手超时。超时的连接被关闭，防止恶意客户端永久占用线程 |
 
+### HTTP/2
 
+| 属性 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `robaho.net.httpserver.http2OverSSL` | boolean | `false` | 通过 SSL/ALPN 协商启用 HTTP/2 |
+| `robaho.net.httpserver.http2OverNonSSL` | boolean | `false` | 在非 SSL 连接上启用 HTTP/2（需客户端 prior-knowledge，即直接发送 h2 preface）。RFC 9113 已弃用 upgrade 机制故不支持 |
+| `robaho.net.httpserver.http2MaxFrameSize` | int | `16384` | 本端通告的 SETTINGS_MAX_FRAME_SIZE（字节）。出站帧按对端通告值拆分 |
+| `robaho.net.httpserver.http2InitialWindowSize` | int | `65535` | 流级流控初始窗口大小（字节）。影响单流上传吞吐 |
+| `robaho.net.httpserver.http2ConnectionWindowSize` | int | `65535` | 连接级流控窗口大小（字节） |
+| `robaho.net.httpserver.http2MaxConcurrentStreams` | int | `100` | 每连接最大并发流数。超过时新流收 REFUSED_STREAM（客户端可重试）。`-1` 为无限。100 对齐浏览器行为 |
+| `robaho.net.httpserver.http2MaxHeaderBlockSize` | int | `131072`（128KB） | 单个头块（HEADERS+CONTINUATION 累计）最大字节数。超过返回 ENHANCE_YOUR_CALM（防 CONTINUATION 洪水） |
+| `robaho.net.httpserver.http2DisableFlushDelay` | boolean | `false` | 每帧写后立即 flush（低延迟模式）。默认 false（批量冲刷，吞吐更高）。SSE 场景建议 `true` |
+
+### WebSocket
+
+| 属性 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `robaho.net.httpserver.maxWebSocketFrameSize` | int | `4194304`（4MB） | 单帧最大字节数。超过时以 1009（MessageTooBig）关闭 |
+| `robaho.net.httpserver.maxWebSocketMessageSize` | int | `4194304`（4MB） | 分片聚合后的消息最大字节数。超过时以 1009 关闭 |
+| `robaho.net.httpserver.maxBufferedWebSocketBytes` | int | `16777216`（16MB） | BufferedWebSocket 待发送队列的字节上限。消费端停滞时超过此值抛异常。`0` 为不限 |
+
+### 表单解析（extras）
+
+| 属性 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `robaho.net.httpserver.max_form_bytes` | int | `10485760`（10MB） | url-encoded 表单请求体最大字节数。超过抛 IOException。`0` 为不限 |
+| `robaho.net.httpserver.max_form_params` | int | `1000` | url-encoded 表单最大参数个数。超过抛异常（防哈希碰撞 DoS）。`0` 为不限 |
+| `robaho.net.httpserver.max_multipart_field_bytes` | int | `1048576`（1MB） | multipart 非文件字段最大字节数。超过抛异常。`0` 为不限 |
+
+---
+
+## 性能调优建议
+
+| 场景 | 推荐配置 |
+|---|---|
+| 高吞吐 h2 多路复用 | 默认即可（http2Nodelay=false） |
+| h2 SSE / 低延迟 | `-Drobaho.net.httpserver.http2Nodelay=true -Drobaho.net.httpserver.http2DisableFlushDelay=true` |
+| 内存受限（容器/多实例） | `-XX:+UseCompactObjectHeaders` + G1（默认） |
+| 延迟敏感（P99 SLA） | `-XX:+UseZGC -XX:+ZGenerational` |
+| 吞吐优先、内存充裕 | `-XX:+UseZGC -XX:+ZGenerational`（不设 Xmx，自适应堆） |
+| 大文件上传 | 增大 `http2InitialWindowSize`（如 1024000） |
+| CPU 密集 handler | `-Djdk.virtualThreadScheduler.parallelism=<核数>` |
+
+## 测试与合规
+
+- 几乎所有 JDK 原有测试均已包含（145 项 TestNG 套件全绿）
+- 额外的代理、WebSocket、HTTP/2 合规测试
+- HTTP/2 通过 [h2spec](https://github.com/summerwind/h2spec) 全部规范测试
