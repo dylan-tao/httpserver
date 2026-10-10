@@ -70,12 +70,6 @@ class UndefLengthOutputStream extends FilterOutputStream {
         }
         closed = true;
         flush();
-        LeftOverInputStream is = t.getOriginalInputStream();
-        if (is!=null &&!is.isClosed()) {
-            try {
-                is.close();
-            } catch (IOException e) {
-            }
-        }
+        t.drainOriginalInputStream();
     }
 }

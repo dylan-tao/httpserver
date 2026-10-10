@@ -41,8 +41,11 @@ public enum OpCode {
     Ping(9),
     Pong(10);
 
+    // cached: values() clones the array, and find() runs per received frame
+    private static final OpCode[] _values = OpCode.values();
+
     public static OpCode find(byte value) {
-        for (OpCode opcode : values()) {
+        for (OpCode opcode : _values) {
             if (opcode.getValue() == value) {
                 return opcode;
             }

@@ -47,8 +47,11 @@ public enum CloseCode {
     InternalServerError(1011),
     TLSHandshake(1015);
 
+    // cached: values() clones the array on every call
+    private static final CloseCode[] _values = CloseCode.values();
+
     public static CloseCode find(int value) {
-        for (CloseCode code : values()) {
+        for (CloseCode code : _values) {
             if (code.getValue() == value) {
                 return code;
             }

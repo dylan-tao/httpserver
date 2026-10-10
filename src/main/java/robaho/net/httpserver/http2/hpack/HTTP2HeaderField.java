@@ -45,26 +45,40 @@ public class HTTP2HeaderField {
         return name.startsWith(":");
     }
 
-    /** normalized-name cache: header names are a small repeating set, and the
-     * concat allocated 3 objects per literal header field on the decode path.
+    /** first-char case caches shared by the decode path (normalize, upper)
+     * and the encode path (lowercase): header names are a small repeating
+     * set, and the two-String conversion allocated 3 objects per field.
      * bounded - on overflow the concat fallback applies (names are attacker
-     * controllable, so the cache must not grow unbounded) */
-    private static final java.util.concurrent.ConcurrentHashMap<String, String> NORMALIZE_CACHE =
+     * controllable, so the caches must not grow unbounded) */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> UPPER_CACHE =
         new java.util.concurrent.ConcurrentHashMap<>();
-    private static final int NORMALIZE_CACHE_MAX = 256;
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> LOWER_CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int CASE_CACHE_MAX = 256;
 
     public static String normalize(String value) {
+        return cachedCase(value, UPPER_CACHE, true);
+    }
+
+    /** lowercase the first character: the HPACK encoder must emit lowercase
+     * header names (RFC 7540 8.1.2) */
+    static String lowercase(String value) {
+        return cachedCase(value, LOWER_CACHE, false);
+    }
+
+    private static String cachedCase(String value, java.util.concurrent.ConcurrentHashMap<String, String> cache, boolean upper) {
         if (value == null || value.isEmpty()) {
             return value;
         }
-        String cached = NORMALIZE_CACHE.get(value);
+        String cached = cache.get(value);
         if (cached != null) {
             return cached;
         }
-        String normalized = Character.toUpperCase(value.charAt(0)) + value.substring(1);
-        if (NORMALIZE_CACHE.size() < NORMALIZE_CACHE_MAX) {
-            NORMALIZE_CACHE.putIfAbsent(value, normalized);
+        char c0 = upper ? Character.toUpperCase(value.charAt(0)) : Character.toLowerCase(value.charAt(0));
+        String converted = c0 + value.substring(1);
+        if (cache.size() < CASE_CACHE_MAX) {
+            cache.putIfAbsent(value, converted);
         }
-        return normalized;
+        return converted;
     }
 }

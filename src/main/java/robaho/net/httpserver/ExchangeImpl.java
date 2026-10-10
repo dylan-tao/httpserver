@@ -180,6 +180,21 @@ class ExchangeImpl {
         return uis_orig;
     }
 
+    /** drain and close the request stream so the connection can be reused.
+     * the original stream is null for upgrade/CONNECT requests (the request
+     * body is the raw stream): nothing to drain, and dereferencing it would
+     * tear down the connection after a perfectly good response */
+    void drainOriginalInputStream() {
+        LeftOverInputStream is = getOriginalInputStream();
+        if (is != null && !is.isClosed()) {
+            try {
+                is.close();
+            } catch (IOException e) {
+                getServerImpl().getLogger().log(Level.DEBUG, "error draining request stream", e);
+            }
+        }
+    }
+
     public int getResponseCode() {
         return rcode;
     }

@@ -49,15 +49,4 @@ class UndefLengthInputStream extends LeftOverInputStream {
     public int available() throws IOException {
         return in.available();
     }
-
-    public boolean markSupported() {
-        return false;
-    }
-
-    public void mark(int l) {
-    }
-
-    public void reset() throws IOException {
-        throw new IOException("mark/reset not supported");
-    }
 }

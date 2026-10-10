@@ -87,6 +87,24 @@ abstract class LeftOverInputStream extends FilterInputStream {
         return eof;
     }
 
+    /** these streams carry HTTP framing state (Content-Length / chunked):
+     * mark and reset would desync it, so they are unsupported regardless of
+     * what the underlying stream supports (FilterInputStream would otherwise
+     * delegate) */
+    @Override
+    public boolean markSupported() {
+        return false;
+    }
+
+    @Override
+    public void mark(int l) {
+    }
+
+    @Override
+    public void reset() throws IOException {
+        throw new IOException("mark/reset not supported");
+    }
+
     protected abstract int readImpl(byte[] b, int off, int len) throws IOException;
 
     /** returns true if the stream is already at eof without reading. the

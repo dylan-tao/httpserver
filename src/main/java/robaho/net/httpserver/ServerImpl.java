@@ -641,14 +641,8 @@ class ServerImpl {
 
             logger.log(Level.TRACE,() -> "http2 request on "+connection+" "+method+" for "+uri);
 
-            final List<Filter> sf = ctx.getSystemFilters();
-            final List<Filter> uf = ctx.getFilters();
-
-            final Filter.Chain sc = new Filter.Chain(sf, ctx.getHandler());
-            final Filter.Chain uc = new Filter.Chain(uf, new LinkHandler(sc));
-
             try {
-                uc.doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
+                buildChain(ctx).doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
             } catch (IOException e) {
                 // common with clients breaking connections; the stream is
                 // closed by the performRequest finally block
@@ -658,6 +652,17 @@ class ServerImpl {
                 stats.handleExceptionCount.incrementAndGet();
             }
         }
+    }
+
+    /** build the user-visible filter chain: the system (internal) chain wraps
+     * the handler, the user chain wraps that via a LinkHandler so both are
+     * invoked in one doFilter call. shared by the http/1 and http/2 request
+     * paths so the chain construction cannot drift between them */
+    private Filter.Chain buildChain(HttpContextImpl ctx) {
+        final List<Filter> sf = ctx.getSystemFilters();
+        final List<Filter> uf = ctx.getFilters();
+        final Filter.Chain sc = new Filter.Chain(sf, ctx.getHandler());
+        return new Filter.Chain(uf, new LinkHandler(sc));
     }
 
     /* per exchange task */
@@ -883,16 +888,11 @@ class ServerImpl {
                 * are the corresponding Filter.Chains.
                 * They are linked together by a LinkHandler
                 * so that they can both be invoked in one call.
-             */
-            final List<Filter> sf = ctx.getSystemFilters();
-            final List<Filter> uf = ctx.getFilters();
-
-            final Filter.Chain sc = new Filter.Chain(sf, ctx.getHandler());
-            final Filter.Chain uc = new Filter.Chain(uf, new LinkHandler(sc));
-
+                */
             /* set up the two stream references */
             tx.getRequestBody();
             tx.getResponseBody();
+            Filter.Chain uc = buildChain(ctx);
             if (https) {
                 uc.doFilter(new HttpsExchangeImpl(tx));
             } else {

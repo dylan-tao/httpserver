@@ -154,14 +154,7 @@ class ChunkedOutputStream extends FilterOutputStream {
             t.getServerImpl().getLogger().log(Level.DEBUG, "error writing final chunk", e);
         } finally {
             closed = true;
-            LeftOverInputStream is = t.getOriginalInputStream();
-            if (is != null && !is.isClosed()) {
-                try {
-                    is.close();
-                } catch (IOException e) {
-                    t.getServerImpl().getLogger().log(Level.DEBUG, "error draining request stream", e);
-                }
-            }
+            t.drainOriginalInputStream();
         }
     }
 

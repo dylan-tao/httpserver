@@ -182,6 +182,18 @@ public class HTTP2Stream {
         }
     }
 
+    /** reset the stream and close it. ordering invariants: rstReceived must
+     * be set before close() - close() flushes the stream buffer and must not
+     * emit frames for a stream the server just reset (RFC 7540 5.1 closed
+     * state); halfClosed must be set before close() so the data input does
+     * not block waiting for more data on a reset stream */
+    private void resetAndClose(HTTP2ErrorCode code) throws IOException {
+        connection.sendResetStream(code, streamId);
+        rstReceived = true;
+        halfClosed = true;
+        close();
+    }
+
     public void processFrame(BaseFrame frame) throws HTTP2Exception, IOException {
 
         switch (frame.getHeader().type()) {
@@ -211,10 +223,7 @@ public class HTTP2Stream {
             // the window is re-opened as the handler consumes the data
             if (receiveWindow.addAndGet(-frame.getHeader().length()) < 0) {
                 // the peer sent beyond the stream flow control window
-                connection.sendResetStream(HTTP2ErrorCode.FLOW_CONTROL_ERROR, streamId);
-                rstReceived = true;
-                halfClosed = true;
-                close();
+                resetAndClose(HTTP2ErrorCode.FLOW_CONTROL_ERROR);
                 return;
             }
             // the padding octets are discarded on receipt (DataFrame.parse strips
@@ -230,15 +239,7 @@ public class HTTP2Stream {
             if (dataFrame.getHeader().flags().contains(FrameFlag.END_STREAM)) {
                 long expected = expectedSize();
                 if(expected!=-1 && dataInSize!=expected) {
-                    connection.sendResetStream(HTTP2ErrorCode.PROTOCOL_ERROR, streamId);
-                    // mark the stream reset before close(): close() flushes the
-                    // stream buffer and must not emit frames for a stream the
-                    // server just reset (RFC 7540 5.1 closed state)
-                    rstReceived = true;
-                    // set halfClosed before close(): the data input must not
-                    // block waiting for more data on a reset stream
-                    halfClosed = true;
-                    close();
+                    resetAndClose(HTTP2ErrorCode.PROTOCOL_ERROR);
                     break;
                 }
                 halfClosed = true;
@@ -349,6 +350,17 @@ public class HTTP2Stream {
             this.streamId = streamId;
         }
 
+        /** flush the connection buffer under the connection lock */
+        private void flushConnection() throws IOException {
+            connection.lock();
+            try {
+                connection.outputStream.flush();
+                if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
+            } finally {
+                connection.unlock();
+            }
+        }
+
         @Override
         public void write(int b) throws IOException {
             write(new byte[]{(byte) b});
@@ -387,13 +399,7 @@ public class HTTP2Stream {
                 int _len = Math.min(Math.min(len,connection.remoteMaxFrameSize()),(int)Math.min(connection.sendWindow.get(),sendWindow.get()));
                 if(_len<=0) {
                     if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
-                    connection.lock();
-                    try {
-                        if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
-                        connection.outputStream.flush();
-                    } finally {
-                        connection.unlock();
-                    }
+                    flushConnection();
                     LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(200));
                     if(connection.isClosed()) {
                         throw new IOException("connection closed");
@@ -428,13 +434,7 @@ public class HTTP2Stream {
             // an explicit flush must push data out of the connection level
             // buffer; otherwise small events (e.g. SSE) can stay buffered
             // indefinitely when no other traffic fills the buffer
-            connection.lock();
-            try {
-                connection.outputStream.flush();
-                if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
-            } finally {
-                connection.unlock();
-            }
+            flushConnection();
         }
         @Override
         public void close() throws IOException {

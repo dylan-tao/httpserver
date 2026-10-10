@@ -86,7 +86,6 @@ class FixedLengthOutputStream extends FilterOutputStream {
             t.close();
             throw new IOException("insufficient bytes written to stream");
         }
-        LeftOverInputStream is = t.getOriginalInputStream();
 
         // always flush the response first (the old available() heuristic left
         // responses stuck in the socket buffer): the client may be waiting for
@@ -94,15 +93,6 @@ class FixedLengthOutputStream extends FilterOutputStream {
         // then collects within its bounded wait
         flush();
 
-        // is is null for upgrade/CONNECT requests (the request body is the raw
-        // stream): nothing to drain, and dereferencing it would NPE and tear
-        // down the connection after a perfectly good response
-        if (is != null && !is.isClosed()) {
-            try {
-                is.close();
-            } catch (IOException e) {
-            }
-        }
-
+        t.drainOriginalInputStream();
     }
 }

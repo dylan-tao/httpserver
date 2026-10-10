@@ -57,6 +57,19 @@ public class HTTP2Connection {
      * the entry (the old map used null tombstones for the same guard) */
     final java.util.concurrent.ConcurrentHashMap<Integer, HTTP2Stream> http2Streams = new java.util.concurrent.ConcurrentHashMap<>(16);
 
+    /** header block assembly state - touched only by the reader thread. a
+     * HEADERS block may span HEADERS + CONTINUATION frames; while it is
+     * incomplete no other frame type is legal on the connection (RFC 7540 6.2) */
+    private int headerBlockBytes = 0;
+    private final List<byte[]> headerBlockFragments = new ArrayList<>();
+    /** END_STREAM flag of a trailer HEADERS that is still being completed by
+     * CONTINUATION frames */
+    private boolean pendingTrailerEndStream = false;
+    /** END_STREAM flag of a NEW stream's HEADERS that is still being completed
+     * by CONTINUATION frames: CONTINUATION cannot carry the flag, so it must
+     * be remembered and re-applied when the block completes */
+    private boolean pendingEndStream = false;
+
     /** reusable 16KB stream output buffers: sequential streams on a connection
      * share a small pool instead of allocating 16KB per stream (at high h2 RPS
      * that allocation dominates young-gen churn). bounded so a connection with
@@ -182,23 +195,15 @@ public class HTTP2Connection {
         return localSettings;
     }
 
+    /** write a single pre-encoded frame under the connection lock. designed
+     * for low-volume control frames where the overhead is minimal; bulk data
+     * is written directly to the output stream instead (see
+     * HTTP2Stream.Http2OutputStream) */
     public void writeFrame(byte[] frame) throws IOException {
-        writeFrame(List.of(frame));
-    }
-
-    /**
-     * writes a frame that consists of multiple byte arrays. the method is
-     * designed for low-volume frames where the overhead of creating a new byte
-     * array is minimal. Otherwise, the data/frame should be written directly to
-     * the output stream, e.g. see HTTP2Stream.Http2OutputStream
-     */
-    public void writeFrame(List<byte[]> partials) throws IOException {
         lock();
         try {
-            logger.log(Level.TRACE, () -> "sending frame " + FrameHeader.debug(partials.get(0)));
-            for (var frame : partials) {
-                outputStream.write(frame);
-            }
+            logger.log(Level.TRACE, () -> "sending frame " + FrameHeader.debug(frame));
+            outputStream.write(frame);
             outputStream.flush();
             if (HTTP2Stats.ENABLED) stats.flushes.incrementAndGet();
         } finally {
@@ -237,19 +242,31 @@ public class HTTP2Connection {
         }
     }
 
+    /** accumulate a header block fragment, enforcing the total header block
+     * size limit (CONTINUATION flood protection) */
+    private void addHeaderFragment(byte[] block) throws HTTP2Exception {
+        headerBlockBytes += block.length;
+        if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
+            throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
+        }
+        headerBlockFragments.add(block);
+    }
+
+    /** a trailer HEADERS block is complete: decode it to keep the HPACK
+     * dynamic table in sync (a trailer field sent with incremental indexing
+     * adds an entry on the client side, and an undecoded block desyncs every
+     * later request on this connection - wrong headers or COMPRESSION_ERROR),
+     * then discard its contents */
+    private void completeTrailer(HTTP2Stream stream, boolean endStream) throws HTTP2Exception {
+        hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
+        headerBlockFragments.clear();
+        headerBlockBytes = 0;
+        stream.receiveTrailer(endStream);
+    }
+
     private void processFrames() throws Exception {
         boolean inHeaders = false;
         int openStreamId = 0;
-        int headerBlockBytes = 0;
-        // END_STREAM flag of a trailer HEADERS that is still being completed by
-        // CONTINUATION frames
-        boolean pendingTrailerEndStream = false;
-        // END_STREAM flag of a NEW stream's HEADERS that is still being
-        // completed by CONTINUATION frames: CONTINUATION cannot carry the flag,
-        // so it must be remembered and re-applied when the block completes
-        boolean pendingEndStream = false;
-
-        List<byte[]> headerBlockFragments = new ArrayList();
 
         // main HTTP2
         while (!httpConnection.isClosed()) {
@@ -340,11 +357,7 @@ public class HTTP2Connection {
                             // HEADERS following DATA on an open stream is a trailer
                             // (RFC 7540 8.1.2.3): consume it and discard the contents
                             HeadersFrame trailerFrame = (HeadersFrame) frame;
-                            headerBlockBytes += trailerFrame.getHeaderBlock().length;
-                            if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
-                                throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
-                            }
-                            headerBlockFragments.add(trailerFrame.getHeaderBlock());
+                            addHeaderFragment(trailerFrame.getHeaderBlock());
                             if (!trailerFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                                 // multi frame trailer: remember the END_STREAM flag of the
                                 // HEADERS frame - it is consumed when the last CONTINUATION
@@ -354,15 +367,7 @@ public class HTTP2Connection {
                                 openStreamId = streamId;
                                 continue;
                             }
-                            // decode the trailer block to keep the HPACK dynamic table in
-                            // sync: a trailer field sent with incremental indexing adds an
-                            // entry on the client side, and an undecoded block here desyncs
-                            // every later request on this connection (wrong headers or
-                            // COMPRESSION_ERROR)
-                            hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
-                            headerBlockFragments.clear();
-                            headerBlockBytes = 0;
-                            stream.receiveTrailer(trailerFrame.getHeader().flags().contains(FrameFlag.END_STREAM));
+                            completeTrailer(stream, trailerFrame.getHeader().flags().contains(FrameFlag.END_STREAM));
                             continue;
                         }
                         // HEADERS on a closed or half closed stream is a stream error
@@ -375,12 +380,7 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received out of order");
                     }
                     HeadersFrame headersFrame = (HeadersFrame) frame;
-                    headerBlockBytes += headersFrame.getHeaderBlock().length;
-                    if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
-                        // CONTINUATION flood protection
-                        throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
-                    }
-                    headerBlockFragments.add(headersFrame.getHeaderBlock());
+                    addHeaderFragment(headersFrame.getHeaderBlock());
                     if (!headersFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                         // remember the END_STREAM flag of the HEADERS frame: it
                         // cannot ride on the CONTINUATION frames that complete
@@ -400,12 +400,7 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "CONTINUATION frame received on closed stream");
                     }
                     ContinuationFrame continuationFrame = (ContinuationFrame) frame;
-                    headerBlockBytes += continuationFrame.getHeaderBlock().length;
-                    if (headerBlockBytes > ServerConfig.http2MaxHeaderBlockSize()) {
-                        // CONTINUATION flood protection
-                        throw new HTTP2Exception(HTTP2ErrorCode.ENHANCE_YOUR_CALM, "header block exceeds " + ServerConfig.http2MaxHeaderBlockSize() + " bytes");
-                    }
-                    headerBlockFragments.add(continuationFrame.getHeaderBlock());
+                    addHeaderFragment(continuationFrame.getHeaderBlock());
                     if (!continuationFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                         continue;
                     }
@@ -414,13 +409,10 @@ public class HTTP2Connection {
                     // of feeding the CONTINUATION into performRequest (which would
                     // treat it as a duplicate request and kill the connection)
                     if (http2Streams.get(streamId) != null) {
-                        // decode the trailer block to keep the HPACK dynamic table in
-                        // sync (see the single frame trailer path above)
-                        hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
-                        headerBlockFragments.clear();
-                        headerBlockBytes = 0;
+                        // a multi frame trailer: complete it (see the single frame
+                        // trailer path above)
                         inHeaders = false;
-                        http2Streams.get(streamId).receiveTrailer(pendingTrailerEndStream);
+                        completeTrailer(http2Streams.get(streamId), pendingTrailerEndStream);
                         continue;
                     }
                     break;

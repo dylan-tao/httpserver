@@ -216,10 +216,7 @@ class Request {
                 // a preceding CR (if any) is consumed as part of the CRLF
                 if(key.isEmpty() && value.isEmpty()) break;
                 if(sol) {
-                    if (++headerCount > ServerConfig.getMaxReqHeaders()) {
-                        throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
-                    }
-                    hdrs.add(key.trimmed(), value.trimmed());
+                    addHeader(key, value, ++headerCount);
                     break;
                 }
                 prevCR=false;
@@ -236,10 +233,7 @@ class Request {
                 } else {
                     if(sol) {
                         if(!key.isEmpty() || !value.isEmpty()) {
-                            if (++headerCount > ServerConfig.getMaxReqHeaders()) {
-                                throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
-                            }
-                            hdrs.add(key.trimmed(), value.trimmed());
+                            addHeader(key, value, ++headerCount);
                         }
                         current=key;
                         sol=false;
@@ -261,5 +255,14 @@ class Request {
             }
         }
         return hdrs;
+    }
+
+    /** enforce the request header count limit and add the header: shared by
+     * the end-of-headers and mid-headers paths so the limit cannot drift */
+    private void addHeader(BufferedBuilder key, BufferedBuilder value, int count) throws IOException {
+        if (count > ServerConfig.getMaxReqHeaders()) {
+            throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
+        }
+        hdrs.add(key.trimmed(), value.trimmed());
     }
 }

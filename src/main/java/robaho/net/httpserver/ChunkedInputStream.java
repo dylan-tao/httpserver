@@ -203,15 +203,4 @@ class ChunkedInputStream extends LeftOverInputStream {
         int n = in.available();
         return n > remaining ? remaining : n;
     }
-
-    public boolean markSupported() {
-        return false;
-    }
-
-    public void mark(int l) {
-    }
-
-    public void reset() throws IOException {
-        throw new IOException("mark/reset not supported");
-    }
 }

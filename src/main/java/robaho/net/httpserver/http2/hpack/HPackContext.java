@@ -16,7 +16,6 @@ import java.util.Map;
 import com.sun.net.httpserver.Headers;
 
 import robaho.net.httpserver.OpenAddressMap;
-import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameHeader;
 import robaho.net.httpserver.http2.Utils;
@@ -263,25 +262,6 @@ public class HPackContext {
     }
 
 
-    /** lowercase-name cache: response header names repeat (Content-type,
-     * Content-length, Date...), and the two-String lowercase conversion ran
-     * per header per response. bounded against attacker-controlled names */
-    private static final java.util.concurrent.ConcurrentHashMap<String, String> LOWERCASE_CACHE =
-        new java.util.concurrent.ConcurrentHashMap<>();
-    private static final int LOWERCASE_CACHE_MAX = 256;
-
-    private static String lowercase(String name) {
-        String cached = LOWERCASE_CACHE.get(name);
-        if (cached != null) {
-            return cached;
-        }
-        String lower = Character.toLowerCase(name.charAt(0)) + name.substring(1);
-        if (LOWERCASE_CACHE.size() < LOWERCASE_CACHE_MAX) {
-            LOWERCASE_CACHE.putIfAbsent(name, lower);
-        }
-        return lower;
-    }
-
     private static void writeField(ByteArrayOutputStream fields, String name, String value) {
         byte[] header = encodeHeader(name, value);
         try {
@@ -318,7 +298,7 @@ public class HPackContext {
                 if (name.charAt(0) == ':') {
                     return;
                 }
-                String lower = lowercase(name);
+                String lower = HTTP2HeaderField.lowercase(name);
                 if (v instanceof String single) {
                     writeField(fields, lower, single);
                 } else {
@@ -332,7 +312,7 @@ public class HPackContext {
                 if (name.charAt(0) == ':') {
                     return;
                 }
-                String lower = lowercase(name);
+                String lower = HTTP2HeaderField.lowercase(name);
                 for (String value : values) {
                     writeField(fields, lower, value);
                 }

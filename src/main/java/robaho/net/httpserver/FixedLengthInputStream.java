@@ -75,15 +75,4 @@ class FixedLengthInputStream extends LeftOverInputStream {
         int n = in.available();
         return n < remaining ? n : (int) remaining;
     }
-
-    public boolean markSupported() {
-        return false;
-    }
-
-    public void mark(int l) {
-    }
-
-    public void reset() throws IOException {
-        throw new IOException("mark/reset not supported");
-    }
 }
