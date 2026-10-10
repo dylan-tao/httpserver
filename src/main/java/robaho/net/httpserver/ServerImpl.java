@@ -684,9 +684,6 @@ class ServerImpl {
             while (!connection.closed) {
                 try {
                     runPerRequest();
-                    if (connection.closed) {
-                        break;
-                    }
                 } catch (IOException e) {
                     // these are common with clients breaking connections etc
                     logger.log(Level.TRACE, "ServerImpl IOException", e);
@@ -746,7 +743,7 @@ class ServerImpl {
 
             connection.inRequest = true;
 
-            if (requestLine == null || "".equals(requestLine)) {
+            if (requestLine.isEmpty()) {
                 /* connection closed */
                 logger.log(Level.DEBUG, "no request line: closing");
                 closeConnection(connection);
@@ -790,8 +787,9 @@ class ServerImpl {
             }
 
             /* checks for unsupported combinations of lengths and encodings */
-            if (headers.containsKey("Content-length")
-                    && (headers.containsKey("Transfer-encoding") || headers.get("Content-length").size() > 1)) {
+            List<String> clHeader = headers.get("Content-length");
+            List<String> teHeader = headers.get("Transfer-encoding");
+            if (clHeader != null && (teHeader != null || clHeader.size() > 1)) {
                 reject(Code.HTTP_BAD_REQUEST, requestLine,
                         "Conflicting or malformed headers detected");
                 return;
@@ -825,11 +823,6 @@ class ServerImpl {
                     } catch (NumberFormatException e2) {
                         reject(Code.HTTP_BAD_REQUEST,
                                 requestLine, "NumberFormatException thrown");
-                        return;
-                    }
-                    if (clen < 0) {
-                        reject(Code.HTTP_BAD_REQUEST, requestLine,
-                                "Illegal Content-length value");
                         return;
                     }
                 }

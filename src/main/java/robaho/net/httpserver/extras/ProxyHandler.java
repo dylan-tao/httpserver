@@ -223,23 +223,14 @@ public class ProxyHandler implements HttpHandler {
         }
     }
 
-    private static long transfer(InputStream in, OutputStream out) throws IOException {
+    private static void transfer(InputStream in, OutputStream out) throws IOException {
         Objects.requireNonNull(out, "out");
-        long transferred = 0;
         byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
         int read;
         while ((read = in.read(buffer, 0, DEFAULT_BUFFER_SIZE)) >= 0) {
             out.write(buffer, 0, read);
             out.flush();
-            if (transferred < Long.MAX_VALUE) {
-                try {
-                    transferred = Math.addExact(transferred, read);
-                } catch (ArithmeticException ignore) {
-                    transferred = Long.MAX_VALUE;
-                }
-            }
         }
-        return transferred;
     }
 
     /** hop-by-hop headers that must not be forwarded in either direction (RFC 7230 6.1).

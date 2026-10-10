@@ -154,9 +154,6 @@ class Request {
     }
 
     /** return trimmed value from StringBuilder and reset to empty */
-    private static String trimmed(BufferedBuilder bb) {
-        return bb.trimmed();
-    }
 
     /**
      * @returns the request line or the empty string if not found
@@ -195,7 +192,6 @@ class Request {
         }
     }
 
-    @SuppressWarnings("fallthrough")
     Headers headers() throws IOException {
         if (hdrs != null) {
             return hdrs;
@@ -223,7 +219,7 @@ class Request {
                     if (++headerCount > ServerConfig.getMaxReqHeaders()) {
                         throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
                     }
-                    hdrs.add(trimmed(key),trimmed(value));
+                    hdrs.add(key.trimmed(), value.trimmed());
                     break;
                 }
                 prevCR=false;
@@ -243,7 +239,7 @@ class Request {
                             if (++headerCount > ServerConfig.getMaxReqHeaders()) {
                                 throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
                             }
-                            hdrs.add(trimmed(key),trimmed(value));
+                            hdrs.add(key.trimmed(), value.trimmed());
                         }
                         current=key;
                         sol=false;

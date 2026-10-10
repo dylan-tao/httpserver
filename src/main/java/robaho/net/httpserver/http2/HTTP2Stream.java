@@ -407,8 +407,6 @@ public class HTTP2Stream {
                     if(connection.isClosed()) {
                         throw new IOException("connection closed");
                     }
-                    int remaining = len;
-                    // logger.log(Level.TRACE,() -> "paused sending data frame, remaining "+remaining+", length "+_len+" on stream "+streamId);
                     continue;
                 }
                 if(connection.sendWindow.addAndGet(-_len)<0) {

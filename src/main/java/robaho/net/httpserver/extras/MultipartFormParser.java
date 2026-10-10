@@ -89,9 +89,6 @@ public class MultipartFormParser {
     public static Map<String, List<Part>> parse(String encoding, String content_type, InputStream is, Path storage) throws IOException {
         Charset charset = encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
 
-        if (!content_type.contains("boundary=")) {
-            throw new IllegalStateException("content type does not contain boundary");
-        }
 
         String boundary = parseBoundary(content_type);
 

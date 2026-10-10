@@ -37,9 +37,6 @@ public class FormParser {
         int bytesRead;
         long total = 0;
         while ((bytesRead = is.read(buffer)) != -1) {
-            if (bytesRead == 0) {
-                continue;
-            }
             total += bytesRead;
             if (MAX_CONTENT_LENGTH != 0 && total > MAX_CONTENT_LENGTH) {
                 throw new IOException("form content of " + total + " bytes exceeds the limit of " + MAX_CONTENT_LENGTH + " bytes");

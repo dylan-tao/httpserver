@@ -57,7 +57,7 @@ class FixedLengthInputStream extends LeftOverInputStream {
         if (n > -1) {
             remaining -= n;
         }
-        if (n < 0 && !eof)
+        if (n < 0)
             throw new IOException("connection closed before all data received");
         return n;
     }

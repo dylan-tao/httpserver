@@ -103,7 +103,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 throw new EOFException("Stream is closed");
             }
             int c = readImpl(one, 0, 1);
-            if (c == -1 || c == 0) {
+            if (c == -1) {
                 return c;
             } else {
                 return one[0] & 0xFF;

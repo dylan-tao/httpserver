@@ -139,7 +139,7 @@ public class HTTP2Connection {
         if (maxConcurrentStreams != -1) {
             localSettings.set(new SettingParameter(SettingIdentifier.SETTINGS_MAX_CONCURRENT_STREAMS, maxConcurrentStreams));
         }
-        logger.log(Level.DEBUG, "opened http2 connection " + httpConnection + ", max concurrent streams " + ServerConfig.http2MaxConcurrentStreams());
+        logger.log(Level.DEBUG, "opened http2 connection " + httpConnection + ", max concurrent streams " + maxConcurrentStreams);
     }
 
     public void debug() {

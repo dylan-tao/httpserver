@@ -255,7 +255,7 @@ class ExchangeImpl {
                 logger.log(Level.WARNING, msg);
             }
             contentLen = -1;
-            noContentLengthHeader = (rCode != 304);
+            noContentLengthHeader = true;
         }
 
         if(!informational) {

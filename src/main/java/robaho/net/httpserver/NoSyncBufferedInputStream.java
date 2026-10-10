@@ -283,7 +283,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
         ensureOpen();
         int avail = count - pos;
         if (avail > 0) {
-            out.write(buf,pos,count-pos);
+            out.write(buf, pos, avail);
             pos = count;
         }
         long total = avail;

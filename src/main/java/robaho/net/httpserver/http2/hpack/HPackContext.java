@@ -20,7 +20,6 @@ import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameHeader;
 import robaho.net.httpserver.http2.Utils;
-import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameType;
 
@@ -263,12 +262,6 @@ public class HPackContext {
         return index;
     }
 
-    /** this method is optimized for a server implementation and is not suitable for generic http2 hpack header encoding */
-    public static void writeHeaderFrame(Headers headers, OutputStream outputStream, int streamId,boolean closeStream) throws IOException {
-        for (byte[] frame : encodeHeaderFrames(headers, streamId, closeStream)) {
-            outputStream.write(frame);
-        }
-    }
 
     /** lowercase-name cache: response header names repeat (Content-type,
      * Content-length, Date...), and the two-String lowercase conversion ran
