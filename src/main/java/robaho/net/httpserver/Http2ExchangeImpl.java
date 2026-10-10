@@ -80,14 +80,11 @@ public class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.Princ
 
     @Override
     public void sendResponseHeaders(int rCode, long responseLength) throws IOException {
-        if(responseLength>0) {
+        if (responseLength > 0) {
             response.set("Content-length", Long.toString(responseLength));
-        } else if(responseLength==0) {
-            // no chunked encoding so just ignore
-        } else {
-            // -1 means no data will be sent, so should set end of stream
-            // response.set("Content-Length", Long.toString(responseLength));
         }
+        // 0: no body, no chunked encoding in h2; -1: no data will be sent,
+        // END_STREAM is set via closeStream below
         response.set(":status",Long.toString(rCode));
         responseCode = rCode;
         stream.writeResponseHeaders(responseLength==-1);

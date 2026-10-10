@@ -1,6 +1,5 @@
 package robaho.net.httpserver.http2.frame;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -8,18 +7,10 @@ import java.util.Arrays;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
 public class SettingsFrame extends BaseFrame {
 
 	ArrayList<SettingParameter> params = new ArrayList<>();
-
-	/**
-	 * SettingsFrame Constructor which calls the parameterized constructor
-	 */
-	public SettingsFrame() {
-		this(new FrameHeader(0, FrameType.SETTINGS, FlagSet.of(FrameFlag.ACK) , 0));
-	}
 
 	public SettingsFrame(FrameHeader header) {
 		super(header);
@@ -68,15 +59,6 @@ public class SettingsFrame extends BaseFrame {
 		for (int i = 0; i < params.size(); i++) {
 			params.get(i).writeTo(os);
 		}
-    }
-
-    public byte[] encode() {
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        try {
-            writeTo(bos);
-        } catch (IOException ignore) {
-        }
-        return bos.toByteArray();
     }
 
 }

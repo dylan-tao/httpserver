@@ -8,43 +8,16 @@ import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
 /**
  * Create a frame header object
+ *
+ * @param length          24-bit unsigned integer value that specifies length of the
+ *                        frame
+ * @param type            defined as an enum FrameType, it identifies the type of the
+ *                        frame
+ * @param flags           defined as an EnumSet&lt;FrameFlag&gt;, it identifies flags associated with a
+ *                        particular frame
+ * @param streamIdentifier 31-bit unsigned integer uniquely identifies a frame
  */
 public record FrameHeader(int length, FrameType type, FlagSet flags, int streamIdentifier) {
-
-	/**
-	 * 24-bit unsigned integer value that specifies length of the
-	 * frame
-	 */
-	@Override
-	public int length() {
-		return length;
-	}
-
-	/**
-	 * defined as an enum FrameType, it identifies the type of the
-	 * frame
-	 */
-	@Override
-	public FrameType type() {
-		return type;
-	}
-
-	/**
-	 * defined as an EnumSet&lt;FrameFlag&gt;, it identifies flags associated with a
-	 * particular frame
-	 */
-	@Override
-	public FlagSet flags() {
-		return flags;
-	}
-
-	/**
-	 * 31-bit unsigned integer uniquely identifies a frame
-	 */
-	@Override
-	public int streamIdentifier() {
-		return streamIdentifier;
-	}
 
 	@Override
 	public String toString() {
@@ -101,52 +74,40 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 		}
 	}
 
-	public void writeTo(OutputStream os) throws IOException {
-		// build the 9 byte header in one array and write it once: writing it
-		// byte by byte crosses two stream layers per byte
-		byte[] header = new byte[9];
-		Utils.convertToBinary(header, 0, this.length, 3);
-		header[3] = (byte) (this.type().value & 0xFF);
-		header[4] = flags.value();
-		Utils.convertToBinary(header, 5, this.streamIdentifier, 4);
-		os.write(header);
-	}
+    public void writeTo(OutputStream os) throws IOException {
+        writeTo(os, length, type, flags, streamIdentifier);
+    }
 
-	public static void writeTo(OutputStream os, int length, FrameType frameType, FlagSet flags, int streamId) throws IOException {
-		byte[] header = new byte[9];
-		Utils.convertToBinary(header, 0, length, 3);
-		header[3] = (byte) (frameType.value & 0xFF);
-		header[4] = flags.value();
-		Utils.convertToBinary(header, 5, streamId, 4);
-		os.write(header);
-	}
+    public static void writeTo(OutputStream os, int length, FrameType frameType, FlagSet flags, int streamId) throws IOException {
+        // build the 9 byte header in one array and write it once: writing it
+        // byte by byte crosses two stream layers per byte
+        byte[] header = new byte[9];
+        encodeInto(header, length, frameType, flags, streamId);
+        os.write(header);
+    }
 
-	public static byte[] encode(int length, FrameType frameType, FlagSet flags, int streamId) {
-		byte[] buffer = new byte[9];
-		Utils.convertToBinary(buffer, 0, length, 3);
-		buffer[3] = (byte) (frameType.value & 0xFF);
-		buffer[4] = flags.value();
-		Utils.convertToBinary(buffer, 5, streamId, 4);
-		return buffer;
-	}
+    public byte[] encode() {
+        return encode(length, type, flags, streamIdentifier);
+    }
 
-	public byte[] encode() {
-		byte[] buffer = new byte[9];
-		Utils.convertToBinary(buffer, 0, length, 3);
-		buffer[3] = (byte) (type.value & 0xFF);
-		buffer[4] = flags.value();
-		Utils.convertToBinary(buffer, 5, streamIdentifier, 4);
-		return buffer;
-	}
+    public static byte[] encode(int length, FrameType frameType, FlagSet flags, int streamId) {
+        byte[] buffer = new byte[9];
+        encodeInto(buffer, length, frameType, flags, streamId);
+        return buffer;
+    }
 
-	/**
-	 * encode into an existing byte array
-	 */
-	public byte[] encode(byte[] buffer) {
-		Utils.convertToBinary(buffer, 0, length, 3);
-		buffer[3] = (byte) (type.value & 0xFF);
-		buffer[4] = flags.value();
-		Utils.convertToBinary(buffer, 5, streamIdentifier, 4);
-		return buffer;
-	}
+    /**
+     * encode into an existing byte array
+     */
+    public byte[] encode(byte[] buffer) {
+        encodeInto(buffer, length, type, flags, streamIdentifier);
+        return buffer;
+    }
+
+    private static void encodeInto(byte[] buffer, int length, FrameType frameType, FlagSet flags, int streamId) {
+        Utils.convertToBinary(buffer, 0, length, 3);
+        buffer[3] = (byte) (frameType.value & 0xFF);
+        buffer[4] = flags.value();
+        Utils.convertToBinary(buffer, 5, streamId, 4);
+    }
 }

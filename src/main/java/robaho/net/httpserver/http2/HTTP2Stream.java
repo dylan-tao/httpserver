@@ -96,10 +96,6 @@ public class HTTP2Stream {
         }
     }
 
-    public OutputStream getOutputStream() {
-        return outputStream;
-    }
-
     public Headers getRequestHeaders() {
         return requestHeaders;
     }
@@ -249,11 +245,6 @@ public class HTTP2Stream {
                 dataIn.wakeupReader();
             }
             break;
-        case PRIORITY:
-            if(streamOpen) {
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
-            }
-            break;
         case RST_STREAM:
             ResetStreamFrame resetFrame = (ResetStreamFrame) frame;
             logger.log(Level.DEBUG, () -> "received reset stream " + resetFrame.errorCode + ", on stream " + streamId);
@@ -338,11 +329,11 @@ public class HTTP2Stream {
     }
 
     public InetSocketAddress getLocalAddress() {
-        return connection.getLocalAddress();
+        return connection.httpConnection.getLocalAddress();
     }
 
     public InetSocketAddress getRemoteAddress() {
-        return connection.getRemoteAddress();
+        return connection.httpConnection.getRemoteAddress();
     }
 
     class Http2OutputStream extends OutputStream {

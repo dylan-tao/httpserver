@@ -292,20 +292,13 @@ public class HPackContext {
 
     /**
      * encode a response header block into complete HEADERS (+CONTINUATION)
-     * frame byte arrays. callers run this OUTSIDE the connection lock and take
-     * the lock only for the writes: the encoding (string building, HPACK) is
-     * stream-local, and keeping it out of the critical section lets
-     * concurrent streams on a connection scale with cores
-     */
-    public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream) throws IOException {
-        return encodeHeaderFrames(headers, streamId, endStream, ServerConfig.http2MaxFrameSize());
-    }
-
-    /**
-     * encode a response header block into complete HEADERS (+CONTINUATION)
      * frames, splitting at the PEER's advertised SETTINGS_MAX_FRAME_SIZE
      * (RFC 7540 4.3/6.5.2: outbound frames must obey the receiver's limit).
      * callers with a connection pass {@code connection.remoteMaxFrameSize()}.
+     * callers run this OUTSIDE the connection lock and take the lock only for
+     * the writes: the encoding (string building, HPACK) is stream-local, and
+     * keeping it out of the critical section lets concurrent streams on a
+     * connection scale with cores
      */
     public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream, int maxFrameSize) throws IOException {
         ByteArrayOutputStream fields = new ByteArrayOutputStream(256); // average http headers length is 800 bytes

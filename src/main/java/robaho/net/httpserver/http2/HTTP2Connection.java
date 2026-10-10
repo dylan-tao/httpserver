@@ -6,7 +6,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -575,14 +574,6 @@ public class HTTP2Connection {
         } finally {
             logger.log(Level.DEBUG, () -> "sent connection window update, previous "+current+", now "+ receiveWindow.get());
         }
-    }
-
-    InetSocketAddress getRemoteAddress() {
-        return httpConnection.getRemoteAddress();
-    }
-
-    InetSocketAddress getLocalAddress() {
-        return httpConnection.getLocalAddress();
     }
 
     public void sendGoAway(HTTP2ErrorCode errorCode) throws IOException {

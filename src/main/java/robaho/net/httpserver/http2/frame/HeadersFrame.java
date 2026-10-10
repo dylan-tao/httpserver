@@ -22,11 +22,6 @@ public class HeadersFrame extends BaseFrame {
 	private long dependentStreamId;
 	private int weight;
 	private byte[] headerBlock;
-	private byte[] padding;
-
-	public HeadersFrame() {
-		this(new FrameHeader(0, FrameType.HEADERS, FrameFlag.NONE, 0));
-	}
 
 	public HeadersFrame(FrameHeader header) {
 		super(header);
@@ -44,38 +39,12 @@ public class HeadersFrame extends BaseFrame {
 		this.padLength = padLength;
 	}
 
-	/**
-	 * A single-bit flag indicating that the stream dependency is exclusive (see
-	 * Section 5.3). This field is only present if the PRIORITY flag is set.
-	 */
-	public boolean getIsExclusive() {
-		return isExclusive;
-	}
-
 	public void setIsExclusive(boolean isExclusive) {
 		this.isExclusive = isExclusive;
 	}
 
-	/**
-	 * A 31-bit stream identifier for the stream that this stream depends on
-	 * (see Section 5.3). This field is only present if the PRIORITY flag is
-	 * set.
-	 */
-	public long getDependentStream() {
-		return dependentStreamId;
-	}
-
 	public void setDependentStream(long streamIdentifier) {
 		this.dependentStreamId = streamIdentifier;
-	}
-
-	/**
-	 * An unsigned 8-bit integer representing a priority weight for the stream
-	 * (see Section 5.3). Add one to the value to obtain a weight between 1 and
-	 * 256. This field is only present if the PRIORITY flag is set.
-	 */
-	public int getWeight() {
-		return weight;
 	}
 
 	public void setWeight(int weight) {
@@ -91,17 +60,6 @@ public class HeadersFrame extends BaseFrame {
 
 	public void setHeaderBlock(byte[] headerBlock) {
 		this.headerBlock = headerBlock;
-	}
-
-	/**
-	 * Padding octets.
-	 */
-	public byte[] getPadding() {
-		return padding;
-	}
-
-	public void setPadding(byte[] padding) {
-		this.padding = padding;
 	}
 
 	/**
@@ -177,8 +135,5 @@ public class HeadersFrame extends BaseFrame {
         FrameHeader.writeTo(os, buffer.length, FrameType.HEADERS, FlagSet.of(FrameFlag.END_HEADERS), getHeader().streamIdentifier());
         os.write(buffer);
         os.flush();
-    }
-    public byte[] encode() {
-        throw new UnsupportedOperationException("use HPackContext encodeFrameHeaders()");
     }
 }
