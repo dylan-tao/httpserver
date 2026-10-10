@@ -55,25 +55,6 @@ public class Utils {
         QUOTED_PAIR[0x7F] = false; // (DEL) illegal
     }
 
-    /*
-     * Validates an RFC 7230 quoted-string.
-     */
-    public static boolean isQuotedStringContent(String token) {
-        for (int i = 0; i < token.length(); i++) {
-            char c = token.charAt(i);
-            if (c > 255) {
-                return false;
-            } else if (c == 0x5c) { // check if valid quoted-pair
-                if (i == token.length() - 1 || !QUOTED_PAIR[token.charAt(i++)]) {
-                    return false;
-                }
-            } else if (!QDTEXT[c]) {
-                return false; // illegal char
-            }
-        }
-        return true;
-    }
-
     /**
      * efficient contains() ignoring case
      */

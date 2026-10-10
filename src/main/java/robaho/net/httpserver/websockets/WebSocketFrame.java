@@ -120,10 +120,6 @@ public class WebSocketFrame {
     }
 
     public WebSocketFrame(OpCode opCode, boolean fin, byte[] payload) {
-        this(opCode, fin, payload, null);
-    }
-
-    public WebSocketFrame(OpCode opCode, boolean fin, byte[] payload, byte[] maskingKey) {
         this(opCode, fin);
         if ((opCode == OpCode.Close || opCode == OpCode.Ping || opCode == OpCode.Pong)
                 && payload != null && payload.length > 125) {
@@ -132,18 +128,12 @@ public class WebSocketFrame {
             // connection
             throw new IllegalArgumentException("control frame payload exceeds 125 bytes: " + payload.length);
         }
-        setMaskingKey(maskingKey);
         setBinaryPayload(payload);
     }
 
-    public WebSocketFrame(OpCode opCode, boolean fin, String payload) throws CharacterCodingException {
-        this(opCode, fin, payload, null);
-    }
-
-    public WebSocketFrame(OpCode opCode, boolean fin, String payload, byte[] maskingKey)
+    public WebSocketFrame(OpCode opCode, boolean fin, String payload)
             throws CharacterCodingException {
         this(opCode, fin);
-        setMaskingKey(maskingKey);
         setTextPayload(payload);
     }
 
@@ -337,10 +327,6 @@ public class WebSocketFrame {
     }
 
     // --------------------------------CONSTANTS-------------------------------
-
-    public void setUnmasked() {
-        setMaskingKey(null);
-    }
 
     @Override
     public String toString() {

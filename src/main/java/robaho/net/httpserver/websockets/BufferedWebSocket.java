@@ -61,17 +61,6 @@ public abstract class BufferedWebSocket extends WebSocket {
 
     private final Future<?> future;
 
-    public static void setExecutor(ExecutorService executor) {
-        EXECUTOR_LOCK.lock();
-        try {
-            if (robaho.net.httpserver.websockets.BufferedWebSocket.executor != null) {
-                throw new IllegalStateException("executor is already set");
-            }
-            BufferedWebSocket.executor = executor;
-        } finally {
-            EXECUTOR_LOCK.unlock();
-        }
-    }
 
     /**
      * a BufferedWebSocket that uses the kernel default buffer sizes
