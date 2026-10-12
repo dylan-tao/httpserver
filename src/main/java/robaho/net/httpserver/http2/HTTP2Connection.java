@@ -570,6 +570,13 @@ public class HTTP2Connection {
                 }
             }
             if (parameter.identifier == SettingIdentifier.SETTINGS_MAX_FRAME_SIZE) {
+                // RFC 7540 6.5.2: valid range is 16384..16777215 and an
+                // out-of-range value is a connection error. this also guards
+                // the DATA write loop: a 0 max frame size would compute _len=0
+                // for every write and wedge the writer in the park branch
+                if (parameter.value < 16384 || parameter.value > 16777215) {
+                    throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "Invalid value for SETTINGS_MAX_FRAME_SIZE " + parameter.value);
+                }
                 logger.log(Level.DEBUG, () -> "received max frame size " + parameter.value);
                 remoteMaxFrameSize = (int) parameter.value;
             }

@@ -348,6 +348,21 @@ public class H2ComplianceTest {
         }
     }
 
+    /** SETTINGS_MAX_FRAME_SIZE outside the RFC 7540 6.5.2 range
+     *  (16384..16777215) must be a connection error: a 0 value would
+     *  otherwise compute _len=0 for every DATA write and wedge the writer */
+    @Test
+    public void testInvalidMaxFrameSizeSetting() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            byte[] setting = new byte[6];
+            setting[1] = 0x05; // SETTINGS_MAX_FRAME_SIZE, value 0 (out of range)
+            client.writeRawFrame(H2Client.TYPE_SETTINGS, 0, 0, setting);
+            int stream = client.sendRequest("GET", "/echo", true);
+            var response = client.awaitResponse(stream);
+            Assert.assertTrue(response.goaway(), "out-of-range SETTINGS_MAX_FRAME_SIZE must be a connection error");
+        }
+    }
+
     private static void echo(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readAllBytes();
         exchange.getResponseHeaders().set("X-Echo-Len", String.valueOf(body.length));
