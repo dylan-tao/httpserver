@@ -70,6 +70,11 @@ public class HTTP2Connection {
      * be remembered and re-applied when the block completes */
     private boolean pendingEndStream = false;
 
+    /** the peer's GOAWAY(NO_ERROR) boundary: it will not open new streams
+     * beyond this id (RFC 7540 6.8). -1 = no GOAWAY received. the connection
+     * keeps serving in-flight streams and refuses newer ones */
+    private volatile int clientGoawayStreamId = -1;
+
     /** reusable 16KB stream output buffers: sequential streams on a connection
      * share a small pool instead of allocating 16KB per stream (at high h2 RPS
      * that allocation dominates young-gen churn). bounded so a connection with
@@ -304,6 +309,14 @@ public class HTTP2Connection {
                 case GOAWAY:
                     GoawayFrame goaway = (GoawayFrame) frame;
                     if (goaway.errorCode == HTTP2ErrorCode.NO_ERROR) {
+                        // graceful shutdown (RFC 7540 6.8): the peer will not
+                        // open new streams beyond lastSeenStream. finish the
+                        // in-flight streams and refuse anything newer; the
+                        // connection itself stays up until the peer (or the
+                        // idle cleaner) closes it. max: a later GOAWAY with a
+                        // smaller id must not re-accept refused streams
+                        clientGoawayStreamId = Math.max(clientGoawayStreamId, goaway.lastSeenStream);
+                        logger.log(Level.DEBUG, () -> "received GOAWAY, last stream " + goaway.lastSeenStream + ", draining");
                         continue;
                     }
                     throw new IOException("received GOAWAY from remote " + goaway.errorCode);
@@ -489,6 +502,17 @@ public class HTTP2Connection {
             if (targetStream != null) {
                 // found existing stream
             } else if (lastSeenStreamId < streamId) {
+                if (clientGoawayStreamId >= 0 && streamId > clientGoawayStreamId) {
+                    // the peer promised (GOAWAY) not to open streams beyond
+                    // this id: refuse the stream, keep the connection alive
+                    // for in-flight work (RFC 7540 6.8)
+                    sendResetStream(HTTP2ErrorCode.REFUSED_STREAM, streamId);
+                    headerBlockFragments.clear();
+                    headerBlockBytes = 0;
+                    pendingEndStream = false;
+                    inHeaders = false;
+                    continue;
+                }
                 int currentSize = http2Streams.size();
                 if (maxConcurrentStreams != -1 && currentSize >= maxConcurrentStreams) {
                     // stream level error: refuse this single stream, not the
@@ -565,8 +589,15 @@ public class HTTP2Connection {
                     throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "Invalid value for SETTINGS_INITIAL_WINDOW_SIZE " + parameter.value);
                 }
                 logger.log(Level.DEBUG, () -> "received initial window size of " + parameter.value);
+                long delta = parameter.value - oldInitialWindowSize;
                 for (var stream : http2Streams.values()) {
-                    stream.sendWindow.addAndGet(parameter.value - oldInitialWindowSize);
+                    stream.sendWindow.addAndGet(delta);
+                    if (delta > 0) {
+                        // wake writers parked on their stream window: the grown
+                        // window may let them proceed now (the same wake gap
+                        // the connection-level WINDOW_UPDATE had)
+                        stream.wakeupWriter();
+                    }
                 }
             }
             if (parameter.identifier == SettingIdentifier.SETTINGS_MAX_FRAME_SIZE) {

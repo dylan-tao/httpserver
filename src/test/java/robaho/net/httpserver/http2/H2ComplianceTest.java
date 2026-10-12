@@ -363,6 +363,31 @@ public class H2ComplianceTest {
         }
     }
 
+    /** after a client GOAWAY(NO_ERROR), in-flight streams finish and any NEW
+     *  stream is refused with REFUSED_STREAM while the connection stays up
+     *  (RFC 7540 6.8 graceful shutdown) */
+    @Test
+    public void testClientGoawayRefusesNewStreams() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int stream = client.sendRequest("GET", "/echo", true);
+            var r = client.awaitResponse(stream);
+            Assert.assertFalse(r.goaway());
+            Assert.assertEquals(r.status(), 200, "baseline request must be served");
+
+            // GOAWAY(NO_ERROR) with last-stream-id = the completed stream
+            byte[] goaway = new byte[8];
+            goaway[3] = (byte) stream;
+            client.writeRawFrame(H2Client.TYPE_GOAWAY, 0, 0, goaway);
+
+            int stream2 = client.sendRequest("GET", "/echo", true);
+            var r2 = client.awaitResponse(stream2);
+            Assert.assertFalse(r2.goaway(), "GOAWAY must not kill the connection");
+            Assert.assertNotNull(r2.rstErrorCode(), "new stream after GOAWAY must be refused");
+            Assert.assertEquals(r2.rstErrorCode().intValue(), H2Client.REFUSED_STREAM,
+                "refusal code must be REFUSED_STREAM");
+        }
+    }
+
     private static void echo(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readAllBytes();
         exchange.getResponseHeaders().set("X-Echo-Len", String.valueOf(body.length));

@@ -40,8 +40,9 @@ public class GoawayFrame extends BaseFrame {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
         try {
+            var lastSeenStream = Utils.convertToInt(body, 0, 4);
             var errorCode = Utils.convertToInt(body, 4, 4);
-            return new GoawayFrame(frameHeader,HTTP2ErrorCode.getEnum(errorCode));
+            return new GoawayFrame(frameHeader,HTTP2ErrorCode.getEnum(errorCode),lastSeenStream);
         } catch (Exception e) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }
