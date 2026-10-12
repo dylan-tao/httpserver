@@ -307,6 +307,47 @@ public class H2ComplianceTest {
         }
     }
 
+    /** a client that only sends whole DATA frames must not deadlock when the
+     *  connection window remainder falls below its frame size: the server must
+     *  replenish the window before then. the old 10% threshold left a dead
+     *  zone [threshold, frame size) where the client waited for credit and the
+     *  server waited for data, forever */
+    @Test
+    public void testFlowControlUploadBeyondInitialWindow() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int stream = client.sendRequest("POST", "/sink", false);
+            long streamWindow = 65535, connWindow = 65535;
+            int total = 256 * 1024;
+            byte[] body = new byte[total];
+            for (int i = 0; i < total; i++) {
+                body[i] = (byte) (i * 31 + 7);
+            }
+            int sent = 0;
+            while (sent < total) {
+                int n = Math.min(8192, total - sent);
+                if (streamWindow < n || connWindow < n) {
+                    int[] wu = client.readWindowUpdate();
+                    if (wu[0] == 0) {
+                        connWindow += wu[1];
+                    } else if (wu[0] == stream) {
+                        streamWindow += wu[1];
+                    }
+                    continue;
+                }
+                boolean end = sent + n == total;
+                client.sendData(stream, java.util.Arrays.copyOfRange(body, sent, sent + n), end);
+                streamWindow -= n;
+                connWindow -= n;
+                sent += n;
+            }
+            // a flow control deadlock surfaces as awaitResponse timing out
+            var response = client.awaitResponse(stream);
+            Assert.assertFalse(response.goaway(), "upload must not trigger GOAWAY");
+            Assert.assertNull(response.rstErrorCode(), "upload must not be reset");
+            Assert.assertEquals(response.status(), 200, "upload must complete");
+        }
+    }
+
     private static void echo(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readAllBytes();
         exchange.getResponseHeaders().set("X-Echo-Len", String.valueOf(body.length));

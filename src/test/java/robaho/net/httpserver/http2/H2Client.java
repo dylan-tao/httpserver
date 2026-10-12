@@ -170,14 +170,17 @@ class H2Client implements AutoCloseable {
                     case TYPE_DATA:
                         if (f.streamId == streamId) {
                             data.writeBytes(f.payload);
+                            if (f.payload.length > 0) {
+                                // return BOTH windows' credit as response data
+                                // arrives: a response larger than the 64KB
+                                // initial windows otherwise exhausts them and the
+                                // server's writers park forever waiting for credit
+                                // the client only sends at END_STREAM - which the
+                                // server can never reach
+                                writeWindowUpdate(0, f.payload.length);
+                                writeWindowUpdate(streamId, f.payload.length);
+                            }
                             if (f.has(FLAG_END_STREAM)) {
-                                // return the connection-window credit for the
-                                // DATA received: without it the 65535 window
-                                // exhausts after ~64KB of responses and the
-                                // server's writers park forever
-                                if (data.size() > 0) {
-                                    writeWindowUpdate(0, data.size());
-                                }
                                 return new Response(decodeStatus(headers.toByteArray()),
                                     data.toByteArray(), null, goawayReceived);
                             }

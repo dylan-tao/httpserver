@@ -346,7 +346,15 @@ public class HTTP2Connection {
                         // the peer sent beyond the connection flow control window
                         throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "connection flow control window exceeded");
                     }
-                    if (receiveWindow.get() < connectionWindowSize/10) {
+                    // replenish before the remaining window drops below what a
+                    // full-size DATA frame needs: a client that only sends whole
+                    // frames (frame size = our advertised SETTINGS_MAX_FRAME_SIZE,
+                    // a legal implementation choice) otherwise stalls forever when
+                    // the remainder falls between the old 10% threshold and its
+                    // frame size - the client waits for credit, the server waits
+                    // for data. the half-window floor matches the stream-level
+                    // policy (DataIn flushes at initialWindowSize/2)
+                    if (receiveWindow.get() < Math.max(connectionWindowSize / 2, ServerConfig.http2MaxFrameSize())) {
                         sendWindowUpdate();
                     }
                     if (inHeaders) {
