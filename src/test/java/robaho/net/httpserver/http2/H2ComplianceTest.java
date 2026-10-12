@@ -388,6 +388,39 @@ public class H2ComplianceTest {
         }
     }
 
+    /** an h2 upload whose content-length header lies about the body size:
+     *  the END_STREAM mismatch must reset the stream with PROTOCOL_ERROR
+     *  (stream-scoped), never wedge the connection */
+    @Test
+    public void testContentLengthMismatchResetsStream() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            // content-length: 100 but only 50 bytes arrive. END_STREAM rides on
+            // the DATA frame (data after an END_STREAM HEADERS would correctly
+            // get STREAM_CLOSED instead)
+            byte[] block = H2Client.encodeHeaders(
+                ":method", "POST",
+                ":scheme", "http",
+                ":path", "/echo",
+                ":authority", "127.0.0.1",
+                "content-length", "100");
+            int stream = 1;
+            client.writeRawFrame(H2Client.TYPE_HEADERS, H2Client.FLAG_END_HEADERS, stream, block);
+            client.sendData(stream, new byte[50], true);
+
+            var r = client.awaitResponse(stream);
+            Assert.assertFalse(r.goaway(), "mismatch must not GOAWAY");
+            Assert.assertNotNull(r.rstErrorCode(), "mismatch must reset the stream");
+            Assert.assertEquals(r.rstErrorCode().intValue(), 1,
+                "reset code must be PROTOCOL_ERROR, got " + r.rstErrorCode());
+
+            // the connection survives
+            int stream2 = client.sendRequest(3, "GET", "/echo", true);
+            var r2 = client.awaitResponse(stream2);
+            Assert.assertFalse(r2.goaway());
+            Assert.assertEquals(r2.status(), 200);
+        }
+    }
+
     private static void echo(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readAllBytes();
         exchange.getResponseHeaders().set("X-Echo-Len", String.valueOf(body.length));
