@@ -58,8 +58,9 @@ public class HTTP2Stream {
     // set when the peer sent RST_STREAM: no further frames may be sent for this stream
     private volatile boolean rstReceived = false;
     private final AtomicBoolean handlingRequest = new AtomicBoolean(false);
-    /** the thread currently blocked writing (flow control); woken when a
-     * WINDOW_UPDATE arrives so it does not have to spin on a 1ms poll */
+    /** the handler thread currently blocked writing (flow control); woken
+     * when a WINDOW_UPDATE or a SETTINGS window growth arrives so it does
+     * not have to wait out the 50ms safety-net park */
     private volatile Thread writerThread;
 
     /** stream window credit for PADDED octets, accumulated by the reader thread
@@ -112,7 +113,12 @@ public class HTTP2Stream {
     public void debug() {
         logger.log(Level.INFO,connection.toString()+", stream "+streamId+" open "+streamOpen+" half closed "+halfClosed+", streamOutputClosed "+streamOutputClosed+", thread "+thread);
         logger.log(Level.INFO, connection +", stream "+streamId+" data in size "+dataInSize+" expected "+expectedSize());
-        logger.log(Level.INFO, Arrays.toString(thread.getStackTrace()));
+        // thread is assigned inside the executor lambda: a stream reset
+        // before dispatch (or registered-but-not-yet-dispatched) has null
+        // here, and an NPE would abort the whole /debug dump
+        if (thread != null) {
+            logger.log(Level.INFO, Arrays.toString(thread.getStackTrace()));
+        }
     }
 
     public boolean isOpen() {

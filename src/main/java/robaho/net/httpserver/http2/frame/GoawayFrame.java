@@ -42,7 +42,15 @@ public class GoawayFrame extends BaseFrame {
         try {
             var lastSeenStream = Utils.convertToInt(body, 0, 4);
             var errorCode = Utils.convertToInt(body, 4, 4);
-            return new GoawayFrame(frameHeader,HTTP2ErrorCode.getEnum(errorCode),lastSeenStream);
+            var code = HTTP2ErrorCode.getEnum(errorCode);
+            if (code.getValue() != errorCode) {
+                // unknown error code: RFC 7540 7 allows treating it as
+                // INTERNAL_ERROR. the getEnum fallback returns NO_ERROR, which
+                // would turn a future or hostile error code into a graceful
+                // drain instead of a connection teardown
+                code = HTTP2ErrorCode.INTERNAL_ERROR;
+            }
+            return new GoawayFrame(frameHeader, code, lastSeenStream);
         } catch (Exception e) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }

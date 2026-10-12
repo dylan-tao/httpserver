@@ -421,6 +421,36 @@ public class H2ComplianceTest {
         }
     }
 
+    /** a multi-frame HEADERS+CONTINUATION block re-using the id of the most
+     *  recently closed stream must be ignored WITHOUT leaving the header
+     *  block state machine wedged: the completing CONTINUATION breaks out of
+     *  the switch with inHeaders still set, and the closed-stream ignore
+     *  path must reset it or the next stream-level frame GOAWAYs every
+     *  concurrent stream */
+    @Test
+    public void testReusedStreamIdMultiFrameBlockDoesNotWedge() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int stream = client.sendRequest("GET", "/echo", true);
+            var r = client.awaitResponse(stream);
+            Assert.assertFalse(r.goaway());
+            Assert.assertEquals(r.status(), 200);
+
+            // re-use the closed stream's id with a multi-frame block
+            byte[] block = H2Client.encodeHeaders(":method", "GET", ":scheme", "http",
+                ":path", "/echo", ":authority", "127.0.0.1");
+            client.writeRawFrame(H2Client.TYPE_HEADERS, 0, stream,
+                java.util.Arrays.copyOfRange(block, 0, 4));
+            client.writeRawFrame(H2Client.TYPE_CONTINUATION, H2Client.FLAG_END_HEADERS, stream,
+                java.util.Arrays.copyOfRange(block, 4, block.length));
+
+            // the connection must NOT be wedged: a fresh stream is served
+            int stream2 = client.sendRequest("GET", "/echo", true);
+            var r2 = client.awaitResponse(stream2);
+            Assert.assertFalse(r2.goaway(), "reused-id multi-frame block must not wedge the connection");
+            Assert.assertEquals(r2.status(), 200);
+        }
+    }
+
     private static void echo(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readAllBytes();
         exchange.getResponseHeaders().set("X-Echo-Len", String.valueOf(body.length));

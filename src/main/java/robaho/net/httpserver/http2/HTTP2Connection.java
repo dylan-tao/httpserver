@@ -268,6 +268,7 @@ public class HTTP2Connection {
         hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
         headerBlockFragments.clear();
         headerBlockBytes = 0;
+        pendingTrailerEndStream = false;
         if (stream != null) {
             stream.receiveTrailer(endStream);
         }
@@ -553,14 +554,16 @@ public class HTTP2Connection {
                     // frames arriving for a stream we have already closed
                     // (e.g. DATA in flight when the stream was reset) are
                     // ignored (RFC 7540 5.1, closed state). a HEADERS/
-                    // CONTINUATION break with a REUSED stream id lands here
-                    // too: drop any accumulated fragments, or they prepend to
-                    // the next request's header block and corrupt it. this
-                    // branch is only reachable with inHeaders false (mid-block
-                    // frames never break), so the clear is a no-op for the
-                    // in-flight DATA case
+                    // CONTINUATION block with a REUSED stream id also lands
+                    // here: reset BOTH halves of the assembly state - the
+                    // completing CONTINUATION breaks out of the switch with
+                    // inHeaders still set, and leaving it set makes the next
+                    // stream-level frame trip a "during headers receive"
+                    // error that GOAWAYs every concurrent stream
                     headerBlockFragments.clear();
                     headerBlockBytes = 0;
+                    pendingEndStream = false;
+                    inHeaders = false;
                     logger.log(Level.TRACE,() -> "received "+frame.getHeader().type()+" on closed stream "+streamId);
                     continue;
                 }
@@ -602,9 +605,7 @@ public class HTTP2Connection {
             }
             if (parameter.identifier == SettingIdentifier.SETTINGS_MAX_FRAME_SIZE) {
                 // RFC 7540 6.5.2: valid range is 16384..16777215 and an
-                // out-of-range value is a connection error. this also guards
-                // the DATA write loop: a 0 max frame size would compute _len=0
-                // for every write and wedge the writer in the park branch
+                // out-of-range value is a connection error
                 if (parameter.value < 16384 || parameter.value > 16777215) {
                     throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "Invalid value for SETTINGS_MAX_FRAME_SIZE " + parameter.value);
                 }
