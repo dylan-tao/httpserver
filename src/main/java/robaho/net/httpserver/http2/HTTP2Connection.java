@@ -256,16 +256,26 @@ public class HTTP2Connection {
      * dynamic table in sync (a trailer field sent with incremental indexing
      * adds an entry on the client side, and an undecoded block desyncs every
      * later request on this connection - wrong headers or COMPRESSION_ERROR),
-     * then discard its contents */
+     * then discard its contents. the stream is null when it was closed and
+     * unregistered while the block was still in flight: the trailer is then
+     * simply ignored */
     private void completeTrailer(HTTP2Stream stream, boolean endStream) throws HTTP2Exception {
         hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
         headerBlockFragments.clear();
         headerBlockBytes = 0;
-        stream.receiveTrailer(endStream);
+        if (stream != null) {
+            stream.receiveTrailer(endStream);
+        }
     }
 
     private void processFrames() throws Exception {
         boolean inHeaders = false;
+        // true while an incomplete header block belongs to a TRAILER (not a new
+        // stream's request): at completion time the registry lookup cannot
+        // distinguish them - a trailer's stream may have been closed and
+        // unregistered mid-block, and a new stream is not registered until the
+        // dispatch below creates it
+        boolean inTrailerBlock = false;
         int openStreamId = 0;
 
         // main HTTP2
@@ -364,6 +374,7 @@ public class HTTP2Connection {
                                 // completes the block
                                 pendingTrailerEndStream = trailerFrame.getHeader().flags().contains(FrameFlag.END_STREAM);
                                 inHeaders = true;
+                                inTrailerBlock = true;
                                 openStreamId = streamId;
                                 continue;
                             }
@@ -404,21 +415,21 @@ public class HTTP2Connection {
                     if (!continuationFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
                         continue;
                     }
-                    // header block complete: if the stream already exists this block
-                    // is a multi frame trailer (RFC 7540 8.1.2.3) - discard it instead
-                    // of feeding the CONTINUATION into performRequest (which would
-                    // treat it as a duplicate request and kill the connection)
-                    // single lookup: a handler thread may close (and unregister) the
-                    // stream between two gets, and a second get returning null would
-                    // NPE here and take down the whole connection
-                    HTTP2Stream trailerStream = http2Streams.get(streamId);
-                    if (trailerStream != null) {
-                        // a multi frame trailer: complete it (see the single frame
-                        // trailer path above)
+                    if (inTrailerBlock) {
+                        // a multi frame trailer is complete (RFC 7540 8.1.2.3):
+                        // complete it even when the stream was closed and
+                        // unregistered while the block was in flight - the HPACK
+                        // dynamic table is connection-wide and must stay in sync,
+                        // and the assembly state must reset, or inHeaders stays
+                        // wedged and the next HEADERS frame kills the connection
+                        // with GOAWAY (the trailer itself is then ignored)
                         inHeaders = false;
-                        completeTrailer(trailerStream, pendingTrailerEndStream);
+                        inTrailerBlock = false;
+                        completeTrailer(http2Streams.get(streamId), pendingTrailerEndStream);
                         continue;
                     }
+                    // header block of a NEW stream complete: fall through to the
+                    // dispatch below, which creates the stream
                     break;
                 case PRIORITY:
                     if (inHeaders) {
