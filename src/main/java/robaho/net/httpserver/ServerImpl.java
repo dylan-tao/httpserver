@@ -352,7 +352,15 @@ class ServerImpl {
                         try {
                             acceptConnection(s);
                         } catch (IOException t) {
-                            logger.log(Level.WARNING, "unable to accept connection", t);
+                            // socket-level failures during connection setup are
+                            // client-side noise, not server faults: an RST'd
+                            // connection fails setTcpNoDelay with EINVAL on
+                            // macOS ("Invalid argument") and resets during the
+                            // preface peek surface as SocketException too.
+                            // keep them out of the WARNING stream; anything
+                            // else (e.g. SSL handshake problems) stays visible
+                            Level level = t instanceof java.net.SocketException ? Level.DEBUG : Level.WARNING;
+                            logger.log(level, "unable to accept connection", t);
                             try {
                                 s.close();
                             } catch (IOException ex) {
