@@ -268,6 +268,15 @@ public class HTTP2Stream {
         }
     }
 
+    /** wake the handler thread if it is parked waiting for a flow-control
+     * window: called by the connection reader when CONNECTION-level credit
+     * arrives - a writer parked on the connection window (exhausted by other
+     * streams' traffic) never sees its own stream's WINDOW_UPDATE, because
+     * its data cannot be sent and so never generates client credit */
+    void wakeupWriter() {
+        LockSupport.unpark(writerThread);
+    }
+
     private void performRequest() throws IOException, HTTP2Exception {
         if(!handlingRequest.compareAndSet(false, true)) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"already received headers for stream "+streamId);
@@ -377,19 +386,21 @@ public class HTTP2Stream {
             // test outside of lock so other streams can progress. the park is
             // bounded only as a safety net: a WINDOW_UPDATE (or stream close)
             // unparks the writer immediately. writerThread is recorded only
-            // here (before parking): a volatile store on EVERY write() call
-            // was pure overhead. the re-check after recording closes the
+            // when parking: a volatile store on EVERY write() call was pure
+            // overhead. the re-check after recording closes the
             // check-then-record race - a WINDOW_UPDATE landing between the
             // loop condition and the assignment unparks a stale writerThread
-            // and would otherwise cost a full 200ms park despite the open
-            // window
+            // and would otherwise cost a full park despite the open window.
+            // the 50ms bound is pure insurance for unknown races: both park
+            // sites are woken by WINDOW_UPDATE (stream-level unparks this
+            // writer, connection-level unparks every writer)
             while(sendWindow.get()<=0 && !connection.isClosed() && !rstReceived) {
                 writerThread = Thread.currentThread();
                 if (sendWindow.get()>0) {
                     break;
                 }
                 if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
-                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(200));
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
             }
             if (rstReceived) {
                 throw new IOException("stream " + streamId + " was reset by the peer");
@@ -405,9 +416,24 @@ public class HTTP2Stream {
             while(len>0) {
                 int _len = Math.min(Math.min(len,connection.remoteMaxFrameSize()),(int)Math.min(connection.sendWindow.get(),sendWindow.get()));
                 if(_len<=0) {
+                    // record before parking: the pre-loop record only runs
+                    // when the STREAM window is exhausted, but a writer can
+                    // park here on the CONNECTION window (exhausted by other
+                    // streams) with a healthy stream window - without this
+                    // record neither the stream-level nor the connection-level
+                    // WINDOW_UPDATE can find this thread to unpark it
+                    writerThread = Thread.currentThread();
+                    // re-check with AND (the exact negation of the _len<=0
+                    // condition): with OR, a writer whose stream window is
+                    // healthy but whose connection window is exhausted would
+                    // spin hot - continue recomputes _len to 0 and re-enters
+                    // this branch without ever parking
+                    if (connection.sendWindow.get()>0 && sendWindow.get()>0) {
+                        continue;
+                    }
                     if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
                     flushConnection();
-                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(200));
+                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
                     if(connection.isClosed()) {
                         throw new IOException("connection closed");
                     }

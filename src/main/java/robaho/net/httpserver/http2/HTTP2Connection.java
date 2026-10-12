@@ -321,11 +321,21 @@ public class HTTP2Connection {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE frame received during headers receive");
                     }
                     if (streamId == 0) {
-                        int windowSizeIncrement = ((WindowUpdateFrame) frame).getWindowSizeIncrement();
+                        int windowSizeIncrement = ((WindowUpdateFrame)frame).getWindowSizeIncrement();
                         sendWindow.addAndGet(windowSizeIncrement);
                         logger.log(Level.DEBUG, () -> "received connection window update " + windowSizeIncrement + ", new size " + sendWindow.get());
                         if (sendWindow.get() > 2147483647) {
                             throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "maximum window size exceeded");
+                        }
+                        // wake every stream's writer: any of them may be parked
+                        // on the CONNECTION window (exhausted by other streams'
+                        // traffic), and only its own stream-level WINDOW_UPDATE
+                        // would otherwise unpark it - its own credit never
+                        // arrives while its data cannot be sent. spurious
+                        // unparks (stream window still exhausted) are harmless:
+                        // the writer re-checks and re-parks
+                        for (var stream : http2Streams.values()) {
+                            stream.wakeupWriter();
                         }
                         continue;
                     }
