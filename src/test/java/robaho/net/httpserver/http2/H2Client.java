@@ -137,6 +137,13 @@ class H2Client implements AutoCloseable {
                         }
                         break;
                     case TYPE_WINDOW_UPDATE:
+                        // hold back instead of discarding: a connection-level
+                        // WINDOW_UPDATE arriving while awaiting a response is
+                        // real credit for the client's send window. dropping it
+                        // desyncs upload probes that track the window across
+                        // awaitResponse calls - they then wait for an update
+                        // the server (correctly) never re-sends
+                        heldBack.add(f);
                         break;
                     case TYPE_GOAWAY:
                         recordGoaway(f);
