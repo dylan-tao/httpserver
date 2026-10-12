@@ -413,7 +413,7 @@ public class HTTP2Connection {
                     break;
                 case CONTINUATION:
                     if (inHeaders && frame.getHeader().streamIdentifier() != openStreamId) {
-                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received on open stream");
+                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "CONTINUATION frame received on stream " + streamId + " while the open header block belongs to stream " + openStreamId);
                     }
                     if (!inHeaders) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "CONTINUATION frame received on closed stream");
@@ -655,7 +655,9 @@ public class HTTP2Connection {
             throw new EOFException("end of stream detected");
         }
         if (offset < length) {
-            throw new IOException("failed to read the full buffer");
+            // the stream ended mid-frame: an EOF condition, not a generic
+            // read failure - lets callers distinguish truncation cleanly
+            throw new EOFException("connection closed mid-frame (read " + offset + " of " + length + " bytes)");
         }
     }
 }

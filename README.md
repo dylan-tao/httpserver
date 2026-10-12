@@ -194,6 +194,18 @@ Total Handler Exceptions: 0
 | 大文件上传 | 增大 `http2InitialWindowSize`（如 1024000） |
 | CPU 密集 handler | `-Djdk.virtualThreadScheduler.parallelism=<核数>` |
 
+### 客户端流控窗口指引（大响应/多路复用下载）
+
+HTTP/2 连接级发送窗口（服务端→客户端方向）初始为 65535 字节（协议默认），**只能由客户端通过 WINDOW_UPDATE 增长**，服务端无法代为扩大。大响应或多路复用下载场景下，客户端收满 64KB 后服务端写线程会等待窗口信用回流，吞吐受窗口往返次数限制（实测：默认窗口下 640KB 多路复用响应需约 10 次窗口往返）。
+
+自研 h2 客户端若追求高吞吐，建议：
+
+- **连接建立早期主动发送一次大的连接级 WINDOW_UPDATE**（如 1~16MB），浏览器均如此
+- 收到 DATA 后**及时归还信用**（收即还，而非攒到消息结束），避免服务端写线程等待
+- 流级窗口同理，可通过 SETTINGS 帧通告更大的 `INITIAL_WINDOW_SIZE`
+
+服务端侧对应的调优项为 `http2InitialWindowSize`（流级接收窗口，影响上传吞吐）与 `http2ConnectionWindowSize`（连接级接收窗口）。
+
 ## 测试与合规
 
 - 几乎所有 JDK 原有测试均已包含（145 项 TestNG 套件全绿）

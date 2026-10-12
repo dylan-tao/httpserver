@@ -378,9 +378,16 @@ public class HTTP2Stream {
             // bounded only as a safety net: a WINDOW_UPDATE (or stream close)
             // unparks the writer immediately. writerThread is recorded only
             // here (before parking): a volatile store on EVERY write() call
-            // was pure overhead - the 200ms bound tolerates a missed unpark
+            // was pure overhead. the re-check after recording closes the
+            // check-then-record race - a WINDOW_UPDATE landing between the
+            // loop condition and the assignment unparks a stale writerThread
+            // and would otherwise cost a full 200ms park despite the open
+            // window
             while(sendWindow.get()<=0 && !connection.isClosed() && !rstReceived) {
                 writerThread = Thread.currentThread();
+                if (sendWindow.get()>0) {
+                    break;
+                }
                 if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
                 LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(200));
             }
