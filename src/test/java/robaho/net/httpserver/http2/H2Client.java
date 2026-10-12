@@ -170,16 +170,6 @@ class H2Client implements AutoCloseable {
                     case TYPE_DATA:
                         if (f.streamId == streamId) {
                             data.writeBytes(f.payload);
-                            if (f.payload.length > 0) {
-                                // return BOTH windows' credit as response data
-                                // arrives: a response larger than the 64KB
-                                // initial windows otherwise exhausts them and the
-                                // server's writers park forever waiting for credit
-                                // the client only sends at END_STREAM - which the
-                                // server can never reach
-                                writeWindowUpdate(0, f.payload.length);
-                                writeWindowUpdate(streamId, f.payload.length);
-                            }
                             if (f.has(FLAG_END_STREAM)) {
                                 return new Response(decodeStatus(headers.toByteArray()),
                                     data.toByteArray(), null, goawayReceived);
@@ -247,33 +237,44 @@ class H2Client implements AutoCloseable {
      * Blocking read of the next WINDOW_UPDATE (stream-level or connection
      * level), answering SETTINGS / PING keepalives on the way. Returns
      * {@code {streamId, increment}}. Used by upload probes that track both
-     * flow-control windows while sending.
+     * flow-control windows while sending. Response frames for streams that
+     * completed early (multi-stream uploads) are held back and re-queued for
+     * the later awaitResponse - discarding them would lose the response.
      */
     int[] readWindowUpdate() throws IOException {
-        while (true) {
-            Frame f = readFrame();
-            switch (f.type) {
-                case TYPE_SETTINGS:
-                    if (!f.has(FLAG_ACK)) {
-                        writeFrame(TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
-                    }
-                    break;
-                case TYPE_PING:
-                    if (!f.has(FLAG_ACK)) {
-                        writeFrame(TYPE_PING, FLAG_ACK, 0, f.payload);
-                    }
-                    break;
-                case TYPE_WINDOW_UPDATE:
-                    int inc = ((f.payload[0] & 0xFF) << 24) | ((f.payload[1] & 0xFF) << 16)
-                        | ((f.payload[2] & 0xFF) << 8) | (f.payload[3] & 0xFF);
-                    return new int[] { f.streamId, inc };
-                case TYPE_GOAWAY:
-                    recordGoaway(f);
-                    throw new IOException("GOAWAY received: error " + goawayErrorCode);
-                default:
-                    // response frames only appear after the upload completes;
-                    // anything else here is skipped
-                    break;
+        List<Frame> heldBack = new ArrayList<>();
+        try {
+            while (true) {
+                Frame f = readFrame();
+                switch (f.type) {
+                    case TYPE_SETTINGS:
+                        if (!f.has(FLAG_ACK)) {
+                            writeFrame(TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
+                        }
+                        break;
+                    case TYPE_PING:
+                        if (!f.has(FLAG_ACK)) {
+                            writeFrame(TYPE_PING, FLAG_ACK, 0, f.payload);
+                        }
+                        break;
+                    case TYPE_WINDOW_UPDATE:
+                        int inc = ((f.payload[0] & 0xFF) << 24) | ((f.payload[1] & 0xFF) << 16)
+                                | ((f.payload[2] & 0xFF) << 8) | (f.payload[3] & 0xFF);
+                        return new int[] { f.streamId, inc };
+                    case TYPE_GOAWAY:
+                        recordGoaway(f);
+                        throw new IOException("GOAWAY received: error " + goawayErrorCode);
+                    default:
+                        // response frames of streams that already completed:
+                        // hold them back (re-queueing straight into pending
+                        // would make readFrame() re-poll them forever)
+                        heldBack.add(f);
+                        break;
+                }
+            }
+        } finally {
+            for (int i = heldBack.size() - 1; i >= 0; i--) {
+                pending.addFirst(heldBack.get(i));
             }
         }
     }
@@ -350,9 +351,20 @@ class H2Client implements AutoCloseable {
         int type = header[3] & 0xFF;
         int flags = header[4] & 0xFF;
         int streamId = ((header[5] & 0x7F) << 24) | ((header[6] & 0xFF) << 16)
-            | ((header[7] & 0xFF) << 8) | (header[8] & 0xFF);
+                | ((header[7] & 0xFF) << 8) | (header[8] & 0xFF);
         byte[] payload = new byte[length];
         readFully(payload);
+        if (type == TYPE_DATA && payload.length > 0) {
+            // return BOTH windows' credit at wire receipt: the bytes are
+            // consumed from the socket regardless of which stream's
+            // awaitResponse processes the frame later. deferring the credit
+            // until the right await parks every server writer once the
+            // connection send window is exhausted by other streams'
+            // responses. credited HERE only - re-read frames from pending
+            // are already credited, so there is no double return
+            writeWindowUpdate(0, payload.length);
+            writeWindowUpdate(streamId, payload.length);
+        }
         return new Frame(type, flags, streamId, payload);
     }
 
