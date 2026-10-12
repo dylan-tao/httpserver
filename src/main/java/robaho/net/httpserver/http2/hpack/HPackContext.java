@@ -578,9 +578,4 @@ class RFC7541Parser {
         }
         return STATIC_HEADER_TABLE[index];
     }
-
-    public static String getHeaderFieldName(int index) {
-        var field = getHeaderField(index);
-        return field == null ? null : field.getName();
-    }
 }

@@ -188,6 +188,12 @@ class Request {
             int end=count;
             while(end>0 && buffer[end-1]==' ') end--;
             count=0;
+            // an all-spaces line is reachable on the REQUEST line (the
+            // skip-empty-lines loop checks raw emptiness): without the clamp
+            // end-start goes negative and String construction throws
+            if (end < start) {
+                end = start;
+            }
             return new String(buffer,start,end-start,StandardCharsets.ISO_8859_1);
         }
     }

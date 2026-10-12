@@ -175,4 +175,22 @@ public class Http1RegressionTest {
         }
         return new String(buffer, StandardCharsets.UTF_8);
     }
+
+    /** an all-spaces first line must not crash the exchange: the request-line
+     *  skip-empty-lines loop breaks on raw non-emptiness, and trimmed() on an
+     *  all-spaces builder computed a negative length (StringIndexOutOfBounds
+     *  instead of a clean close) */
+    @Test
+    public void testAllSpacesRequestLine() throws Exception {
+        server.start();
+        try (Socket socket = new Socket("127.0.0.1", server.getAddress().getPort())) {
+            socket.setSoTimeout(8000);
+            socket.getOutputStream().write("   \r\n".getBytes(StandardCharsets.ISO_8859_1));
+            socket.getOutputStream().flush();
+            // the line trims to an empty request line: the server closes the
+            // connection cleanly (EOF, no response, no unhandled exception)
+            int n = socket.getInputStream().read();
+            Assert.assertEquals(n, -1, "connection must close cleanly on an all-spaces request line");
+        }
+    }
 }
