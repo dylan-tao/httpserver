@@ -510,7 +510,15 @@ public class HTTP2Connection {
                 if (streamId <= lastSeenStreamId) {
                     // frames arriving for a stream we have already closed
                     // (e.g. DATA in flight when the stream was reset) are
-                    // ignored (RFC 7540 5.1, closed state)
+                    // ignored (RFC 7540 5.1, closed state). a HEADERS/
+                    // CONTINUATION break with a REUSED stream id lands here
+                    // too: drop any accumulated fragments, or they prepend to
+                    // the next request's header block and corrupt it. this
+                    // branch is only reachable with inHeaders false (mid-block
+                    // frames never break), so the clear is a no-op for the
+                    // in-flight DATA case
+                    headerBlockFragments.clear();
+                    headerBlockBytes = 0;
                     logger.log(Level.TRACE,() -> "received "+frame.getHeader().type()+" on closed stream "+streamId);
                     continue;
                 }
