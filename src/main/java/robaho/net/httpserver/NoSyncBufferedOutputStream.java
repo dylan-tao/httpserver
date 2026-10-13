@@ -139,4 +139,18 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
         flushBuffer();
         out.flush();
     }
+
+    /**
+     * Close: move any buffered bytes into the underlying stream WITHOUT
+     * flushing it - the underlying close performs the final flush.
+     * FilterOutputStream's close would flush() first, which for the h2
+     * stream buffer propagates through Http2OutputStream.flush() to a
+     * connection socket flush and splits every response into two writes
+     * (HEADERS+DATA, then END_STREAM) - one extra syscall per response.
+     */
+    @Override
+    public void close() throws IOException {
+        flushBuffer();
+        out.close();
+    }
 }
