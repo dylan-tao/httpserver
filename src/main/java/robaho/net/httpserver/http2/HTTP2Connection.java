@@ -80,6 +80,15 @@ public class HTTP2Connection {
      * connection lock (both call sites in Http2OutputStream hold it) */
     final byte[] frameHeaderScratch = new byte[9];
 
+    /** count of writer threads parked in the in-loop flow-control park (the
+     * connection-window park site). lets the connection-level WINDOW_UPDATE
+     * handler skip the O(registered streams) wake-all loop when no writer
+     * needs it: at high throughput with per-frame client credit the
+     * unconditional loop issued tens of thousands of no-op unparks per
+     * second, and each spurious wake of a parked writer costs a full
+     * wake/re-check/re-park cycle */
+    final java.util.concurrent.atomic.AtomicInteger parkedWriters = new java.util.concurrent.atomic.AtomicInteger();
+
     /** reusable 16KB stream output buffers: sequential streams on a connection
      * share a small pool instead of allocating 16KB per stream (at high h2 RPS
      * that allocation dominates young-gen churn). bounded so a connection with
@@ -351,15 +360,22 @@ public class HTTP2Connection {
                         if (sendWindow.get() > 2147483647) {
                             throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "maximum window size exceeded");
                         }
-                        // wake every stream's writer: any of them may be parked
-                        // on the CONNECTION window (exhausted by other streams'
-                        // traffic), and only its own stream-level WINDOW_UPDATE
+                        // wake every stream's writer when any is parked on the
+                        // CONNECTION window (exhausted by other streams'
+                        // traffic): only its own stream-level WINDOW_UPDATE
                         // would otherwise unpark it - its own credit never
                         // arrives while its data cannot be sent. spurious
-                        // unparks (stream window still exhausted) are harmless:
-                        // the writer re-checks and re-parks
-                        for (var stream : http2Streams.values()) {
-                            stream.wakeupWriter();
+                        // unparks (stream window still exhausted) are
+                        // harmless: the writer re-checks and re-parks. the
+                        // parkedWriters gate skips the O(streams) loop when
+                        // nobody is parked (writers count themselves BEFORE
+                        // the re-check, so a WINDOW_UPDATE processed after
+                        // the count sees it, and one processed before it is
+                        // caught by the re-check - no wakeup is lost)
+                        if (parkedWriters.get() > 0) {
+                            for (var stream : http2Streams.values()) {
+                                stream.wakeupWriter();
+                            }
                         }
                         continue;
                     }

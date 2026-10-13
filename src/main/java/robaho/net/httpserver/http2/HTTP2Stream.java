@@ -433,19 +433,31 @@ public class HTTP2Stream {
                     // record neither the stream-level nor the connection-level
                     // WINDOW_UPDATE can find this thread to unpark it
                     writerThread = Thread.currentThread();
-                    // re-check with AND (the exact negation of the _len<=0
-                    // condition): with OR, a writer whose stream window is
-                    // healthy but whose connection window is exhausted would
-                    // spin hot - continue recomputes _len to 0 and re-enters
-                    // this branch without ever parking
-                    if (connection.sendWindow.get()>0 && sendWindow.get()>0) {
-                        continue;
-                    }
-                    if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
-                    flushConnection();
-                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
-                    if(connection.isClosed()) {
-                        throw new IOException("connection closed");
+                    // counted BEFORE the re-check: a connection WINDOW_UPDATE
+                    // processed after this point sees the count and wakes this
+                    // writer; one processed before it is caught by the
+                    // re-check. the count gates the connection WU handler's
+                    // wake-all loop
+                    connection.parkedWriters.incrementAndGet();
+                    try {
+                        // re-check with AND (the exact negation of the _len<=0
+                        // condition): with OR, a writer whose stream window is
+                        // healthy but whose connection window is exhausted would
+                        // spin hot - continue recomputes _len to 0 and re-enters
+                        // this branch without ever parking
+                        if (connection.sendWindow.get()>0 && sendWindow.get()>0) {
+                            // credit landed between the _len computation and the
+                            // record: retry immediately instead of parking
+                            continue;
+                        }
+                        if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
+                        flushConnection();
+                        LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
+                        if(connection.isClosed()) {
+                            throw new IOException("connection closed");
+                        }
+                    } finally {
+                        connection.parkedWriters.decrementAndGet();
                     }
                     continue;
                 }
