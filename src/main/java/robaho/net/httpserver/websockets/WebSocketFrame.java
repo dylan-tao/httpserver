@@ -49,19 +49,25 @@ public class WebSocketFrame {
 
     public static final Charset TEXT_CHARSET = StandardCharsets.UTF_8;
 
+    /** one strict decoder per thread: CharsetDecoder is stateful and not
+     * thread-safe, and allocating one per text frame was pure overhead.
+     * reset() restores the decode state while keeping the REPORT actions */
+    private static final ThreadLocal<java.nio.charset.CharsetDecoder> TEXT_DECODER = ThreadLocal.withInitial(() ->
+            TEXT_CHARSET.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT));
+
     public static String binary2Text(byte[] payload) throws CharacterCodingException {
         return binary2Text(payload, 0, payload.length);
     }
 
     public static String binary2Text(byte[] payload, int offset, int length) throws CharacterCodingException {
         // String(byte[], UTF_8) silently replaces malformed sequences with
-        // U+FFFD and never throws - use a strict decoder so invalid UTF-8
-        // text payloads are rejected with 1007 (RFC 6455 8.1)
-        return TEXT_CHARSET.newDecoder()
-                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                .decode(java.nio.ByteBuffer.wrap(payload, offset, length))
-                .toString();
+        // U+FFFD and never throws - a strict decoder rejects invalid UTF-8
+        // text payloads with 1007 (RFC 6455 8.1)
+        java.nio.charset.CharsetDecoder decoder = TEXT_DECODER.get();
+        decoder.reset();
+        return decoder.decode(java.nio.ByteBuffer.wrap(payload, offset, length)).toString();
     }
 
     private static int checkedRead(int read) throws IOException {

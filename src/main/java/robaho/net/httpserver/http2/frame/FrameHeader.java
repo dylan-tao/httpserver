@@ -30,13 +30,15 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 	}
 
 	/**
-	 * Parse the 9 bytes frame header to determine length, type, flags and the stream identifier
+	 * Parse the 9 bytes frame header to determine length, type, flags and the
+	 * stream identifier. frame length validation against the advertised
+	 * max frame size happens in FrameSerializer.deserialize; stream id
+	 * ordering in HTTP2Connection.processFrames
 	 *
 	 * @param tmpBuffer 9 bytes frame header
 	 * @return
 	 * @throws Exception
 	 */
-	// TODO validate the frame size, frame number, and number of frames in session based on the SETTINGS frame
 	public static FrameHeader Parse(byte[] tmpBuffer) throws Exception {
 		FrameHeader frameHeader = null;
 
@@ -104,7 +106,10 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
         return buffer;
     }
 
-    private static void encodeInto(byte[] buffer, int length, FrameType frameType, FlagSet flags, int streamId) {
+    /** encode a frame header into an existing buffer (at least 9 bytes):
+     * avoids the 9-byte allocation of encode() when the caller already has
+     * the target array (HPACK frame assembly, the locked DATA write path) */
+    public static void encodeInto(byte[] buffer, int length, FrameType frameType, FlagSet flags, int streamId) {
         Utils.convertToBinary(buffer, 0, length, 3);
         buffer[3] = (byte) (frameType.value & 0xFF);
         buffer[4] = flags.value();

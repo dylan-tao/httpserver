@@ -281,7 +281,9 @@ public class HPackContext {
      * connection scale with cores
      */
     public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream, int maxFrameSize) throws IOException {
-        ByteArrayOutputStream fields = new ByteArrayOutputStream(256); // average http headers length is 800 bytes
+        // sized from the header count: the old fixed 256 started ~2 growth
+        // copies behind for a typical response (average block ~800 bytes)
+        ByteArrayOutputStream fields = new ByteArrayOutputStream(Math.max(256, headers.size() * 64 + 64));
 
         // ':status' is required and the only allowed outbound pseudo headers
         String status = headers.getFirst(":status");
@@ -339,7 +341,7 @@ public class HPackContext {
                 flags = last ? END_OF_HEADERS : FrameFlag.NONE;
             }
             byte[] frame = new byte[9 + len];
-            System.arraycopy(FrameHeader.encode(len, off == 0 ? FrameType.HEADERS : FrameType.CONTINUATION, flags, streamId), 0, frame, 0, 9);
+            FrameHeader.encodeInto(frame, len, off == 0 ? FrameType.HEADERS : FrameType.CONTINUATION, flags, streamId);
             System.arraycopy(block, off, frame, 9, len);
             frames.add(frame);
             off += len;

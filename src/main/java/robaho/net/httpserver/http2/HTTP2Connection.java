@@ -75,6 +75,11 @@ public class HTTP2Connection {
      * keeps serving in-flight streams and refuses newer ones */
     private volatile int clientGoawayStreamId = -1;
 
+    /** scratch for DATA frame headers on the send path: reused per frame
+     * instead of allocating 9 bytes each. used ONLY while holding the
+     * connection lock (both call sites in Http2OutputStream hold it) */
+    final byte[] frameHeaderScratch = new byte[9];
+
     /** reusable 16KB stream output buffers: sequential streams on a connection
      * share a small pool instead of allocating 16KB per stream (at high h2 RPS
      * that allocation dominates young-gen churn). bounded so a connection with
@@ -287,9 +292,12 @@ public class HTTP2Connection {
         // main HTTP2
         while (!httpConnection.isClosed()) {
             BaseFrame frame = FrameSerializer.deserialize(inputStream);
-            // System.out.println("Received frame: " + frame.getHeader());
 
             int streamId = frame.getHeader().streamIdentifier();
+            // box once per frame: every registry get/put below autoboxes the
+            // id, and stream ids grow past the Integer cache within the first
+            // 64 requests on a connection
+            Integer boxedStreamId = streamId;
             if (streamId != 0 && streamId % 2 == 0) {
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "invalid stream id " + streamId + " on type " + frame.getHeader().type());
             }
@@ -337,7 +345,9 @@ public class HTTP2Connection {
                     if (streamId == 0) {
                         int windowSizeIncrement = ((WindowUpdateFrame)frame).getWindowSizeIncrement();
                         sendWindow.addAndGet(windowSizeIncrement);
-                        logger.log(Level.DEBUG, () -> "received connection window update " + windowSizeIncrement + ", new size " + sendWindow.get());
+                        if(logger.isLoggable(Level.DEBUG)) {
+                            logger.log(Level.DEBUG, () -> "received connection window update " + windowSizeIncrement + ", new size " + sendWindow.get());
+                        }
                         if (sendWindow.get() > 2147483647) {
                             throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "maximum window size exceeded");
                         }
@@ -393,7 +403,7 @@ public class HTTP2Connection {
                     // interleaved (older, still open) stream is legal and must not
                     // be rejected by the out-of-order guard below, which would
                     // kill every concurrent stream with a GOAWAY
-                    var stream = http2Streams.get(streamId);
+                    var stream = http2Streams.get(boxedStreamId);
                     if (stream != null) {
                         if (stream.isOpen() && !stream.isHalfClosed()) {
                             // HEADERS following DATA on an open stream is a trailer
@@ -457,7 +467,7 @@ public class HTTP2Connection {
                         // with GOAWAY (the trailer itself is then ignored)
                         inHeaders = false;
                         inTrailerBlock = false;
-                        completeTrailer(http2Streams.get(streamId), pendingTrailerEndStream);
+                        completeTrailer(http2Streams.get(boxedStreamId), pendingTrailerEndStream);
                         continue;
                     }
                     // header block of a NEW stream complete: fall through to the
@@ -480,7 +490,7 @@ public class HTTP2Connection {
                     if (streamId == 0) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame received on stream 0");
                     }
-                    if (http2Streams.get(streamId) == null) {
+                    if (http2Streams.get(boxedStreamId) == null) {
                         if (streamId <= lastSeenStreamId) {
                             continue;
                         }
@@ -498,7 +508,7 @@ public class HTTP2Connection {
             }
 
             // we can only get here if we have a complete set of headers
-            HTTP2Stream targetStream = http2Streams.get(streamId);
+            HTTP2Stream targetStream = http2Streams.get(boxedStreamId);
 
             if (targetStream != null) {
                 // found existing stream
@@ -547,7 +557,7 @@ public class HTTP2Connection {
                 headerBlockBytes = 0;
                 inHeaders = false;
                 targetStream = new HTTP2Stream(streamId, this, requestHeaders, handler);
-                http2Streams.put(streamId, targetStream);
+                http2Streams.put(boxedStreamId, targetStream);
                 lastSeenStreamId = streamId;
             } else {
                 if (streamId <= lastSeenStreamId) {
@@ -586,12 +596,12 @@ public class HTTP2Connection {
         logger.log(Level.TRACE, () -> "updating remote settings");
 
         for (SettingParameter parameter : remoteSettingFrame.getSettingParameters()) {
-            long oldInitialWindowSize = remoteSettings.getOrDefault(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE, SettingParameter.DEFAULT_INITIAL_WINDOWSIZE).value;
             if (parameter.identifier == SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE) {
                 if (parameter.value > 2147483647) {
                     throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "Invalid value for SETTINGS_INITIAL_WINDOW_SIZE " + parameter.value);
                 }
                 logger.log(Level.DEBUG, () -> "received initial window size of " + parameter.value);
+                long oldInitialWindowSize = remoteSettings.getOrDefault(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE, SettingParameter.DEFAULT_INITIAL_WINDOWSIZE).value;
                 long delta = parameter.value - oldInitialWindowSize;
                 for (var stream : http2Streams.values()) {
                     stream.sendWindow.addAndGet(delta);
@@ -644,7 +654,9 @@ public class HTTP2Connection {
             WindowUpdateFrame frame = new WindowUpdateFrame(0, increment);
             HTTP2Connection.this.writeFrame(frame.encode());
         } finally {
-            logger.log(Level.DEBUG, () -> "sent connection window update, previous "+current+", now "+ receiveWindow.get());
+            if(logger.isLoggable(Level.DEBUG)) {
+                logger.log(Level.DEBUG, () -> "sent connection window update, previous "+current+", now "+ receiveWindow.get());
+            }
         }
     }
 

@@ -215,7 +215,9 @@ public class HTTP2Stream {
             break;
         case DATA:
             DataFrame dataFrame = (DataFrame) frame;
-            logger.log(Level.TRACE,()->"received data frame, length "+dataFrame.body.length+" on stream "+streamId);
+            if(logger.isLoggable(Level.TRACE)) {
+                logger.log(Level.TRACE,()->"received data frame, length "+dataFrame.body.length+" on stream "+streamId);
+            }
             if(halfClosed) {
                 connection.sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
                 return;
@@ -267,7 +269,9 @@ public class HTTP2Stream {
             }
             // wake a writer blocked on the send window immediately
             LockSupport.unpark(writerThread);
-            logger.log(Level.DEBUG, () -> "received window update " + windowSizeIncrement + ", new size " + sendWindow.get() + ", on stream " + streamId);
+            if(logger.isLoggable(Level.DEBUG)) {
+                logger.log(Level.DEBUG, () -> "received window update " + windowSizeIncrement + ", new size " + sendWindow.get() + ", on stream " + streamId);
+            }
             break;
         default:
             break;
@@ -452,7 +456,10 @@ public class HTTP2Stream {
                 }
                 connection.lock();
                 try {
-                    FrameHeader.writeTo(connection.outputStream, _len, FrameType.DATA, FrameFlag.NONE, streamId);
+                    // header through the per-connection scratch (lock-held):
+                    // one 9-byte allocation per DATA frame saved
+                    FrameHeader.encodeInto(connection.frameHeaderScratch, _len, FrameType.DATA, FrameFlag.NONE, streamId);
+                    connection.outputStream.write(connection.frameHeaderScratch, 0, 9);
                     connection.outputStream.write(b,off,_len);
                     if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     if (ServerConfig.http2DisableFlushDelay()) {
@@ -465,7 +472,9 @@ public class HTTP2Stream {
                 off+=_len;
                 len-=_len;
                 sendWindow.addAndGet(-_len);
-                logger.log(Level.TRACE,() -> "sent data frame, length "+_len+", new send window "+sendWindow.get()+" on stream "+streamId);
+                if(logger.isLoggable(Level.TRACE)) {
+                    logger.log(Level.TRACE,() -> "sent data frame, length "+_len+", new send window "+sendWindow.get()+" on stream "+streamId);
+                }
             }
         }
         @Override
@@ -503,7 +512,8 @@ public class HTTP2Stream {
                 boolean lastRequest = connection.requestsInProgress.decrementAndGet() == 0;
                 try {
                     if(!streamOutputClosed) {
-                        FrameHeader.writeTo(connection.outputStream, 0, FrameType.DATA, END_STREAM, streamId);
+                        FrameHeader.encodeInto(connection.frameHeaderScratch, 0, FrameType.DATA, END_STREAM, streamId);
+                        connection.outputStream.write(connection.frameHeaderScratch, 0, 9);
                         if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     }
                     if(lastRequest) {

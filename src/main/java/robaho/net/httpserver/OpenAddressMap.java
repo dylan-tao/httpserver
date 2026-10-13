@@ -104,7 +104,6 @@ public class OpenAddressMap<K,V> {
     public V get(K key) {
         int index = hash(key.hashCode()) & mask;
         int start = index;
-        // int count=0;
         Entry entry;
         while ((entry = entries[index]) != null) {
             if (entry.key.equals(key)) {
