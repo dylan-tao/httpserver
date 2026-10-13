@@ -9,13 +9,18 @@ import robaho.net.httpserver.http2.HTTP2Exception;
 
 public class FrameSerializer {
 
-	public static BaseFrame deserialize(InputStream inputStream) throws Exception {
+	/**
+	 * Deserialize one frame from the stream. {@code headerScratch} is a
+	 * caller-owned reusable 9-byte buffer: the reader thread calls this per
+	 * frame, and the per-frame allocation was pure churn. the FrameHeader
+	 * record itself is NOT reusable - every frame object retains its header.
+	 */
+	public static BaseFrame deserialize(InputStream inputStream, byte[] headerScratch) throws Exception {
 
 		BaseFrame baseFrame;
 
-		byte[] tmpBuffer = new byte[9];
-        HTTP2Connection.readFully(inputStream, tmpBuffer);
-		FrameHeader frameHeader = FrameHeader.Parse(tmpBuffer);
+        HTTP2Connection.readFully(inputStream, headerScratch);
+		FrameHeader frameHeader = FrameHeader.Parse(headerScratch);
 
         if(frameHeader.length() > ServerConfig.http2MaxFrameSize()) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);

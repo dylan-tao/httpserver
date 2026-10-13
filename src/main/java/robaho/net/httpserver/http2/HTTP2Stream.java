@@ -268,7 +268,7 @@ public class HTTP2Stream {
                 close();
             }
             // wake a writer blocked on the send window immediately
-            LockSupport.unpark(writerThread);
+            wakeupWriter();
             if(logger.isLoggable(Level.DEBUG)) {
                 logger.log(Level.DEBUG, () -> "received window update " + windowSizeIncrement + ", new size " + sendWindow.get() + ", on stream " + streamId);
             }
@@ -279,10 +279,11 @@ public class HTTP2Stream {
     }
 
     /** wake the handler thread if it is parked waiting for a flow-control
-     * window: called by the connection reader when CONNECTION-level credit
-     * arrives - a writer parked on the connection window (exhausted by other
-     * streams' traffic) never sees its own stream's WINDOW_UPDATE, because
-     * its data cannot be sent and so never generates client credit */
+     * window. three callers: this stream's own WINDOW_UPDATE (processFrame),
+     * connection-level WINDOW_UPDATE credit (a writer parked on the
+     * connection window never sees its own stream's update, because its data
+     * cannot be sent and so never generates client credit), and a
+     * SETTINGS_INITIAL_WINDOW_SIZE growth */
     void wakeupWriter() {
         LockSupport.unpark(writerThread);
     }
@@ -635,8 +636,12 @@ public class HTTP2Stream {
                     // the stream window is debited on frame receipt (processFrame);
                     // re-open it as the handler consumes the queued data. the
                     // padding credit (folded here) keeps padded uploads from
-                    // permanently leaking the window
-                    long padding = pendingPadding.getAndSet(0);
+                    // permanently leaking the window. plain read first: most
+                    // reads carry no padding and the getAndSet RMW is skipped
+                    long padding = pendingPadding.get();
+                    if (padding != 0) {
+                        padding = pendingPadding.getAndSet(0);
+                    }
                     long credited = read + padding;
                     receiveWindow.addAndGet(credited);
                     pendingWindowUpdate += credited;

@@ -107,6 +107,44 @@ class H2Client implements AutoCloseable {
      * pings keep resetting the socket read timeout, so a socket timeout alone
      * would never fire.
      */
+    /** answer the server's 1s idle keepalives: a non-ACK SETTINGS gets an
+     * ACK, a non-ACK PING gets a PONG with the same payload */
+    private void answerKeepalive(Frame f) throws IOException {
+        if (f.has(FLAG_ACK)) {
+            return;
+        }
+        if (f.type == TYPE_SETTINGS) {
+            writeFrame(TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
+        } else if (f.type == TYPE_PING) {
+            writeFrame(TYPE_PING, FLAG_ACK, 0, f.payload);
+        }
+    }
+
+    /** re-queue held-back frames, preserving arrival order (adding straight
+     * into pending would make readFrame() re-poll them forever) */
+    private void requeueHeldBack(List<Frame> heldBack) {
+        for (int i = heldBack.size() - 1; i >= 0; i--) {
+            pending.addFirst(heldBack.get(i));
+        }
+    }
+
+    /** 32-bit big-endian decode with a length guard: a truncated
+     * RST_STREAM/WINDOW_UPDATE payload fails with a diagnosable message
+     * instead of an ArrayIndexOutOfBoundsException */
+    private static int readInt32(byte[] b, int off) throws IOException {
+        if (b.length < off + 4) {
+            throw new IOException("truncated 32-bit field (len=" + b.length + ", off=" + off + ")");
+        }
+        return ((b[off] & 0xFF) << 24) | ((b[off + 1] & 0xFF) << 16) | ((b[off + 2] & 0xFF) << 8) | (b[off + 3] & 0xFF);
+    }
+
+    private static void writeInt32(byte[] b, int off, int value) {
+        b[off] = (byte) (value >>> 24);
+        b[off + 1] = (byte) (value >>> 16);
+        b[off + 2] = (byte) (value >>> 8);
+        b[off + 3] = (byte) value;
+    }
+
     Response awaitResponse(int streamId, long timeoutMillis) throws IOException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         ByteArrayOutputStream headers = new ByteArrayOutputStream();
@@ -127,14 +165,8 @@ class H2Client implements AutoCloseable {
                 }
                 switch (f.type) {
                     case TYPE_SETTINGS:
-                        if (!f.has(FLAG_ACK)) {
-                            writeFrame(TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
-                        }
-                        break;
                     case TYPE_PING:
-                        if (!f.has(FLAG_ACK)) {
-                            writeFrame(TYPE_PING, FLAG_ACK, 0, f.payload);
-                        }
+                        answerKeepalive(f);
                         break;
                     case TYPE_WINDOW_UPDATE:
                         // hold back instead of discarding: a connection-level
@@ -150,9 +182,7 @@ class H2Client implements AutoCloseable {
                         return new Response(-1, data.toByteArray(), null, true);
                     case TYPE_RST_STREAM:
                         if (f.streamId == streamId) {
-                            int code = ((f.payload[0] & 0xFF) << 24) | ((f.payload[1] & 0xFF) << 16)
-                                | ((f.payload[2] & 0xFF) << 8) | (f.payload[3] & 0xFF);
-                            return new Response(-1, data.toByteArray(), code, goawayReceived);
+                            return new Response(-1, data.toByteArray(), readInt32(f.payload, 0), goawayReceived);
                         }
                         heldBack.add(f);
                         break;
@@ -190,10 +220,7 @@ class H2Client implements AutoCloseable {
                 }
             }
         } finally {
-            // re-queue other streams' frames, preserving arrival order
-            for (int i = heldBack.size() - 1; i >= 0; i--) {
-                pending.addFirst(heldBack.get(i));
-            }
+            requeueHeldBack(heldBack);
         }
     }
 
@@ -228,10 +255,7 @@ class H2Client implements AutoCloseable {
 
     void sendRstStream(int streamId, int errorCode) throws IOException {
         byte[] payload = new byte[4];
-        payload[0] = (byte) (errorCode >>> 24);
-        payload[1] = (byte) (errorCode >>> 16);
-        payload[2] = (byte) (errorCode >>> 8);
-        payload[3] = (byte) errorCode;
+        writeInt32(payload, 0, errorCode);
         writeFrame(TYPE_RST_STREAM, 0, streamId, payload);
     }
 
@@ -255,19 +279,11 @@ class H2Client implements AutoCloseable {
                 Frame f = readFrame();
                 switch (f.type) {
                     case TYPE_SETTINGS:
-                        if (!f.has(FLAG_ACK)) {
-                            writeFrame(TYPE_SETTINGS, FLAG_ACK, 0, new byte[0]);
-                        }
-                        break;
                     case TYPE_PING:
-                        if (!f.has(FLAG_ACK)) {
-                            writeFrame(TYPE_PING, FLAG_ACK, 0, f.payload);
-                        }
+                        answerKeepalive(f);
                         break;
                     case TYPE_WINDOW_UPDATE:
-                        int inc = ((f.payload[0] & 0xFF) << 24) | ((f.payload[1] & 0xFF) << 16)
-                                | ((f.payload[2] & 0xFF) << 8) | (f.payload[3] & 0xFF);
-                        return new int[] { f.streamId, inc };
+                        return new int[] { f.streamId, readInt32(f.payload, 0) };
                     case TYPE_GOAWAY:
                         recordGoaway(f);
                         throw new IOException("GOAWAY received: error " + goawayErrorCode);
@@ -280,9 +296,7 @@ class H2Client implements AutoCloseable {
                 }
             }
         } finally {
-            for (int i = heldBack.size() - 1; i >= 0; i--) {
-                pending.addFirst(heldBack.get(i));
-            }
+            requeueHeldBack(heldBack);
         }
     }
 
@@ -342,8 +356,11 @@ class H2Client implements AutoCloseable {
     private void recordGoaway(Frame f) {
         goawayReceived = true;
         if (f.payload.length >= 8) {
-            goawayErrorCode = ((f.payload[4] & 0xFF) << 24) | ((f.payload[5] & 0xFF) << 16)
-                | ((f.payload[6] & 0xFF) << 8) | (f.payload[7] & 0xFF);
+            try {
+                goawayErrorCode = readInt32(f.payload, 4);
+            } catch (IOException e) {
+                goawayErrorCode = -1;
+            }
         }
     }
 
@@ -357,8 +374,8 @@ class H2Client implements AutoCloseable {
         int length = ((header[0] & 0xFF) << 16) | ((header[1] & 0xFF) << 8) | (header[2] & 0xFF);
         int type = header[3] & 0xFF;
         int flags = header[4] & 0xFF;
-        int streamId = ((header[5] & 0x7F) << 24) | ((header[6] & 0xFF) << 16)
-                | ((header[7] & 0xFF) << 8) | (header[8] & 0xFF);
+        // the top bit of the stream id is reserved: mask it off the 32-bit read
+        int streamId = (readInt32(header, 5) & 0x7FFFFFFF);
         byte[] payload = new byte[length];
         readFully(payload);
         if (type == TYPE_DATA && payload.length > 0) {
@@ -378,10 +395,7 @@ class H2Client implements AutoCloseable {
     /** send a WINDOW_UPDATE frame returning flow control credit */
     void writeWindowUpdate(int streamId, int increment) throws IOException {
         byte[] payload = new byte[4];
-        payload[0] = (byte) (increment >>> 24);
-        payload[1] = (byte) (increment >>> 16);
-        payload[2] = (byte) (increment >>> 8);
-        payload[3] = (byte) increment;
+        writeInt32(payload, 0, increment);
         writeFrame(TYPE_WINDOW_UPDATE, 0, streamId, payload);
     }
 

@@ -107,10 +107,18 @@ public class HTTP2Connection {
     }
 
     void offerStreamBuffer(byte[] buffer) {
-        if (buffer != null && buffer.length > 0
-                && pooledBufferCount.incrementAndGet() <= MAX_POOLED_STREAM_BUFFERS) {
+        if (buffer == null || buffer.length == 0) {
+            return;
+        }
+        // fast path: a plain read avoids the increment/decrement round trip
+        // for the common pool-full case; the increment-then-check below stays
+        // authoritative under concurrent offers
+        if (pooledBufferCount.get() >= MAX_POOLED_STREAM_BUFFERS) {
+            return;
+        }
+        if (pooledBufferCount.incrementAndGet() <= MAX_POOLED_STREAM_BUFFERS) {
             streamBufferPool.offer(buffer);
-        } else if (buffer != null) {
+        } else {
             pooledBufferCount.decrementAndGet();
         }
     }
@@ -299,8 +307,11 @@ public class HTTP2Connection {
         int openStreamId = 0;
 
         // main HTTP2
+        // per-frame header scratch: the reader thread is the sole deserialize
+        // caller, so the 9-byte buffer is reused across frames
+        byte[] headerScratch = new byte[9];
         while (!httpConnection.isClosed()) {
-            BaseFrame frame = FrameSerializer.deserialize(inputStream);
+            BaseFrame frame = FrameSerializer.deserialize(inputStream, headerScratch);
 
             int streamId = frame.getHeader().streamIdentifier();
             // box once per frame: every registry get/put below autoboxes the
