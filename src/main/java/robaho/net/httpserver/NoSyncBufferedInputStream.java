@@ -109,6 +109,68 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
             count = n;
     }
 
+    /** reusable line buffer for {@link #readLine}: grown on demand. shrunk at
+     * the start of each read when a previous long line grew it past 8KB, so
+     * one huge line does not pin that memory for the connection's lifetime */
+    private byte[] lineBuf;
+
+    /**
+     * Bulk line read for the request/header parsers: consumes bytes up to and
+     * including the next LF, copying them into a reusable internal buffer -
+     * one scan and one arraycopy per line instead of a per-byte read chain.
+     * Returns the line length (excluding the LF), or -1 at EOF (partial line
+     * content at EOF is discarded, matching the old per-byte readers which
+     * cleared their builder). CR bytes are copied verbatim: the request-line
+     * and header parsers apply different CR rules. Throws IOException when
+     * the line exceeds {@code maxLen}.
+     */
+    int readLine(int maxLen) throws IOException {
+        if (lineBuf == null) {
+            lineBuf = new byte[256];
+        } else if (lineBuf.length > 8192) {
+            lineBuf = new byte[8192];
+        }
+        int lineLen = 0;
+        while (true) {
+            byte[] b = getBufIfOpen();
+            int lf = -1;
+            for (int i = pos; i < count; i++) {
+                if (b[i] == '\n') {
+                    lf = i;
+                    break;
+                }
+            }
+            int chunkEnd = lf >= 0 ? lf : count;
+            int avail = chunkEnd - pos;
+            if (avail > 0) {
+                if (lineLen + avail > maxLen) {
+                    throw new IOException("line too long (limit " + maxLen + " bytes)");
+                }
+                if (lineBuf.length < lineLen + avail) {
+                    lineBuf = java.util.Arrays.copyOf(lineBuf, Math.max(lineBuf.length * 2, lineLen + avail));
+                }
+                System.arraycopy(b, pos, lineBuf, lineLen, avail);
+                lineLen += avail;
+                pos = chunkEnd;
+            }
+            if (lf >= 0) {
+                pos = lf + 1;
+                return lineLen;
+            }
+            // no LF buffered: refill and keep scanning
+            fill();
+            if (count <= 0) {
+                return -1;
+            }
+        }
+    }
+
+    /** the buffer holding the last readLine result; valid until the next
+     * readLine call on this stream */
+    byte[] lineBuffer() {
+        return lineBuf;
+    }
+
     /**
      * See
      * the general contract of the {@code read}

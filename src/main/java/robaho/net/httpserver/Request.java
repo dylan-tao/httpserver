@@ -40,7 +40,7 @@ class Request {
     static final char CR = 13;
     static final char LF = 10;
 
-    private final InputStream is;
+    private final NoSyncBufferedInputStream is;
     private final OutputStream os;
 
     private final String requestLine;
@@ -49,7 +49,11 @@ class Request {
     private final String protocol;
 
     Request(InputStream rawInputStream, OutputStream rawout) throws IOException {
-        is = rawInputStream;
+        // the bulk line reader needs the internal buffer access; production
+        // always passes the connection's NoSyncBufferedInputStream, other
+        // callers (unit tests) get wrapped
+        this.is = rawInputStream instanceof NoSyncBufferedInputStream buffered ? buffered
+                : new NoSyncBufferedInputStream(rawInputStream);
         os = rawout;
 
         requestLine = readRequestLine();
@@ -70,90 +74,32 @@ class Request {
         return protocol;
     }
 
-    static class PushbackStream {
-        private final InputStream is;
-        private int pushback = -1;
-        private boolean eof=false;
-
-        public PushbackStream(InputStream is) {
-            this.is = is;
-        }
-        public int read() throws IOException {
-            if(pushback!=-1) {
-                try {
-                    return pushback;
-                } finally {
-                    pushback=-1;
-                }
-            }
-            if(eof) return -1;
-            return is.read();
-        }
-        public void skipWhitespace() throws IOException {
-            int c;
-            for(c=read();c==' ' || c=='\t';c=read()){}
-            if(c==-1) eof=true; else pushback=c;
-        }
-    }
-
     /**
-     * read a line from the stream returning as a String.
-     * Not used for reading headers.
-     */
-    private boolean readLine(BufferedBuilder lineBuf) throws IOException {
-        boolean gotCR = false;
-        while (true) {
-            int c;
-
-            try {
-                c = is.read();
-            } catch(IOException e) {
-                if(lineBuf.isEmpty()) return false;
-                throw e;
-            }
-
-            if (c == -1) {
-                lineBuf.count=0;
-                return false;
-            }
-            if (lineBuf.count >= ServerConfig.getMaxReqLineSize()) {
-                throw new IOException("request line too long (limit " + ServerConfig.getMaxReqLineSize() + " bytes)");
-            }
-            if (gotCR) {
-                if (c == LF) {
-                    return true;
-                } else {
-                    gotCR = false;
-                    lineBuf.append(CR);
-                    lineBuf.append((char)c);
-                }
-            } else {
-                if (c == CR) {
-                    gotCR = true;
-                } else if (c == LF) {
-                    // a bare LF terminates the line too (RFC 9112 2.2), matching
-                    // the header parser's behaviour - without this, LF-only
-                    // clients never get past the request line
-                    return true;
-                } else {
-                    lineBuf.append((char)c);
-                }
-            }
-        }
-    }
-
-    /**
-     * read the request line into the buffer
+     * read the request line, skipping leading empty lines (RFC 9112 3 allows
+     * at least one). the request-line CR rule (preserving the old per-byte
+     * reader's quirk): a trailing CR run of EXACTLY one is the CRLF
+     * terminator and is stripped; a run of two or more is all content (the LF
+     * then terminated the line bare); interior CRs are content.
      */
     private String readRequestLine() throws IOException {
         final BufferedBuilder bb = new BufferedBuilder(64);
-        while(readLine(bb)) {
-            if(!bb.isEmpty()) break;
+        while (true) {
+            int len = is.readLine(ServerConfig.getMaxReqLineSize());
+            if (len < 0) {
+                // EOF: the old reader cleared its builder and returned ""
+                return "";
+            }
+            byte[] raw = is.lineBuffer();
+            if (len > 0 && raw[len - 1] == CR && (len == 1 || raw[len - 2] != CR)) {
+                len--;
+            }
+            if (len > 0) {
+                bb.appendBytes(raw, 0, len);
+                return bb.trimmed();
+            }
+            // empty line: skip it
         }
-        return bb.trimmed();
     }
-
-    /** return trimmed value from StringBuilder and reset to empty */
 
     /**
      * @returns the request line or the empty string if not found
@@ -182,6 +128,14 @@ class Request {
             }
             buffer[count++]=(byte)c;
         }
+        void appendBytes(byte[] src, int off, int len) {
+            if(count+len>capacity) {
+                capacity = Math.max(capacity*2, count+len);
+                buffer = Arrays.copyOf(buffer, capacity);
+            }
+            System.arraycopy(src, off, buffer, count, len);
+            count += len;
+        }
         public String trimmed() {
             int start=0;
             while(start<count && buffer[start]==' ') start++;
@@ -206,61 +160,87 @@ class Request {
 
         BufferedBuilder key = new BufferedBuilder(32);
         BufferedBuilder value = new BufferedBuilder(128);
-
-        PushbackStream pbs = new PushbackStream(is);
-
-        BufferedBuilder current = key;
-        boolean prevCR = false;
-        boolean sol = true;
-        int c;
         int headerCount = 0;
+        int limit = ServerConfig.getMaxReqLineSize();
+        // the raw line cap: key(limit) + ':' + value(limit) is the largest
+        // line the per-builder checks accept. the old per-byte parser let
+        // whitespace runs (obs-fold leading, post-colon) grow unbounded; the
+        // line cap now rejects such pathological lines with the same
+        // "header line too long" error
+        int lineLimit = 2 * limit + 2;
 
-        while((c=pbs.read())!=-1) {
-            if(c==CR) { prevCR = true; }
-            else if(c==LF) {
-                // a bare LF is accepted as a line terminator (RFC 9112 2.2);
-                // a preceding CR (if any) is consumed as part of the CRLF
-                if(key.isEmpty() && value.isEmpty()) break;
-                if(sol) {
-                    addHeader(key, value, ++headerCount);
-                    break;
-                }
-                prevCR=false;
-                sol=true;
-            } else {
-                if(prevCR) {
-                    // a CR not followed by LF is a malformed header line
+        while (true) {
+            int len = is.readLine(lineLimit);
+            if (len < 0) {
+                // EOF: a pending unterminated header is dropped, exactly as
+                // the old loop dropped its builders at EOF
+                break;
+            }
+            byte[] raw = is.lineBuffer();
+            // header CR rule: ALL trailing CRs are swallowed (the old parser
+            // set prevCR on each); any CR left inside the line was followed
+            // by a non-CR/non-LF byte - a bare CR
+            int end = len;
+            while (end > 0 && raw[end - 1] == CR) {
+                end--;
+            }
+            for (int i = 0; i < end; i++) {
+                if (raw[i] == CR) {
                     throw new IOException("bare CR in header line");
                 }
-                if(sol && (c==' ' || c=='\t')) {
-                    pbs.skipWhitespace();
-                    current=value;
-                    sol=false;
-                } else {
-                    if(sol) {
-                        if(!key.isEmpty() || !value.isEmpty()) {
-                            addHeader(key, value, ++headerCount);
-                        }
-                        current=key;
-                        sol=false;
-                    }
-                    if(c==':' && current==key) {
-                        current=value;
-                        pbs.skipWhitespace();
-                    } else {
-                        if (current.count >= ServerConfig.getMaxReqLineSize()) {
-                            throw new IOException("header line too long (limit " + ServerConfig.getMaxReqLineSize() + " bytes)");
-                        }
-                        if(current==key) {
-                            key.append((char)(current.count==0 ? Character.toUpperCase(c) : Character.toLowerCase(c)));
-                        } else {
-                            current.append((char)c);
-                        }
-                    }
+            }
+            if (end == 0) {
+                // blank line: end of headers, flushing a pending header first
+                if (!key.isEmpty() || !value.isEmpty()) {
+                    addHeader(key, value, ++headerCount);
                 }
+                break;
+            }
+            // obs-fold: a line starting with whitespace continues the pending
+            // value (leading whitespace skipped, no separator inserted)
+            if (raw[0] == ' ' || raw[0] == '\t') {
+                int start = 0;
+                while (start < end && (raw[start] == ' ' || raw[start] == '\t')) {
+                    start++;
+                }
+                appendLimited(value, raw, start, end - start, limit);
+                continue;
+            }
+            // a new header line: flush the pending one
+            if (!key.isEmpty() || !value.isEmpty()) {
+                addHeader(key, value, ++headerCount);
+            }
+            // name up to the FIRST colon (first char upper, rest lower, as
+            // the old parser normalized); then the value after leading
+            // whitespace. no colon: everything is the name, value empty
+            int colon = 0;
+            while (colon < end && raw[colon] != ':') {
+                colon++;
+            }
+            if (colon > limit) {
+                throw new IOException("header line too long (limit " + limit + " bytes)");
+            }
+            for (int j = 0; j < colon; j++) {
+                char c = (char) (raw[j] & 0xFF);
+                key.append(j == 0 ? Character.toUpperCase(c) : Character.toLowerCase(c));
+            }
+            if (colon < end) {
+                int v = colon + 1;
+                while (v < end && (raw[v] == ' ' || raw[v] == '\t')) {
+                    v++;
+                }
+                appendLimited(value, raw, v, end - v, limit);
             }
         }
         return hdrs;
+    }
+
+    /** append a raw slice to a builder under the per-builder line limit */
+    private void appendLimited(BufferedBuilder b, byte[] src, int off, int len, int limit) throws IOException {
+        if (b.count + len > limit) {
+            throw new IOException("header line too long (limit " + limit + " bytes)");
+        }
+        b.appendBytes(src, off, len);
     }
 
     /** enforce the request header count limit and add the header: shared by
