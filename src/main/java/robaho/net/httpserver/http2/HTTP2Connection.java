@@ -126,7 +126,7 @@ public class HTTP2Connection {
     /** release the pooled stream buffers for an idle connection: the next
      * active stream re-allocates on demand. only call when no streams are
      * active (the connection is idle) */
-    void shrinkBuffers() {
+    public void shrinkBuffers() {
         streamBufferPool.clear();
         pooledBufferCount.set(0);
     }

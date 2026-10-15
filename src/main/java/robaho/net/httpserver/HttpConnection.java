@@ -60,6 +60,11 @@ public class HttpConnection {
     volatile boolean inRequest;
     volatile long drainingAt;
 
+    /** the h2 protocol handler for h2c/h2 connections, set when the
+     * connection is upgraded; null for plain h1. lets the idle cleaner
+     * reach the h2 stream buffer pool for shrinking */
+    robaho.net.httpserver.http2.HTTP2Connection http2Connection;
+
     public AtomicLong requestCount = new AtomicLong();
     private final String connectionId;
 
@@ -168,18 +173,17 @@ public class HttpConnection {
     }
 
     /**
-     * Shrink the internal buffers for an idle connection: the 16KB input and
-     * output buffers, the line buffer, and (for h2) the pooled stream buffers
-     * are released. the next read/write re-allocates on demand. only call
-     * when the connection is idle (not in a request) and no read/write is in
-     * progress - buffered data would otherwise be lost.
+     * Shrink the internal buffers for an idle connection: the 16KB output
+     * buffer and (for h2) the pooled stream buffers are released. the next
+     * write/stream re-allocates on demand. only call when the connection
+     * is idle (not in a request) and no write is in progress.
      */
     void shrinkBuffers() {
-        if (is instanceof NoSyncBufferedInputStream nis) {
-            nis.shrinkBuffers();
-        }
         if (os instanceof NoSyncBufferedOutputStream nos) {
             nos.shrinkBuffers();
+        }
+        if (http2Connection != null) {
+            http2Connection.shrinkBuffers();
         }
     }
 

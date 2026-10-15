@@ -515,6 +515,8 @@ class ServerImpl {
             }
 
             http2 = new HTTP2Connection(conn,http2Stats,connection.getInputStream(), connection.getOutputStream(), this);
+            // let the idle cleaner reach the h2 stream buffer pool for shrinking
+            conn.http2Connection = http2;
         }
 
         static TimerTask createTask() {
