@@ -698,6 +698,12 @@ class ServerImpl {
 
             while (!connection.closed) {
                 try {
+                    // between requests: the reader thread owns the input buffer
+                    // at this point (no fill() in progress), so it is safe to
+                    // shrink it here. the next fill() grows it back on demand
+                    if (rawin instanceof NoSyncBufferedInputStream nis) {
+                        nis.shrinkForNextRequest();
+                    }
                     runPerRequest();
                 } catch (IOException e) {
                     // these are common with clients breaking connections etc

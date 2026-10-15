@@ -100,13 +100,38 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
         pos = 0;
         count = 0;
         byte[] buffer = getBufIfOpen();
-        if (buffer.length == 0) {
+        if (buffer.length < bufferSize) {
+            // the buffer was shrunk between requests (shrinkForNextRequest):
+            // grow it back to the full size so a typical request (headers +
+            // small body) is still read with a single fill
             buffer = new byte[bufferSize];
             buf = buffer;
         }
         int n = getInIfOpen().read(buffer);
         if (n > 0)
             count = n;
+    }
+
+    /** small buffer used between requests: the reader thread swaps the 16KB
+     * read buffer down to this size after each request completes (before
+     * blocking on the socket for the next one), and fill() grows it back to
+     * the full bufferSize on demand when a request actually needs it */
+    private static final int IDLE_READ_BUFFER_SIZE = 2048;
+
+    /**
+     * Shrink the read buffer and line buffer for an idle connection. called
+     * by the READER thread (the same thread that owns the buffer) after a
+     * request completes and before blocking on the socket for the next one -
+     * this is the safe point: no fill() is in progress, so there is no race.
+     * the next fill() grows the buffer back to the full size on demand.
+     */
+    void shrinkForNextRequest() {
+        if (pos >= count && buf.length > IDLE_READ_BUFFER_SIZE) {
+            buf = new byte[IDLE_READ_BUFFER_SIZE];
+        }
+        if (lineBuf != null && lineBuf.length > 256) {
+            lineBuf = null;
+        }
     }
 
     /** reusable line buffer for {@link #readLine}: grown on demand. shrunk at
