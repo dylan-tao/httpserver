@@ -1003,6 +1003,13 @@ class ServerImpl {
                 } else if (MAX_REQ_TIME != -1 && c.inRequest && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
                     logger.log(Level.WARNING, "closing connection due to request processing time");
                     closeConnection(c);
+                } else if (!c.inRequest && now - c.lastActivityTime >= IDLE_INTERVAL / 4) {
+                    // idle but not yet closeable: release the 16KB input/output
+                    // buffers and the line buffer. the connection stays alive
+                    // (keep-alive) and the buffers re-allocate on the next
+                    // read/write. this is the memory optimization for
+                    // long-lived idle connections
+                    c.shrinkBuffers();
                 }
             }
             // enforce the idle connection count limit: close the OLDEST idle

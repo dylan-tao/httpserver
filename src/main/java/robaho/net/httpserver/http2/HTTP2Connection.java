@@ -95,7 +95,7 @@ public class HTTP2Connection {
      * many CONCURRENT streams cannot pin extra buffers beyond the cap */
     private final java.util.concurrent.ConcurrentLinkedDeque<byte[]> streamBufferPool = new java.util.concurrent.ConcurrentLinkedDeque<>();
     private final java.util.concurrent.atomic.AtomicInteger pooledBufferCount = new java.util.concurrent.atomic.AtomicInteger();
-    private static final int MAX_POOLED_STREAM_BUFFERS = 4;
+    private static final int MAX_POOLED_STREAM_BUFFERS = 2;
 
     byte[] pollStreamBuffer() {
         byte[] buffer = streamBufferPool.poll();
@@ -121,6 +121,14 @@ public class HTTP2Connection {
         } else {
             pooledBufferCount.decrementAndGet();
         }
+    }
+
+    /** release the pooled stream buffers for an idle connection: the next
+     * active stream re-allocates on demand. only call when no streams are
+     * active (the connection is idle) */
+    void shrinkBuffers() {
+        streamBufferPool.clear();
+        pooledBufferCount.set(0);
     }
 
     private final SettingsMap remoteSettings = new SettingsMap();

@@ -167,6 +167,22 @@ public class HttpConnection {
         return os;
     }
 
+    /**
+     * Shrink the internal buffers for an idle connection: the 16KB input and
+     * output buffers, the line buffer, and (for h2) the pooled stream buffers
+     * are released. the next read/write re-allocates on demand. only call
+     * when the connection is idle (not in a request) and no read/write is in
+     * progress - buffered data would otherwise be lost.
+     */
+    void shrinkBuffers() {
+        if (is instanceof NoSyncBufferedInputStream nis) {
+            nis.shrinkBuffers();
+        }
+        if (os instanceof NoSyncBufferedOutputStream nos) {
+            nos.shrinkBuffers();
+        }
+    }
+
     HttpContextImpl getHttpContext() {
         return context;
     }

@@ -172,6 +172,19 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
     }
 
     /**
+     * No-op for the input stream: the 16KB read buffer cannot be safely
+     * shrunk (the reader thread is always blocked on the socket inside
+     * fill() with a live reference), and the lineBuf cannot either (the
+     * reader accesses it inside readLine() without a local copy - a
+     * cleaner-thread null between the check and the use is an NPE). the
+     * output buffer shrink (NoSyncBufferedOutputStream.shrinkBuffers) is
+     * the safe and significant part of the idle memory optimization.
+     */
+    void shrinkBuffers() {
+        // intentionally empty - see comment
+    }
+
+    /**
      * See
      * the general contract of the {@code read}
      * method of {@code InputStream}.

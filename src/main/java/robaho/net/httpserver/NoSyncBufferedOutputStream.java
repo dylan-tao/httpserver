@@ -153,4 +153,16 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
         flushBuffer();
         out.close();
     }
+
+    /**
+     * Shrink the internal buffer for an idle connection: the 16KB write
+     * buffer is released. the next write re-allocates on demand. only call
+     * when no write is in progress (the connection is idle and not in a
+     * request) - buffered data (count > 0) would otherwise be lost.
+     */
+    void shrinkBuffers() {
+        if (count == 0) {
+            buf = EMPTY;
+        }
+    }
 }
