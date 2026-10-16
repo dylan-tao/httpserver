@@ -33,6 +33,7 @@
       <class name="robaho.net.httpserver.http2.Review3Test"/>
       <class name="robaho.net.httpserver.extras.ProxyForwardingTest"/>
       <class name="robaho.net.httpserver.Http1RegressionTest"/>
+      <class name="robaho.net.httpserver.ContextListCacheTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketHandshakeErrorTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketFrameValidationTest"/>
       <class name="robaho.net.httpserver.extras.FormParserTest"/>

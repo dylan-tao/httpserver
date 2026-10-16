@@ -49,6 +49,12 @@ class ContextList {
                 throw new IllegalArgumentException("cannot add context to list");
             }
             list.add(ctx);
+            // no cache invalidation needed: the cache only stores exact
+            // matches (see findContext), and a context registered at a
+            // different path can never outrank an exact match for its own
+            // path. if the caching policy is ever relaxed to prefix
+            // matches, add() must invalidate entries under the new path
+            // (guarded by ContextListCacheTest)
         } finally {
             lock.unlock();
         }

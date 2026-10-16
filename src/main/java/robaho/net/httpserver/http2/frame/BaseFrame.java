@@ -5,9 +5,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public abstract class BaseFrame {
-	
-	private FrameHeader header;
-		
+
+	private final FrameHeader header;
+
 	public BaseFrame(FrameHeader header) {
 		this.header = header;
 	}
@@ -18,7 +18,7 @@ public abstract class BaseFrame {
 	}
 
 	public abstract void writeTo(OutputStream os) throws IOException;
-    
+
     public byte[] encode() {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try {
