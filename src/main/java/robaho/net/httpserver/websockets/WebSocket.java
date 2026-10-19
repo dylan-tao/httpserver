@@ -128,8 +128,14 @@ public abstract class WebSocket {
 
     public void close(CloseCode code, String reason, boolean initiatedByRemote) throws IOException {
         logger.log(INFO, "closing websocket {0}", uri);
+        boolean completeClose;
         lock.lock();
         try {
+            if (this.state == State.CLOSED) {
+                // already fully closed: overwriting the state to CLOSING
+                // below would let the subsequent doClose re-fire onClose
+                return;
+            }
             State oldState = this.state;
             this.state = State.CLOSING;
             if (oldState == State.OPEN) {
@@ -141,11 +147,20 @@ public abstract class WebSocket {
                 pendingCloseByRemote = initiatedByRemote;
                 pendingCloseRecorded = true;
                 sendFrame(new CloseFrame(code, reason));
+                completeClose = false;
             } else {
-                doClose(code, reason, initiatedByRemote);
+                completeClose = true;
             }
         } finally {
             lock.unlock();
+        }
+        if (completeClose) {
+            // outside the lock: BufferedWebSocket.doClose waits for the drain
+            // task, whose sendFrames flushes under this lock - waiting while
+            // holding it deadlocks for the full future.get timeout and then
+            // cancels the drain, losing every queued frame. doClose takes the
+            // lock itself, so the once-only CLOSED transition stays atomic
+            doClose(code, reason, initiatedByRemote);
         }
     }
 

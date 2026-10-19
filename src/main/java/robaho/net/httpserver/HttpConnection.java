@@ -179,11 +179,14 @@ public class HttpConnection {
      * is idle (not in a request) and no write is in progress.
      */
     void shrinkBuffers() {
-        if (os instanceof NoSyncBufferedOutputStream nos) {
-            nos.shrinkBuffers();
-        }
         if (http2Connection != null) {
+            // h2 frame writes go through this connection's output buffer from
+            // handler threads under the h2 connection lock: shrink it while
+            // holding that lock, or the buf swap races a concurrent write
+            http2Connection.shrinkConnectionOutputBuffer();
             http2Connection.shrinkBuffers();
+        } else if (os instanceof NoSyncBufferedOutputStream nos) {
+            nos.shrinkBuffers();
         }
     }
 

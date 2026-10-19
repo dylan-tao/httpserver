@@ -127,8 +127,30 @@ public class HTTP2Connection {
      * active stream re-allocates on demand. only call when no streams are
      * active (the connection is idle) */
     public void shrinkBuffers() {
-        streamBufferPool.clear();
-        pooledBufferCount.set(0);
+        // drain rather than clear+reset: clear() followed by set(0) races a
+        // concurrent offer (the count would be wiped while the buffer is in
+        // the pool, letting it exceed the cap) or a poll (the count would go
+        // negative). draining keeps count == pool size at every interleaving
+        byte[] buffer;
+        while ((buffer = streamBufferPool.poll()) != null) {
+            pooledBufferCount.decrementAndGet();
+        }
+    }
+
+    /** shrink the connection-level output buffer (the shared HttpConnection
+     * os) while holding the connection lock: every h2 frame write goes
+     * through that buffer under this lock, so an unlocked shrink from the
+     * idle cleaner races a concurrent write's buf swap
+     * (IndexOutOfBoundsException / lost bytes) */
+    public void shrinkConnectionOutputBuffer() {
+        lock();
+        try {
+            if (outputStream instanceof robaho.net.httpserver.NoSyncBufferedOutputStream nos) {
+                nos.shrinkBuffers();
+            }
+        } finally {
+            unlock();
+        }
     }
 
     private final SettingsMap remoteSettings = new SettingsMap();
@@ -422,8 +444,13 @@ public class HTTP2Connection {
                     // the remainder falls between the old 10% threshold and its
                     // frame size - the client waits for credit, the server waits
                     // for data. the half-window floor matches the stream-level
-                    // policy (DataIn flushes at initialWindowSize/2)
-                    if (receiveWindow.get() < Math.max(connectionWindowSize / 2, ServerConfig.http2MaxFrameSize())) {
+                    // policy (DataIn flushes at initialWindowSize/2).
+                    // the threshold is clamped to the configured window: a
+                    // threshold above it (maxFrameSize > connectionWindowSize)
+                    // would trigger replenishment with the window already at
+                    // the target and send a zero/negative increment
+                    int replenishThreshold = Math.min(Math.max(connectionWindowSize / 2, ServerConfig.http2MaxFrameSize()), connectionWindowSize);
+                    if (receiveWindow.get() < replenishThreshold) {
                         sendWindowUpdate();
                     }
                     if (inHeaders) {
@@ -459,13 +486,49 @@ public class HTTP2Connection {
                             continue;
                         }
                         // HEADERS on a closed or half closed stream is a stream error
-                        // (RFC 7540 5.1): reset the stream, not the connection
+                        // (RFC 7540 5.1): reset the stream, not the connection.
+                        // the block must still be assembled and DECODED
+                        // (contents discarded): the HPACK dynamic table is
+                        // connection-level state and an indexed field in an
+                        // undecoded block desyncs every later request on this
+                        // connection
+                        HeadersFrame staleFrame = (HeadersFrame) frame;
+                        addHeaderFragment(staleFrame.getHeaderBlock());
+                        if (!staleFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
+                            pendingTrailerEndStream = staleFrame.getHeader().flags().contains(FrameFlag.END_STREAM);
+                            inHeaders = true;
+                            inTrailerBlock = true;
+                            openStreamId = streamId;
+                            sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
+                            continue;
+                        }
+                        completeTrailer(stream, staleFrame.getHeader().flags().contains(FrameFlag.END_STREAM));
                         sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
                         continue;
                     }
                     // from here on this must be a NEW stream
                     if (streamId < lastSeenStreamId) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "HEADERS frame received out of order");
+                    }
+                    if (streamId == lastSeenStreamId) {
+                        // a HEADERS block for a stream we already closed and
+                        // unregistered (reused id, or a trailer arriving after
+                        // an early server close): assemble and DECODE it to
+                        // keep the HPACK dynamic table in sync, then discard
+                        // the contents. RFC 7540 5.1.1 permits a connection
+                        // error for a reused id; staying silent (but decoded)
+                        // keeps a compliant client's connection usable
+                        HeadersFrame staleFrame = (HeadersFrame) frame;
+                        addHeaderFragment(staleFrame.getHeaderBlock());
+                        if (!staleFrame.getHeader().flags().contains(FrameFlag.END_HEADERS)) {
+                            pendingTrailerEndStream = staleFrame.getHeader().flags().contains(FrameFlag.END_STREAM);
+                            inHeaders = true;
+                            inTrailerBlock = true;
+                            openStreamId = streamId;
+                            continue;
+                        }
+                        completeTrailer(null, false);
+                        continue;
                     }
                     HeadersFrame headersFrame = (HeadersFrame) frame;
                     addHeaderFragment(headersFrame.getHeaderBlock());
@@ -551,22 +614,20 @@ public class HTTP2Connection {
                 if (clientGoawayStreamId >= 0 && streamId > clientGoawayStreamId) {
                     // the peer promised (GOAWAY) not to open streams beyond
                     // this id: refuse the stream, keep the connection alive
-                    // for in-flight work (RFC 7540 6.8)
+                    // for in-flight work (RFC 7540 6.8). the block is decoded
+                    // (discarded) to keep the HPACK dynamic table in sync
                     sendResetStream(HTTP2ErrorCode.REFUSED_STREAM, streamId);
-                    headerBlockFragments.clear();
-                    headerBlockBytes = 0;
-                    pendingEndStream = false;
+                    completeTrailer(null, false);
                     inHeaders = false;
                     continue;
                 }
                 int currentSize = http2Streams.size();
                 if (maxConcurrentStreams != -1 && currentSize >= maxConcurrentStreams) {
                     // stream level error: refuse this single stream, not the
-                    // whole connection (RFC 7540 5.1.2)
+                    // whole connection (RFC 7540 5.1.2). the block is decoded
+                    // (discarded) to keep the HPACK dynamic table in sync
                     sendResetStream(HTTP2ErrorCode.REFUSED_STREAM, streamId);
-                    headerBlockFragments.clear();
-                    headerBlockBytes = 0;
-                    pendingEndStream = false;
+                    completeTrailer(null, false);
                     // reset the header block state or the client's legitimate
                     // retry (RFC 7540 5.1.2 invites retry after REFUSED_STREAM)
                     // hits the inHeaders guard and kills ALL streams with GOAWAY
@@ -683,8 +744,16 @@ public class HTTP2Connection {
 
     public void sendWindowUpdate() throws IOException {
         int current = receiveWindow.get();
+        int increment = connectionWindowSize-current;
+        if (increment <= 0) {
+            // nothing to replenish - either the window is already at the
+            // target, or the configured connection window is below the RFC
+            // 7540 initial 65535 the counter started from. a zero or
+            // negative increment is a protocol error for the peer (the
+            // negative value decodes as ~4G unsigned)
+            return;
+        }
         try {
-            int increment = connectionWindowSize-current;
             receiveWindow.addAndGet(increment);
             WindowUpdateFrame frame = new WindowUpdateFrame(0, increment);
             HTTP2Connection.this.writeFrame(frame.encode());

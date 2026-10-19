@@ -34,10 +34,12 @@
       <class name="robaho.net.httpserver.extras.ProxyForwardingTest"/>
       <class name="robaho.net.httpserver.Http1RegressionTest"/>
       <class name="robaho.net.httpserver.ContextListCacheTest"/>
+      <class name="robaho.net.httpserver.Jdk25ParityTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketHandshakeErrorTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketFrameValidationTest"/>
       <class name="robaho.net.httpserver.extras.FormParserTest"/>
       <class name="robaho.net.httpserver.websockets.BufferedWebSocketTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketDoubleCloseTest"/>
     </classes>
   </test>
 </suite>

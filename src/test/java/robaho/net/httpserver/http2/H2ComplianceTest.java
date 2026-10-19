@@ -106,6 +106,110 @@ public class H2ComplianceTest {
         }
     }
 
+    /** regression: a client RST_STREAM arriving while response bytes sit
+     *  unflushed in the 16KB stream buffer must not flush them into the reset
+     *  stream - the flush's rstReceived IOException escalated into a
+     *  whole-connection close, whose isClosed() flag kills every writer
+     *  parked on flow control (their responses truncate with no
+     *  END_STREAM) */
+    @Test
+    public void testRstWithBufferedResponseKeepsConnection() throws Exception {
+        var written = new java.util.concurrent.CountDownLatch(1);
+        var seq = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/buffered", ex -> {
+            try {
+                if (seq.incrementAndGet() == 1) {
+                    // stream 1: buffer 100 unflushed bytes, then block - the
+                    // stream close interrupts this sleep
+                    byte[] small = new byte[100]; // < 16KB: stays in the stream buffer
+                    java.util.Arrays.fill(small, (byte) 'x');
+                    ex.sendResponseHeaders(200, small.length);
+                    try (var os = ex.getResponseBody()) {
+                        os.write(small);
+                        written.countDown();
+                        Thread.sleep(60_000);
+                    }
+                } else {
+                    // stream 3: a response far larger than the flow-control
+                    // windows - its writer parks mid-response and must be
+                    // able to finish once the client returns credit
+                    byte[] big = new byte[200 * 1024];
+                    java.util.Arrays.fill(big, (byte) 'y');
+                    ex.sendResponseHeaders(200, big.length);
+                    try (var os = ex.getResponseBody()) {
+                        os.write(big);
+                    }
+                }
+            } catch (InterruptedException e) {
+                // interrupted by the stream close: expected
+            } catch (Exception e) {
+                // write-after-reset etc: expected
+            }
+        });
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int stream1 = client.sendRequest("GET", "/buffered", true);
+            Assert.assertTrue(written.await(5, java.util.concurrent.TimeUnit.SECONDS),
+                    "handler must buffer its bytes before the RST");
+            // stream 3's writer parks once the 64KB windows are exhausted;
+            // nothing reads the socket yet, so no credit returns
+            int stream3 = client.sendRequest("GET", "/buffered", true);
+            Thread.sleep(300);
+            client.sendRstStream(stream1, H2Client.CANCEL);
+            // reading returns flow-control credit: the parked writer must
+            // still be alive and complete the response
+            var response3 = client.awaitResponse(stream3);
+            Assert.assertFalse(response3.goaway(), "RST on a buffered stream must not kill the connection");
+            Assert.assertEquals(response3.status(), 200,
+                    "the concurrent writer parked on flow control must survive the other stream's reset");
+            Assert.assertEquals(response3.data().length, 200 * 1024, "the response must complete");
+        }
+    }
+
+    /** regression: a header block arriving for an already-closed stream must
+     *  still be HPACK-decoded (contents discarded): the dynamic table is
+     *  connection-level state, and an undecoded incrementally-indexed field
+     *  desyncs every later request on the connection */
+    @Test
+    public void testHeaderBlockOnClosedStreamKeepsHpackSync() throws Exception {
+        // registered at "/": the indexed request below carries the static
+        // pseudo-header ":path /" (index 4)
+        server.createContext("/", ex -> {
+            String v = ex.getRequestHeaders().getFirst("X-Dyn");
+            byte[] b = ("v=" + (v == null ? "null" : v)).getBytes();
+            ex.sendResponseHeaders(200, b.length);
+            try (var os = ex.getResponseBody()) { os.write(b); }
+        });
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int s1 = client.sendRequest("GET", "/hdr", true);
+            var r1 = client.awaitResponse(s1);
+            Assert.assertEquals(r1.status(), 200, "first request must succeed");
+
+            // a stale HEADERS block on the (now closed) stream carrying an
+            // INCREMENTALLY-INDEXED field: the client adds it to its dynamic
+            // table (first dynamic entry, index 62); the server must decode
+            // and discard the block to stay in sync
+            java.io.ByteArrayOutputStream stale = new java.io.ByteArrayOutputStream();
+            stale.write(0x40); // literal header field, incremental indexing
+            stale.write(5); stale.writeBytes("x-dyn".getBytes());
+            stale.write(6); stale.writeBytes("secret".getBytes());
+            client.writeRawFrame(H2Client.TYPE_HEADERS, H2Client.FLAG_END_HEADERS, s1, stale.toByteArray());
+
+            // a new request referencing the dynamic-table entry by index
+            // (0xBE = indexed field, index 62) alongside static-indexed
+            // pseudo-headers: :method GET(2) :scheme http(6) :path /(4),
+            // then :authority(1) as a literal-with-indexed-name
+            client.writeRawFrame(H2Client.TYPE_HEADERS,
+                    H2Client.FLAG_END_HEADERS | H2Client.FLAG_END_STREAM,
+                    s1 + 2, new byte[]{(byte) 0x82, (byte) 0x86, (byte) 0x84,
+                            (byte) 0x01, (byte) 0x01, (byte) 'x', (byte) 0xBE});
+            var r2 = client.awaitResponse(s1 + 2);
+            Assert.assertFalse(r2.goaway(), "the stale block must not desync the connection");
+            Assert.assertEquals(r2.status(), 200, "the indexed request must decode");
+            Assert.assertEquals(new String(r2.data()), "v=secret",
+                    "the dynamic-table entry established by the stale block must resolve");
+        }
+    }
+
     /** a plain HTTP/1.1 connection must still be served by the same server
      *  (h2c detection must not break the HTTP/1.1 path) */
     @Test

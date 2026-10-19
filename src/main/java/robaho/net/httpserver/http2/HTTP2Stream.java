@@ -158,6 +158,28 @@ public class HTTP2Stream {
             return;
         }
 
+        if (rstReceived) {
+            // the peer reset the stream: do NOT flush the stream buffer.
+            // flushing would route the buffered bytes through write(), whose
+            // rstReceived guard throws - and the catch below escalated that
+            // into a whole-connection close. the peer cancelled: the bytes
+            // are unwanted (RFC 7540 5.1). also do NOT detach/return the
+            // buffer: this runs on the reader thread and a handler thread
+            // may be mid-write into it (the arraycopy would hit the swapped
+            // EMPTY buffer or a pooled buffer now owned by another stream).
+            // the stream object - buffer included - becomes garbage when
+            // the handler exits.
+            try {
+                dataIn.close();
+            } catch (IOException e) {
+                logger.log(Level.DEBUG, () -> "error closing dataIn on reset stream " + streamId);
+            }
+            if (thread != null) {
+                thread.interrupt();
+            }
+            return;
+        }
+
         logger.log(Level.TRACE,() -> "closing stream "+streamId);
 
         try {
@@ -425,8 +447,24 @@ public class HTTP2Stream {
                 throw new IOException("output stream was closed during headers send");
             }
             while(len>0) {
-                int _len = Math.min(Math.min(len,connection.remoteMaxFrameSize()),(int)Math.min(connection.sendWindow.get(),sendWindow.get()));
+                long available = Math.min(connection.sendWindow.get(), sendWindow.get());
+                if (available > Integer.MAX_VALUE) {
+                    // a window at or above 2^31 is an overflow state pending
+                    // connection teardown: clamp instead of letting the int
+                    // cast wrap negative (a negative _len with a positive
+                    // long re-check hot-spins this loop without ever parking)
+                    available = Integer.MAX_VALUE;
+                }
+                final int _len = (int) Math.min(Math.min(len, connection.remoteMaxFrameSize()), available);
                 if(_len<=0) {
+                    if (rstReceived) {
+                        // the pre-loop check cannot see a reset that lands
+                        // mid-write: without this check the interrupt from
+                        // close() makes the 50ms park return immediately
+                        // (sticky interrupt) and the writer spins hot, then
+                        // writes DATA to a reset stream once credit arrives
+                        throw new IOException("stream " + streamId + " was reset by the peer");
+                    }
                     // record before parking: the pre-loop record only runs
                     // when the STREAM window is exhausted, but a writer can
                     // park here on the CONNECTION window (exhausted by other
@@ -446,6 +484,9 @@ public class HTTP2Stream {
                         // healthy but whose connection window is exhausted would
                         // spin hot - continue recomputes _len to 0 and re-enters
                         // this branch without ever parking
+                        if (rstReceived) {
+                            throw new IOException("stream " + streamId + " was reset by the peer");
+                        }
                         if (connection.sendWindow.get()>0 && sendWindow.get()>0) {
                             // credit landed between the _len computation and the
                             // record: retry immediately instead of parking
@@ -466,6 +507,13 @@ public class HTTP2Stream {
                     // if we can't get the space from the connection window, need to retry
                     connection.sendWindow.addAndGet(_len);
                     continue;
+                }
+                if (rstReceived) {
+                    // a reset can land mid-write while the windows are
+                    // healthy: do not send DATA on a reset stream
+                    // (RFC 7540 5.1 closed state)
+                    connection.sendWindow.addAndGet(_len);
+                    throw new IOException("stream " + streamId + " was reset by the peer");
                 }
                 connection.lock();
                 try {

@@ -160,7 +160,7 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
      * when no write is in progress (the connection is idle and not in a
      * request) - buffered data (count > 0) would otherwise be lost.
      */
-    void shrinkBuffers() {
+    public void shrinkBuffers() {
         if (count == 0) {
             buf = EMPTY;
         }
