@@ -476,6 +476,9 @@ class ServerImpl {
                 connectionCount.incrementAndGet();
 
                 if (http2) {
+                    if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
+                        nis.growBuffer();
+                    }
                     Http2Exchange t = new Http2Exchange(protocol, c);
                     t.run();
                 } else {
@@ -533,7 +536,10 @@ class ServerImpl {
             this.connection = conn;
             this.protocol = protocol;
 
-            if(protocol.equals("https2")) {
+            if(protocol.equals("https")) {
+                // the server protocol is "http"/"https" (never "https2" -
+                // that comparison was always false and counted every ALPN
+                // h2 connection as non-SSL in the stats)
                 http2Stats.sslConnections.incrementAndGet();
             } else {
                 http2Stats.nonsslConnections.incrementAndGet();
@@ -664,6 +670,27 @@ class ServerImpl {
                 }
             }
 
+            // opt-in request body cap: reject a declared Content-Length up
+            // front (bodies without a declared length are bounded
+            // incrementally in the stream's DATA path)
+            long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
+            if (bodySizeLimit >= 0) {
+                String contentLength = request.getFirst("content-length");
+                if (contentLength != null) {
+                    try {
+                        if (Long.parseLong(contentLength) > bodySizeLimit) {
+                            response.set(":status", "413");
+                            stream.writeResponseHeaders(true);
+                            out.close();
+                            return;
+                        }
+                    } catch (NumberFormatException ignored) {
+                        // malformed content-length: the stream-level
+                        // expectedSize check rejects it on END_STREAM
+                    }
+                }
+            }
+
             String uriPath = Optional.ofNullable(uri.getPath()).orElse("/");
             HttpContextImpl ctx = contexts.findContext(protocol, uriPath);
             if (ctx == null) {
@@ -787,6 +814,11 @@ class ServerImpl {
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
                 logger.log(Level.DEBUG,"found http2 request on non-SSL assuming prior knowledge");
+                // h2 frames (16KB DATA) must be read at the full buffer size,
+                // not the 2KB idle size the connection may carry
+                if (rawin instanceof NoSyncBufferedInputStream nis) {
+                    nis.growBuffer();
+                }
                 // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
                 connection.getSocket().setTcpNoDelay(ServerConfig.http2NoDelay());
                 Http2Exchange exchange = new Http2Exchange(protocol, connection);
@@ -837,6 +869,12 @@ class ServerImpl {
             }
             start = space + 1;
             String version = requestLine.substring(start);
+            if (!"HTTP/1.1".equals(version) && !"HTTP/1.0".equals(version)) {
+                // the h2c PRI line was already handled above; anything else
+                // is an unsupported protocol version
+                reject(Code.HTTP_VERSION, requestLine, "Unsupported HTTP version");
+                return;
+            }
             Headers headers;
             try {
                 headers = req.headers();
@@ -885,6 +923,20 @@ class ServerImpl {
                         return;
                     }
                 }
+            }
+            // a declared large body: switch to the full-size read buffer so
+            // the body is consumed in 16KB reads, not 2KB
+            if (clen > 8192 && rawin instanceof NoSyncBufferedInputStream nis) {
+                nis.growBuffer();
+            }
+            long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
+            if (bodySizeLimit >= 0 && clen > bodySizeLimit) {
+                // declared Content-Length over the opt-in body cap. chunked
+                // bodies without a declared length are bounded incrementally
+                // in LeftOverInputStream
+                reject(Code.HTTP_ENTITY_TOO_LARGE, requestLine,
+                        "Request body exceeds the configured maximum of " + bodySizeLimit + " bytes");
+                return;
             }
             logger.log(Level.TRACE,() -> "protocol "+protocol+" uri "+uri+" headers "+headers);
             String uriPath = Optional.ofNullable(uri.getPath()).orElse("/");

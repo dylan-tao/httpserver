@@ -48,6 +48,23 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      */
     protected int pos;
 
+    /** invoked right before the underlying (potentially blocking) socket
+     * read in fill(): lets the connection flush deferred response bytes
+     * before it waits for more input, so a response is never stuck in the
+     * output buffer behind a partially-received request */
+    private Runnable preReadFlush;
+
+    void setPreReadFlush(Runnable r) {
+        this.preReadFlush = r;
+    }
+
+    /** true when pipelined request bytes are already buffered and waiting:
+     * response completion can defer its flush (the whole batch flushes
+     * once, when the input drains or right before the next blocking read) */
+    boolean hasBufferedInput() {
+        return pos < count;
+    }
+
     /**
      * Check to make sure that underlying input stream has not been
      * nulled out due to close; if not return it;
@@ -100,12 +117,20 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
         pos = 0;
         count = 0;
         byte[] buffer = getBufIfOpen();
-        if (buffer.length < bufferSize) {
-            // the buffer was shrunk between requests (shrinkForNextRequest):
-            // grow it back to the full size so a typical request (headers +
-            // small body) is still read with a single fill
-            buffer = new byte[bufferSize];
+        if (buffer.length == 0) {
+            // start small: a typical request (headers + small body) is
+            // served from one 2KB fill, and the small buffer persists
+            // across requests - small-request traffic pays ZERO per-request
+            // buffer allocation. big requests grow on demand (growBuffer).
+            // the old eager 16KB grow cost 18KB of churn per request
+            buffer = new byte[IDLE_READ_BUFFER_SIZE];
             buf = buffer;
+        }
+        Runnable flushHook = preReadFlush;
+        if (flushHook != null) {
+            // the read below may block: push any deferred response bytes
+            // out first (a no-op when the output buffer is empty)
+            flushHook.run();
         }
         int n = getInIfOpen().read(buffer);
         if (n > 0)
@@ -127,11 +152,34 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      */
     void shrinkForNextRequest() {
         if (pos >= count && buf.length > IDLE_READ_BUFFER_SIZE) {
-            buf = new byte[IDLE_READ_BUFFER_SIZE];
+            // drop the BIG buffer without allocating: the next fill
+            // allocates the small buffer on demand. the small buffer is
+            // never dropped here - it persists across requests, which is
+            // what makes small-request traffic allocation-free
+            buf = EMPTY;
         }
         if (lineBuf != null && lineBuf.length > 256) {
             lineBuf = null;
         }
+    }
+
+    /** grow the read buffer to the full size: called when a large request is
+     * detected (a line spanning the small buffer, a declared large body, or
+     * an h2 upgrade) so bulk reads are not stuck at the small idle size.
+     * preserves any unconsumed buffered bytes */
+    void growBuffer() {
+        byte[] b = buf;
+        if (b == null || b.length >= bufferSize) {
+            return;
+        }
+        byte[] grown = new byte[bufferSize];
+        int buffered = count - pos;
+        if (buffered > 0) {
+            System.arraycopy(b, pos, grown, 0, buffered);
+        }
+        pos = 0;
+        count = buffered;
+        buf = grown;
     }
 
     /** reusable line buffer for {@link #readLine}: grown on demand. shrunk at
@@ -182,7 +230,15 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
                 pos = lf + 1;
                 return lineLen;
             }
-            // no LF buffered: refill and keep scanning
+            // no LF buffered. if part of a line is already accumulated the
+            // line spans the whole small buffer (a long request line or
+            // header): switch to the full size. lineLen == 0 means the
+            // buffer is simply drained (e.g. waiting for the next request)
+            // - the small buffer is correct there, growing would restore
+            // the per-request 16KB churn this scheme exists to remove
+            if (lineLen > 0 && getBufIfOpen().length < bufferSize) {
+                growBuffer();
+            }
             fill();
             if (count <= 0) {
                 return -1;

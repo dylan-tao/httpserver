@@ -93,8 +93,17 @@ class Request {
      */
     private String readRequestLine() throws IOException {
         final BufferedBuilder bb = new BufferedBuilder(64);
+        int emptyLines = 0;
         while (true) {
-            int len = is.readLine(ServerConfig.getMaxReqLineSize());
+            int len;
+            try {
+                len = is.readLine(ServerConfig.getMaxReqLineSize());
+            } catch (java.net.SocketException | java.io.EOFException e) {
+                // the peer disconnected mid-line: not a protocol error. a
+                // 400 attempt on the dead socket is log noise and pollutes
+                // the reply-error stats - close silently, like EOF
+                return "";
+            }
             if (len < 0) {
                 // EOF: the old reader cleared its builder and returned ""
                 return "";
@@ -107,7 +116,12 @@ class Request {
                 bb.appendBytes(raw, 0, len);
                 return bb.trimmed();
             }
-            // empty line: skip it
+            // empty line: skip it (RFC 9112 3), but bound the count - an
+            // unbounded skip lets a peer hold the connection with blank
+            // lines for as long as the idle timeout allows
+            if (++emptyLines > 4) {
+                throw new IOException("too many leading empty lines");
+            }
         }
     }
 

@@ -205,6 +205,19 @@ public class HTTP2Stream {
      * is half closed */
     void receiveTrailer(boolean endStream) {
         if (endStream) {
+            long expected = expectedSize();
+            if (expected != -1 && dataInSize != expected) {
+                // RFC 7540 8.1.2.6: a content-length mismatch is a stream
+                // error regardless of which frame carries END_STREAM - the
+                // DATA path enforces this, the trailer path must too, or a
+                // short body is silently treated as the complete request
+                try {
+                    resetAndClose(HTTP2ErrorCode.PROTOCOL_ERROR);
+                } catch (IOException e) {
+                    logger.log(Level.DEBUG, () -> "error resetting stream " + streamId + " on content-length mismatch", e);
+                }
+                return;
+            }
             halfClosed = true;
             dataIn.wakeupReader();
         }
@@ -266,6 +279,14 @@ public class HTTP2Stream {
             }
             dataIn.enqueue(dataFrame.body);
             dataInSize += dataFrame.body.length;
+            // opt-in request body cap, enforced incrementally for bodies
+            // without a declared Content-Length (a declared length is
+            // rejected up front at dispatch with a 413)
+            long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
+            if (bodySizeLimit >= 0 && dataInSize > bodySizeLimit) {
+                resetAndClose(HTTP2ErrorCode.ENHANCE_YOUR_CALM);
+                return;
+            }
             if (dataFrame.getHeader().flags().contains(FrameFlag.END_STREAM)) {
                 long expected = expectedSize();
                 if(expected!=-1 && dataInSize!=expected) {

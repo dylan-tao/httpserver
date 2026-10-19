@@ -100,6 +100,14 @@ public class ProxyHandler implements HttpHandler {
                     exchange.sendResponseHeaders(400,-1);
                     return;
                 }
+                if (port < 1 || port > 65535) {
+                    // parseInt accepts "-1"/"70000": InetSocketAddress would
+                    // then throw IAE and kill the connection with an
+                    // "unexpected exception" instead of a clean 400
+                    logger.warning("CONNECT target port out of range: " + uri);
+                    exchange.sendResponseHeaders(400,-1);
+                    return;
+                }
                 var addr = new InetSocketAddress(uri.getScheme(),port);
                 try {
                     // bound the connect attempt so a stalled upstream cannot

@@ -123,13 +123,21 @@ abstract class LeftOverInputStream extends FilterInputStream {
             int c = readImpl(one, 0, 1);
             if (c == -1) {
                 return c;
-            } else {
-                return one[0] & 0xFF;
             }
+            long cap = ServerConfig.getMaxRequestBodySize();
+            if (cap >= 0 && ++totalRead > cap) {
+                throw new IOException("request body exceeds the configured maximum of " + cap + " bytes");
+            }
+            return one[0] & 0xFF;
         } finally {
             lock.unlock();
         }
     }
+
+    /** total body bytes delivered through this stream: enforces the opt-in
+     * maxRequestBodySize cap incrementally for chunked bodies (a declared
+     * Content-Length is rejected up front in the request parser) */
+    private long totalRead;
 
     public int read(byte[] b, int off, int len) throws IOException {
         lock.lock();
@@ -137,7 +145,14 @@ abstract class LeftOverInputStream extends FilterInputStream {
             if (closed) {
                 throw new EOFException("Stream is closed");
             }
-            return readImpl(b, off, len);
+            int n = readImpl(b, off, len);
+            if (n > 0) {
+                long cap = ServerConfig.getMaxRequestBodySize();
+                if (cap >= 0 && (totalRead += n) > cap) {
+                    throw new IOException("request body exceeds the configured maximum of " + cap + " bytes");
+                }
+            }
+            return n;
         } finally {
             lock.unlock();
         }

@@ -331,12 +331,35 @@ class H2Client implements AutoCloseable {
         buf.writeBytes(bytes);
     }
 
-    /** decode just the :status field of a response header block, if indexed */
+    /** decode just the :status field of a response header block: the indexed
+     * static-table form, or the literal form the server uses for statuses
+     * outside the static table (e.g. 413) */
     private static int decodeStatus(byte[] block) {
         if (block == null || block.length == 0) {
             return -1;
         }
         int b = block[0] & 0xFF;
+        // the literal forms the server's encoder can use for a status outside
+        // the static table (e.g. 413): with incremental indexing (0x40|idx),
+        // without indexing (0x0|idx), never-indexed (0x10|idx). the name
+        // index is ANY static :status entry (8..14) - the encoder picks the
+        // entry its name lookup finds, e.g. 14 (":status 500") for :status.
+        // all carry the value as a length-prefixed string after the prefix
+        int idx6 = b & 0x3F, idx4 = b & 0x0F;
+        boolean literalStatus = ((b & 0xC0) == 0x40 && idx6 >= 8 && idx6 <= 14)
+                || ((b & 0xF0) == 0x00 && idx4 >= 8 && idx4 <= 14)
+                || ((b & 0xF0) == 0x10 && idx4 >= 8 && idx4 <= 14);
+        if (literalStatus && block.length > 1) {
+            int valueLen = block[1] & 0xFF;
+            if (valueLen > 0 && 2 + valueLen <= block.length) {
+                try {
+                    return Integer.parseInt(new String(block, 2, valueLen, StandardCharsets.US_ASCII).trim());
+                } catch (NumberFormatException e) {
+                    return -1;
+                }
+            }
+            return -1;
+        }
         if ((b & 0x80) != 0) {
             int index = b & 0x7F;
             return switch (index) {

@@ -84,6 +84,42 @@ public class Jdk25ParityTest {
         Assert.assertTrue(statusLine(r).startsWith("HTTP/1.1 400"), "expected 400, got: " + statusLine(r));
     }
 
+    /** only HTTP/1.0 and HTTP/1.1 are supported: anything else (the h2c PRI
+     *  line is handled earlier) is a 505 */
+    @Test
+    public void unsupportedHttpVersionRejected() throws Exception {
+        server.createContext("/", ex -> respond(ex, "ok"));
+        server.start();
+        byte[] r = rawExchange("GET / HTTP/9.9\r\nHost: b\r\nConnection: close\r\n\r\n".getBytes());
+        Assert.assertTrue(statusLine(r).startsWith("HTTP/1.1 505"), "expected 505, got: " + statusLine(r));
+    }
+
+    /** leading empty lines are tolerated (RFC 9112 3) but bounded: an
+     *  unbounded skip lets a peer hold the connection with blank lines */
+    @Test
+    public void excessiveLeadingBlankLinesRejected() throws Exception {
+        server.createContext("/", ex -> respond(ex, "ok"));
+        server.start();
+        byte[] r = rawExchange("\r\n\r\n\r\n\r\n\r\n\r\nGET / HTTP/1.1\r\nHost: b\r\nConnection: close\r\n\r\n".getBytes());
+        Assert.assertTrue(r.length == 0 || statusLine(r).startsWith("HTTP/1.1 400"),
+                "expected 400, got: " + statusLine(r));
+    }
+
+    /** a CONNECT target port out of the valid range is a clean 400, not an
+     *  IllegalArgumentException that kills the connection */
+    @Test
+    public void connectPortOutOfRangeRejected() throws Exception {
+        server.createContext("/", new robaho.net.httpserver.extras.ProxyHandler() {
+            @Override
+            protected boolean authorizeConnect(com.sun.net.httpserver.HttpExchange exchange) {
+                return true; // the port validation is under test, not auth
+            }
+        });
+        server.start();
+        byte[] r = rawExchange("CONNECT example.com:-1 HTTP/1.1\r\nHost: x\r\n\r\n".getBytes());
+        Assert.assertTrue(statusLine(r).startsWith("HTTP/1.1 400"), "expected 400, got: " + statusLine(r));
+    }
+
     @Test
     public void illegalHeaderNameRejected() throws Exception {
         server.createContext("/", ex -> respond(ex, "ok"));

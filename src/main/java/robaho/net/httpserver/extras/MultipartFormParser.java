@@ -47,10 +47,10 @@ public class MultipartFormParser {
 
     /** parser-created files pending best-effort exit cleanup. bounded: the
      * registry must not grow without limit (the File.deleteOnExit() leak this
-     * replaces grew ~100-200B per upload forever); beyond the cap the oldest
-     * entries are dropped and their files simply survive. only files the
-     * PARSER created are tracked - a shared storage directory's other
-     * contents are never touched */
+     * replaces grew ~100-200B per upload forever); beyond the cap NEW files
+     * are not tracked and simply survive on disk. only files the PARSER
+     * created are tracked - a shared storage directory's other contents are
+     * never touched */
     private static final java.util.concurrent.ConcurrentLinkedQueue<Path> CREATED_FILES = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static final java.util.concurrent.atomic.AtomicInteger trackedFileCount = new java.util.concurrent.atomic.AtomicInteger();
     private static final int MAX_TRACKED_FILES = 10_000;

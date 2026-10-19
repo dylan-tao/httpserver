@@ -53,6 +53,10 @@ public class ServerConfig {
     // <= 0 means unlimited (same semantics as the JDK's
     // sun.net.httpserver.maxReqHeaderSize)
     private static final int DEFAULT_MAX_REQ_HEADER_SIZE = 380 * 1024;
+    // maximum total request body bytes (declared Content-Length or actually
+    // received for chunked/h2). opt-in: a library default must not break
+    // legitimate large uploads, so the default is unlimited
+    private static final long DEFAULT_MAX_REQUEST_BODY_SIZE = -1;
     private static final long DEFAULT_DRAIN_AMOUNT = 64 * 1024;
 
     private static final int DEFAULT_HTTP2_MAX_FRAME_SIZE = 16384;
@@ -89,6 +93,7 @@ public class ServerConfig {
     // The maximum number of request headers allowable
     private static int maxReqHeaders;
     private static int maxReqHeaderSize;
+    private static long maxRequestBodySize;
     // max time a request or response is allowed to take
     private static long maxReqTime;
 
@@ -175,6 +180,9 @@ public class ServerConfig {
                                 Integer.getInteger(pkg + ".maxReqHeaderSize",
                                         DEFAULT_MAX_REQ_HEADER_SIZE),
                                 0);
+
+                        maxRequestBodySize = Long.getLong(pkg + ".maxRequestBodySize",
+                                DEFAULT_MAX_REQUEST_BODY_SIZE);
 
                         maxReqTime = Long.getLong(pkg + ".maxReqTime",
                                 DEFAULT_MAX_REQ_TIME);
@@ -291,6 +299,13 @@ public class ServerConfig {
      * unlimited (mirrors sun.net.httpserver.maxReqHeaderSize) */
     static int getMaxReqHeaderSize() {
         return maxReqHeaderSize;
+    }
+
+    /** total request body budget in bytes (declared Content-Length or bytes
+     * actually received); <= 0 means unlimited. opt-in: the default is
+     * unlimited so legitimate large uploads are not broken */
+    public static long getMaxRequestBodySize() {
+        return maxRequestBodySize;
     }
 
     /**

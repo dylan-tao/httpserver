@@ -150,8 +150,14 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
      */
     @Override
     public void close() throws IOException {
-        flushBuffer();
-        out.close();
+        try {
+            flushBuffer();
+        } finally {
+            // the underlying stream must close even when the flush fails:
+            // a FileOutputStream skipped here (disk full mid-multipart)
+            // leaks its fd until the GC cleaner runs
+            out.close();
+        }
     }
 
     /**

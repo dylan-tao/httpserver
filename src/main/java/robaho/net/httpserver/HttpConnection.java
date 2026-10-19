@@ -50,7 +50,7 @@ public class HttpConnection {
     HttpContextImpl context;
 
     /* low level stream that sits directly over channel */
-    InputStream is;
+    NoSyncBufferedInputStream is;
     OutputStream os;
 
     final Socket socket;
@@ -58,6 +58,18 @@ public class HttpConnection {
 
     volatile long lastActivityTime;
     volatile boolean inRequest;
+    /** reusable response-head assembly buffer: h1 responses are written on
+     * the connection's single VT, so writeHeaders can reuse one scratch
+     * across responses instead of allocating per response. retained up to
+     * HEADER_SCRATCH_RETAIN_LIMIT; larger heads fall back to per-response
+     * allocation so a huge-header application cannot pin memory */
+    byte[] headerScratch;
+
+    /** set when the exchange hands the RAW streams to non-request-loop code
+     * (101 upgrade, CONNECT tunnel): reads and writes then come from
+     * different threads, so the pre-read flush hook must stand down - its
+     * unsynchronized flush would race the external writer on this buffer */
+    volatile boolean streamsHandedOff;
     volatile long drainingAt;
 
     /** the h2 protocol handler for h2c/h2 connections, set when the
@@ -81,7 +93,29 @@ public class HttpConnection {
         // flushed as a separate 9-byte syscall (and, with TCP_NODELAY on, a
         // separate packet) per frame
         this.os = new NoSyncBufferedOutputStream(new ActivityTimerOutputStream(socket.getOutputStream()), ServerConfig.bufferSize() + 64);
+        // flush deferred response bytes right before a blocking input read:
+        // a response deferred because pipelined requests were waiting can
+        // never get stuck behind a partially-received request. skipped for
+        // h2 connections - their frame writes come from handler threads and
+        // would race this reader-thread flush on the shared output buffer
+        // (h2 flushes under the connection lock instead)
+        this.is.setPreReadFlush(() -> {
+            if (http2Connection == null && !streamsHandedOff) {
+                try {
+                    os.flush();
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            }
+        });
         connectionId = "["+socket.getLocalPort()+"."+socket.getPort()+"]";
+    }
+
+    /** true when pipelined request bytes are already buffered and waiting:
+     * lets response completion defer its flush so a pipelined batch
+     * coalesces into one socket write instead of one per response */
+    boolean hasBufferedInput() {
+        return is.hasBufferedInput();
     }
 
     public void debug() {

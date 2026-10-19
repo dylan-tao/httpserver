@@ -496,8 +496,7 @@ public class H2ComplianceTest {
      *  the END_STREAM mismatch must reset the stream with PROTOCOL_ERROR
      *  (stream-scoped), never wedge the connection */
     @Test
-    public void testContentLengthMismatchResetsStream() throws Exception {
-        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+    public void testContentLengthMismatchResetsStream() throws Exception {        try (H2Client client = new H2Client(server.getAddress().getPort())) {
             // content-length: 100 but only 50 bytes arrive. END_STREAM rides on
             // the DATA frame (data after an END_STREAM HEADERS would correctly
             // get STREAM_CLOSED instead)
@@ -522,6 +521,51 @@ public class H2ComplianceTest {
             var r2 = client.awaitResponse(stream2);
             Assert.assertFalse(r2.goaway());
             Assert.assertEquals(r2.status(), 200);
+        }
+    }
+
+    /** regression: the content-length mismatch check must also fire when
+     *  END_STREAM arrives on a trailer HEADERS block (RFC 7540 8.1.2.6),
+     *  not only on the DATA frame - a short body completed by a trailer was
+     *  silently treated as the complete request */
+    @Test
+    public void testTrailerContentLengthMismatchResetsStream() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            byte[] block = H2Client.encodeHeaders(
+                ":method", "POST",
+                ":scheme", "http",
+                ":path", "/echo",
+                ":authority", "127.0.0.1",
+                "content-length", "100");
+            int stream = 1;
+            client.writeRawFrame(H2Client.TYPE_HEADERS, H2Client.FLAG_END_HEADERS, stream, block);
+            client.sendData(stream, new byte[50], false);
+            client.sendTrailer(stream, "x-trailer", "v", true);
+
+            var r = client.awaitResponse(stream);
+            Assert.assertFalse(r.goaway(), "trailer mismatch must not GOAWAY");
+            Assert.assertNotNull(r.rstErrorCode(), "trailer mismatch must reset the stream");
+            Assert.assertEquals(r.rstErrorCode().intValue(), 1,
+                "reset code must be PROTOCOL_ERROR, got " + r.rstErrorCode());
+        }
+    }
+
+    /** regression: an unknown/unsupported frame type carrying a stream id
+     *  must be ignored (RFC 7540 4.1) - it used to fall into the stream
+     *  dispatch, fail header validation on an empty block, and kill the
+     *  whole connection */
+    @Test
+    public void testUnknownFrameTypeIgnored() throws Exception {
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            int s1 = client.sendRequest("GET", "/echo", true);
+            var r1 = client.awaitResponse(s1);
+            Assert.assertEquals(r1.status(), 200);
+
+            client.writeRawFrame(0x42, 0, s1 + 2, new byte[8]);
+            int s2 = client.sendRequest("GET", "/echo", true);
+            var r2 = client.awaitResponse(s2);
+            Assert.assertFalse(r2.goaway(), "unknown frame type must not kill the connection");
+            Assert.assertEquals(r2.status(), 200, "the connection must stay usable");
         }
     }
 

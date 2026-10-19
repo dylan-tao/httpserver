@@ -239,6 +239,7 @@ public class HTTP2Connection {
         }
     }
 
+
     /** the peer's advertised max frame size, cached for the DATA write path */
     int remoteMaxFrameSize() {
         return remoteMaxFrameSize;
@@ -372,7 +373,9 @@ public class HTTP2Connection {
                         // open new streams beyond lastSeenStream. finish the
                         // in-flight streams and refuse anything newer; the
                         // connection itself stays up until the peer (or the
-                        // idle cleaner) closes it. max: a later GOAWAY with a
+                        // idle cleaner) closes it - closing on our side would
+                        // break the REFUSED_STREAM delivery the client may
+                        // still rely on. max: a later GOAWAY with a
                         // smaller id must not re-accept refused streams
                         clientGoawayStreamId = Math.max(clientGoawayStreamId, goaway.lastSeenStream);
                         logger.log(Level.DEBUG, () -> "received GOAWAY, last stream " + goaway.lastSeenStream + ", draining");
@@ -425,10 +428,11 @@ public class HTTP2Connection {
                     if (inHeaders) {
                         throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "NOT_IMPLEMENTED frame received while headers being received");
                     }
-                    if (frame.getHeader().streamIdentifier() == 0) {
-                        continue;
-                    }
-                    break;
+                    // unknown/unsupported frame types must be ignored
+                    // (RFC 7540 4.1): routing them into the stream dispatch
+                    // below would create a phantom stream from an empty
+                    // header block and kill the connection on validation
+                    continue;
                 case DATA:
                     DataFrame dataFrame = (DataFrame) frame;
                     // flow control accounting uses the full frame payload length

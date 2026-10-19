@@ -298,6 +298,10 @@ class ExchangeImpl {
             o.setWrappedStream(ros);
             close = true;
             flush = true;
+            // the raw streams now belong to the upgrade/tunnel code: reads
+            // and writes may come from different threads, so the
+            // connection's pre-read flush hook must stand down
+            connection.streamsHandedOff = true;
         } else { /* standard response with possible response data */
             if (contentLen == 0) {
                 if (http10) {
@@ -394,7 +398,16 @@ class ExchangeImpl {
                 total += keyLen + 2 + val.length() + 2;
             }
         }
-        byte[] head = new byte[total];
+        // per-connection scratch: the h1 response head is written on the
+        // connection's single VT, so the assembly buffer is reused across
+        // responses (this was a per-response allocation)
+        byte[] head = connection.headerScratch;
+        if (head == null || head.length < total) {
+            head = new byte[total];
+            if (total <= 8192) {
+                connection.headerScratch = head;
+            }
+        }
         int pos = 0;
         System.arraycopy(statusLine, 0, head, pos, statusLine.length);
         pos += statusLine.length;

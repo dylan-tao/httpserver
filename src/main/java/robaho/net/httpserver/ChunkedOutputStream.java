@@ -147,7 +147,11 @@ class ChunkedOutputStream extends FilterOutputStream {
             }
             /* write an empty chunk */
             writeChunk();
-            out.flush();
+            // flush only when no pipelined request is waiting: the batch
+            // coalesces (see FixedLengthOutputStream.close)
+            if (!t.getConnection().hasBufferedInput()) {
+                out.flush();
+            }
             /* some clients close the connection before empty chunk is sent */
         } catch (IOException e) {
             // make the failure visible instead of silently swallowing it

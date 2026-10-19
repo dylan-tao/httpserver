@@ -87,11 +87,15 @@ class FixedLengthOutputStream extends FilterOutputStream {
             throw new IOException("insufficient bytes written to stream");
         }
 
-        // always flush the response first (the old available() heuristic left
-        // responses stuck in the socket buffer): the client may be waiting for
-        // this response before sending the rest of its body, which drain()
-        // then collects within its bounded wait
-        flush();
+        // flush the response before draining, but only when no pipelined
+        // request is already waiting in the input buffer: with one waiting,
+        // this response coalesces with the rest of the batch (flushed when
+        // the input drains, or right before the next blocking read). the
+        // drain case is unaffected: a client trickling its remaining body
+        // has nothing buffered, so the flush fires and unblocks it
+        if (!t.getConnection().hasBufferedInput()) {
+            flush();
+        }
 
         t.drainOriginalInputStream();
     }
