@@ -235,7 +235,9 @@ class ExchangeImpl {
         }
         this.rcode = rCode;
         PlaceholderOutputStream o = getPlaceholderResponseBody();
-        ros.write(statusLineBytes(rCode));
+        // the status line is written as part of writeHeaders' single buffer:
+        // if header validation fails nothing reaches the stream, so a
+        // handler that catches and retries cannot emit a double status line
         boolean noContentToSend = false; // assume there is content
         boolean noContentLengthHeader = false; // must not send Content-length is set
 
@@ -334,7 +336,7 @@ class ExchangeImpl {
             }
         }
 
-        writeHeaders(rspHdrs, ros);
+        writeHeaders(statusLineBytes(rCode), rspHdrs, ros);
         this.rspContentLen = contentLen;
         sentHeaders = !informational;
         if(logger.isLoggable(Level.TRACE)) {
@@ -372,12 +374,14 @@ class ExchangeImpl {
         return pos;
     }
 
-    void writeHeaders(Headers map, OutputStream os) throws IOException {
-        // assemble the whole head into ONE buffer and write it once: the old
-        // per-header 4-write pattern cost ~18 virtual calls and ~9 byte[]
-        // allocations per response. ISO-8859-1 encodes one byte per char, so
-        // the char counts size the buffer exactly
-        int total = 2; // trailing CRLF
+    void writeHeaders(byte[] statusLine, Headers map, OutputStream os) throws IOException {
+        // assemble the status line and the whole head into ONE buffer and
+        // write it once: the old per-header 4-write pattern cost ~18 virtual
+        // calls and ~9 byte[] allocations per response. ISO-8859-1 encodes
+        // one byte per char, so the char counts size the buffer exactly.
+        // including the status line here gives all-or-nothing semantics: a
+        // validation failure leaves nothing on the wire
+        int total = statusLine.length + 2; // trailing CRLF
         for (Map.Entry<String, List<String>> entry : map.entrySet()) {
             String key = entry.getKey();
             int keyLen = key.length();
@@ -392,6 +396,8 @@ class ExchangeImpl {
         }
         byte[] head = new byte[total];
         int pos = 0;
+        System.arraycopy(statusLine, 0, head, pos, statusLine.length);
+        pos += statusLine.length;
         for (Map.Entry<String, List<String>> entry : map.entrySet()) {
             String key = entry.getKey();
             for (String val : entry.getValue()) {

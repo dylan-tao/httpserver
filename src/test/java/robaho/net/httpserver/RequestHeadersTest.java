@@ -30,7 +30,8 @@ public class RequestHeadersTest {
 
         Request r = new Request(is,os);
         assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertEquals(r.headers().getFirst("KEY"),"VAL2");
+        // RFC 9112 5.2: obs-fold is replaced by a single SP
+        assertEquals(r.headers().getFirst("KEY"),"VAL 2");
     }
     @Test
     public void TestMultipleHeaders() throws IOException {
@@ -116,11 +117,12 @@ public class RequestHeadersTest {
     }
 
     @Test
-    public void TestObsFoldTabAndNoSeparator() throws IOException {
-        // a tab-led line folds into the value; no separator is inserted
+    public void TestObsFoldTabInsertsSpace() throws IOException {
+        // a tab-led line folds into the value; the obs-fold is replaced by
+        // a single SP (RFC 9112 5.2)
         String request = "GET blah\r\nKEY:VAL\r\n\tEXT\r\n\r\n";
         var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("VALEXT", r.headers().getFirst("KEY"));
+        assertEquals("VAL EXT", r.headers().getFirst("KEY"));
     }
 
     @Test
@@ -134,10 +136,36 @@ public class RequestHeadersTest {
     }
 
     @Test
-    public void TestNoColonHeaderHasEmptyValue() throws IOException {
+    public void TestNoColonHeaderRejected() throws IOException {
+        // a header line without a colon is a malformed field-line
+        // (RFC 9112 5) and is rejected, matching the JDK
         String request = "GET blah\r\nKEYNOOLON\r\n\r\n";
         var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("", r.headers().getFirst("KEYNOOLON"));
+        assertThrows(IOException.class, () -> r.headers());
+    }
+
+    @Test
+    public void TestIllegalHeaderNameRejected() throws IOException {
+        // a space inside the field-name is not an RFC 7230 tchar
+        String request = "GET blah\r\nFoo Bar: 1\r\n\r\n";
+        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+        assertThrows(IOException.class, () -> r.headers());
+    }
+
+    @Test
+    public void TestHeaderBlockBudgetExceeded() throws IOException {
+        // the total header block budget (default 380KB) bounds the worst
+        // case that the per-line and count limits alone allow (~25MB)
+        byte[] bigValue = new byte[60 * 1024];
+        java.util.Arrays.fill(bigValue, (byte) 'v');
+        StringBuilder sb = new StringBuilder("GET blah\r\n");
+        for (int i = 0; i < 8; i++) { // 8 x ~60KB = ~480KB > 380KB
+            sb.append("X-Big-").append(i).append(':').append(new String(bigValue)).append("\r\n");
+        }
+        sb.append("\r\n");
+        var r = new Request(new ByteArrayInputStream(sb.toString().getBytes()), new ByteArrayOutputStream());
+        assertEquals("GET blah", r.requestLine());
+        assertThrows(IOException.class, () -> r.headers());
     }
 
     @Test

@@ -46,6 +46,13 @@ public class ServerConfig {
     // responsible for
     // timing out request/response if max request/response time is configured
     private static final int DEFAULT_MAX_REQ_HEADERS = 200;
+    // maximum total size of a received HTTP/1.1 header block (request line +
+    // all name/value bytes + 32 per pair, mirroring RFC 9113
+    // SETTINGS_MAX_HEADER_LIST_SIZE accounting). the per-line and count
+    // limits alone allow 200 x 128KB = ~25MB per request; this bounds it.
+    // <= 0 means unlimited (same semantics as the JDK's
+    // sun.net.httpserver.maxReqHeaderSize)
+    private static final int DEFAULT_MAX_REQ_HEADER_SIZE = 380 * 1024;
     private static final long DEFAULT_DRAIN_AMOUNT = 64 * 1024;
 
     private static final int DEFAULT_HTTP2_MAX_FRAME_SIZE = 16384;
@@ -81,6 +88,7 @@ public class ServerConfig {
     private static int maxIdleConnections;
     // The maximum number of request headers allowable
     private static int maxReqHeaders;
+    private static int maxReqHeaderSize;
     // max time a request or response is allowed to take
     private static long maxReqTime;
 
@@ -161,6 +169,12 @@ public class ServerConfig {
                         if (maxReqHeaders <= 0) {
                             maxReqHeaders = DEFAULT_MAX_REQ_HEADERS;
                         }
+
+                        // <= 0 means unlimited
+                        maxReqHeaderSize = Math.max(
+                                Integer.getInteger(pkg + ".maxReqHeaderSize",
+                                        DEFAULT_MAX_REQ_HEADER_SIZE),
+                                0);
 
                         maxReqTime = Long.getLong(pkg + ".maxReqTime",
                                 DEFAULT_MAX_REQ_TIME);
@@ -271,6 +285,12 @@ public class ServerConfig {
 
     static int getMaxReqHeaders() {
         return maxReqHeaders;
+    }
+
+    /** total received HTTP/1.1 header block budget in bytes; <= 0 means
+     * unlimited (mirrors sun.net.httpserver.maxReqHeaderSize) */
+    static int getMaxReqHeaderSize() {
+        return maxReqHeaderSize;
     }
 
     /**

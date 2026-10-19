@@ -83,6 +83,9 @@ class ServerImpl {
     /** O(1) live connection count: deriving it from allConnections.size()
      * walks the whole backing map on every accept */
     private final java.util.concurrent.atomic.AtomicInteger connectionCount = new java.util.concurrent.atomic.AtomicInteger();
+    // in-flight exchanges (h1 + h2 doFilter sections): lets stop(delay) return
+    // as soon as the server goes idle instead of sleeping the full delay
+    private final java.util.concurrent.atomic.AtomicInteger activeExchanges = new java.util.concurrent.atomic.AtomicInteger();
     private volatile boolean finished = false;
     private boolean bound = false;
     private boolean started = false;
@@ -267,6 +270,12 @@ class ServerImpl {
         }
         long latest = System.currentTimeMillis() + delay * 1000L;
         while (System.currentTimeMillis() < latest) {
+            if (activeExchanges.get() == 0) {
+                // all in-flight exchanges completed and no new ones can
+                // start (finished is already set): return early instead of
+                // sleeping out the full delay (JDK parity)
+                break;
+            }
             // sleep the remaining interval (in coarse steps) instead of a
             // fixed yield+sleep that overshoots the deadline
             long remaining = latest - System.currentTimeMillis();
@@ -344,9 +353,11 @@ class ServerImpl {
      */
     class Dispatcher implements Runnable {
         public void run() {
+            long backoff = 1;
             while (true) {
                 try {
                     Socket s = socket.accept();
+                    backoff = 1;
                     try {
                         executor.execute(() -> {
                         try {
@@ -371,10 +382,24 @@ class ServerImpl {
                         s.close();
                     }
                 } catch (IOException e) {
-                    if (!isFinishing()) {
-                        logger.log(Level.ERROR, "socket accept failed", e);
+                    if (isFinishing() || socket.isClosed()) {
+                        if (!isFinishing()) {
+                            logger.log(Level.ERROR, "socket accept failed", e);
+                        }
+                        return;
                     }
-                    return;
+                    // a transient accept failure (e.g. EMFILE when the process
+                    // runs out of file descriptors) must not kill the
+                    // dispatcher: retry with exponential backoff so the server
+                    // recovers once the resource is freed
+                    logger.log(Level.ERROR, "socket accept failed, retrying in " + backoff + "ms", e);
+                    try {
+                        Thread.sleep(backoff);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    backoff = Math.min(backoff * 2, 1000);
                 }
             }
         }
@@ -652,6 +677,7 @@ class ServerImpl {
             logger.log(Level.TRACE,() -> "http2 request on "+connection+" "+method+" for "+uri);
 
             try {
+                activeExchanges.incrementAndGet();
                 buildChain(ctx).doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
             } catch (IOException e) {
                 // common with clients breaking connections; the stream is
@@ -660,6 +686,8 @@ class ServerImpl {
             } catch (Exception e) {
                 logger.log(Level.WARNING, "Dispatcher Exception on "+stream, e);
                 stats.handleExceptionCount.incrementAndGet();
+            } finally {
+                activeExchanges.decrementAndGet();
             }
         }
     }
@@ -749,6 +777,10 @@ class ServerImpl {
                 req = new Request(rawin, rawout);
                 requestLine = req.requestLine();
             } catch (IOException e) {
+                // mark in-request before the 400 write: with inRequest false
+                // the idle cleaner may concurrently shrink the output buffer
+                // the reply is written into
+                connection.inRequest = true;
                 reject(Code.HTTP_BAD_REQUEST, "-", "Request line too long");
                 return;
             }
@@ -789,6 +821,12 @@ class ServerImpl {
                 return;
             }
             String uriStr = requestLine.substring(start, space);
+            // reject authority-form ambiguity: "//" can be parsed as an
+            // authority component rather than a path (JDK parity)
+            if (uriStr.startsWith("//")) {
+                reject(Code.HTTP_BAD_REQUEST, requestLine, "Bad request URI");
+                return;
+            }
             URI uri;
             try {
                 uri = new URI(uriStr);
@@ -909,10 +947,15 @@ class ServerImpl {
             tx.getRequestBody();
             tx.getResponseBody();
             Filter.Chain uc = buildChain(ctx);
-            if (https) {
-                uc.doFilter(new HttpsExchangeImpl(tx));
-            } else {
-                uc.doFilter(new HttpExchangeImpl(tx));
+            activeExchanges.incrementAndGet();
+            try {
+                if (https) {
+                    uc.doFilter(new HttpsExchangeImpl(tx));
+                } else {
+                    uc.doFilter(new HttpExchangeImpl(tx));
+                }
+            } finally {
+                activeExchanges.decrementAndGet();
             }
             if (tx.close) {
                 closeConnection(connection);

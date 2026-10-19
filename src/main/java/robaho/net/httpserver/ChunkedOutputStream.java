@@ -152,6 +152,10 @@ class ChunkedOutputStream extends FilterOutputStream {
         } catch (IOException e) {
             // make the failure visible instead of silently swallowing it
             t.getServerImpl().getLogger().log(Level.DEBUG, "error writing final chunk", e);
+            // the chunked response is truncated mid-stream: the connection
+            // must not be reused or the client would misparse the bytes
+            // that follow as the next response
+            t.close = true;
         } finally {
             closed = true;
             t.drainOriginalInputStream();

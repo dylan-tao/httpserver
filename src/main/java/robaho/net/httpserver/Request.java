@@ -40,6 +40,16 @@ class Request {
     static final char CR = 13;
     static final char LF = 10;
 
+    /** RFC 7230 tchar: the only bytes legal in a header field name */
+    private static final boolean[] TCHAR = new boolean[128];
+    static {
+        for (char c = '0'; c <= '9'; c++) TCHAR[c] = true;
+        for (char c = 'a'; c <= 'z'; c++) TCHAR[c] = true;
+        for (char c = 'A'; c <= 'Z'; c++) TCHAR[c] = true;
+        for (char c : "!#$%&'*+-.^_`|~".toCharArray()) TCHAR[c] = true;
+    }
+    private static final byte[] SP = { ' ' };
+
     private final NoSyncBufferedInputStream is;
     private final OutputStream os;
 
@@ -168,6 +178,11 @@ class Request {
         // line cap now rejects such pathological lines with the same
         // "header line too long" error
         int lineLimit = 2 * limit + 2;
+        // total header block budget (RFC 9113 SETTINGS_MAX_HEADER_LIST_SIZE
+        // accounting): request line + every raw line + 32 per pair. without
+        // it the per-line and count limits alone allow ~25MB per request
+        int budget = ServerConfig.getMaxReqHeaderSize();
+        long consumed = (requestLine == null ? 0 : requestLine.length()) + 32L;
 
         while (true) {
             int len = is.readLine(lineLimit);
@@ -175,6 +190,10 @@ class Request {
                 // EOF: a pending unterminated header is dropped, exactly as
                 // the old loop dropped its builders at EOF
                 break;
+            }
+            consumed += len + 2L;
+            if (budget > 0 && consumed > budget) {
+                throw new IOException("Maximum header size (" + budget + ") exceeded");
             }
             byte[] raw = is.lineBuffer();
             // header CR rule: ALL trailing CRs are swallowed (the old parser
@@ -197,11 +216,14 @@ class Request {
                 break;
             }
             // obs-fold: a line starting with whitespace continues the pending
-            // value (leading whitespace skipped, no separator inserted)
+            // value (RFC 9112 5.2: replace obs-fold with SP)
             if (raw[0] == ' ' || raw[0] == '\t') {
                 int start = 0;
                 while (start < end && (raw[start] == ' ' || raw[start] == '\t')) {
                     start++;
+                }
+                if (!value.isEmpty() && start < end) {
+                    appendLimited(value, SP, 0, 1, limit);
                 }
                 appendLimited(value, raw, start, end - start, limit);
                 continue;
@@ -210,9 +232,10 @@ class Request {
             if (!key.isEmpty() || !value.isEmpty()) {
                 addHeader(key, value, ++headerCount);
             }
+            consumed += 32; // per-pair overhead, RFC 9113 accounting
             // name up to the FIRST colon (first char upper, rest lower, as
             // the old parser normalized); then the value after leading
-            // whitespace. no colon: everything is the name, value empty
+            // whitespace
             int colon = 0;
             while (colon < end && raw[colon] != ':') {
                 colon++;
@@ -220,8 +243,23 @@ class Request {
             if (colon > limit) {
                 throw new IOException("header line too long (limit " + limit + " bytes)");
             }
-            for (int j = 0; j < colon; j++) {
+            if (colon == 0 || colon >= end) {
+                // empty name, or no colon at all: both are malformed
+                // field-lines (RFC 9112 5) and rejected with 400 by the JDK
+                throw new IOException(colon == 0 ? "empty header name" : "header line without colon");
+            }
+            // validate the field-name: RFC 7230 tchar only. trailing
+            // whitespace before the colon is tolerated (it is trimmed by
+            // the builder, preserving the historical "KEY : VAL" behavior)
+            int nameEnd = colon;
+            while (nameEnd > 0 && (raw[nameEnd - 1] == ' ' || raw[nameEnd - 1] == '\t')) {
+                nameEnd--;
+            }
+            for (int j = 0; j < nameEnd; j++) {
                 char c = (char) (raw[j] & 0xFF);
+                if (c >= 128 || !TCHAR[c]) {
+                    throw new IOException("invalid character in header name");
+                }
                 key.append(j == 0 ? Character.toUpperCase(c) : Character.toLowerCase(c));
             }
             if (colon < end) {
