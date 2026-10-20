@@ -21,6 +21,7 @@ import robaho.net.httpserver.NoSyncBufferedOutputStream;
 import robaho.net.httpserver.OptimizedHeaders;
 import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.hpack.HPackContext;
+import robaho.net.httpserver.http2.frame.SettingParameter;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.DataFrame;
 import robaho.net.httpserver.http2.frame.FrameFlag;
@@ -36,8 +37,8 @@ public class HTTP2Stream {
     private final int streamId;
 
     // needs to be accessible for connection to adjust based on SettingsFrame
-    final AtomicLong sendWindow = new AtomicLong(65535);
-    private final AtomicLong receiveWindow = new AtomicLong(65535);
+    final AtomicLong sendWindow = new AtomicLong(SettingParameter.INITIAL_WINDOW_SIZE);
+    private final AtomicLong receiveWindow = new AtomicLong(SettingParameter.INITIAL_WINDOW_SIZE);
     private final int initialWindowSize;
 
     private final HTTP2Connection connection;
@@ -90,7 +91,7 @@ public class HTTP2Stream {
             receiveWindow.set((int)(setting.value));
             initialWindowSize = (int)setting.value;
         } else {
-            initialWindowSize = 65535;
+            initialWindowSize = (int) SettingParameter.INITIAL_WINDOW_SIZE;
         }
         if(logger.isLoggable(Level.TRACE)) {
             logger.log(Level.TRACE,() -> "new stream, send window size "+sendWindow.get()+", receive window size "+receiveWindow.get()+" on stream "+streamId);

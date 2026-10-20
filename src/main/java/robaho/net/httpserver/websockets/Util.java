@@ -41,7 +41,10 @@ import java.util.Base64;
 
 import com.sun.net.httpserver.HttpExchange;
 
-public class Util {
+public final class Util {
+    private Util() {
+    }
+
 
     public static final String HEADER_UPGRADE = "Upgrade";
 

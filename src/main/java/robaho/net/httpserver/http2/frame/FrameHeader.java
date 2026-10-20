@@ -114,9 +114,9 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
      * avoids the 9-byte allocation of encode() when the caller already has
      * the target array (HPACK frame assembly, the locked DATA write path) */
     public static void encodeInto(byte[] buffer, int length, FrameType frameType, FlagSet flags, int streamId) {
-        Utils.convertToBinary(buffer, 0, length, 3);
+        Utils.writeInt32(buffer, 0, length, 3);
         buffer[3] = (byte) (frameType.value & 0xFF);
         buffer[4] = flags.value();
-        Utils.convertToBinary(buffer, 5, streamId, 4);
+        Utils.writeInt32(buffer, 5, streamId, 4);
     }
 }

@@ -46,7 +46,7 @@ public class AuthFilter extends Filter {
         authenticator = a;
     }
 
-    public void consumeInput(HttpExchange t) throws IOException {
+    private void consumeInput(HttpExchange t) throws IOException {
         InputStream i = t.getRequestBody();
         byte[] b = new byte[4096];
         while (i.read(b) != -1)

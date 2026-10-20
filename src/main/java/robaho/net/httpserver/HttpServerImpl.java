@@ -34,10 +34,6 @@ public class HttpServerImpl extends HttpServer {
 
     final ServerImpl server;
 
-    HttpServerImpl() throws IOException {
-        this(new InetSocketAddress(80), 0);
-    }
-
     HttpServerImpl(
             InetSocketAddress addr, int backlog) throws IOException {
         server = new ServerImpl(this, "http", addr, backlog);

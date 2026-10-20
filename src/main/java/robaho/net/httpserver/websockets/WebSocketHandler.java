@@ -19,12 +19,12 @@ public abstract class WebSocketHandler implements HttpHandler {
         // (e.g. from a stubbed exchange) is not rejected.
         String requestMethod = exchange.getRequestMethod();
         if (requestMethod != null && !"GET".equalsIgnoreCase(requestMethod)) {
-            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1L);
+            Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST, "websocket handshake must be a GET");
             return;
         }
 
         if (!isWebsocketRequested(headers)) {
-            exchange.sendResponseHeaders(Code.HTTP_BAD_REQUEST, -1L);
+            Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST, "not a websocket upgrade request");
             return;
         }
 
@@ -38,8 +38,6 @@ public abstract class WebSocketHandler implements HttpHandler {
             Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST, "Missing Websocket-Key");
             return;
         }
-
-        WebSocket webSocket = openWebSocket(exchange);
 
         try {
             exchange.getResponseHeaders().add(Util.HEADER_WEBSOCKET_ACCEPT,
@@ -66,7 +64,12 @@ public abstract class WebSocketHandler implements HttpHandler {
         exchange.getResponseHeaders().add(Util.HEADER_UPGRADE, Util.HEADER_UPGRADE_VALUE);
         exchange.getResponseHeaders().add(Util.HEADER_CONNECTION, Util.HEADER_CONNECTION_VALUE);
 
-        exchange.sendResponseHeaders(101, 0);
+        exchange.sendResponseHeaders(Code.HTTP_SWITCHING_PROTOCOLS, 0);
+
+        // construct the user websocket only after the 101: the handshake
+        // result (accepted subprotocol etc.) is known at this point, and a
+        // handshake failure above never creates a half-initialized socket
+        WebSocket webSocket = openWebSocket(exchange);
 
         // this won't return until websocket is closed
         webSocket.readWebsocket();

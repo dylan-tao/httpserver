@@ -2,11 +2,16 @@ package robaho.net.httpserver;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.time.format.TextStyle;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.util.Locale;
 import java.util.TimerTask;
 
 class ActivityTimer {
+    /** RFC 9110 IMF-fixdate, e.g. "Sun, 06 Nov 1994 08:49:37 GMT" */
+    private static final DateTimeFormatter HTTP_DATE =
+            DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US);
+
     private static volatile long now = System.currentTimeMillis();
     private static volatile String dateAndTime = formatDate();
     /** the Date header value pre-encoded: written on every response, encoding
@@ -20,36 +25,14 @@ class ActivityTimer {
         // its own daemon timer so it keeps ticking independent of any single
         // server's lifecycle (previously it was scheduled per server instance,
         // and the clock froze for everyone once the last instance stopped)
+        // 750ms: the refresh must be comfortably under 1s so the cached
+        // Date header is never more than ~1.75s stale (RFC 9110 allows
+        // clocks up to 60s skew, so this is far within tolerance)
         TIMER.schedule(createTask(), 750, 750);
     }
 
     private static String formatDate() {
-        var now = Instant.now();
-        var datetime = now.atOffset(ZoneOffset.UTC);
-        StringBuilder sb = new StringBuilder(32);
-        sb.append(datetime.getDayOfWeek().getDisplayName(TextStyle.SHORT,Locale.US));
-        sb.append(", ");
-        int day = datetime.getDayOfMonth();
-        if(day<10) sb.append("0");
-        sb.append(day);
-        sb.append(" ");
-        sb.append(datetime.getMonth().getDisplayName(TextStyle.SHORT,Locale.US));
-        sb.append(" ");
-        sb.append(datetime.getYear());
-        sb.append(" ");
-        int hour = datetime.getHour();
-        if(hour<10) sb.append("0");
-        sb.append(hour);
-        sb.append(":");
-        int minute = datetime.getMinute();
-        if(minute<10) sb.append("0");
-        sb.append(minute);
-        sb.append(":");
-        int second = datetime.getSecond();
-        if(second<10) sb.append("0");
-        sb.append(second);
-        sb.append(" GMT");
-        return sb.toString();
+        return Instant.now().atOffset(ZoneOffset.UTC).format(HTTP_DATE);
     }
 
     public static long now() {

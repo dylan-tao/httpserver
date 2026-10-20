@@ -85,7 +85,9 @@ public class HPackContext {
                     index = decodeLiteralFieldWithoutIndexing(buffer, index, headerField);
                 } else if ((buffer[index] & 0xF0) == 0x10) {
                     // Literal Header Field never Indexed
-                    index = decodeLiteralFieldNeverIndexed(buffer, index, headerField);
+                    // never-indexed and without-indexing decode identically: the 4-bit
+                    // prefix distinction was consumed by decodeFieldSegments
+                    index = decodeLiteralFieldWithoutIndexing(buffer, index, headerField);
                 } else if((buffer[index] & 0xE0) == 0x20) {
                     if(!headers.isEmpty()) {
                         throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "Dynamic table size update must occur at beginning of block");
@@ -249,16 +251,6 @@ public class HPackContext {
 
     private static int packedIndex(long packed) {
         return (int) packed;
-    }
-
-    private int decodeLiteralFieldNeverIndexed(byte[] buffer, int index, HTTP2HeaderField headerField) throws HTTP2Exception {
-        long packed = decodeUnsignedInteger(buffer, index, 4);
-        int headerIndex = packedValue(packed);
-        index = packedIndex(packed);
-
-        index = decodeFieldName(buffer, index, headerIndex, headerField);
-        index = decodeFieldValue(buffer, index, headerField);
-        return index;
     }
 
 

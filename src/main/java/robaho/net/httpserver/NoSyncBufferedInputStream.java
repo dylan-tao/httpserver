@@ -258,6 +258,22 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
         return lineBuf;
     }
 
+    /** mark/reset are not supported: the buffer is swapped and shrunk by the
+     * connection lifecycle, so a saved mark position is meaningless */
+    @Override
+    public boolean markSupported() {
+        return false;
+    }
+
+    @Override
+    public void mark(int readlimit) {
+    }
+
+    @Override
+    public void reset() throws IOException {
+        throw new IOException("mark/reset not supported");
+    }
+
     /**
      * See
      * the general contract of the {@code read}

@@ -34,6 +34,12 @@ public abstract class BufferedWebSocket extends WebSocket {
     /** wakes the drain task so it can exit when the connection closes */
     private static final WebSocketFrame POISON_PILL = new WebSocketFrame(OpCode.Close, true, new byte[0]);
 
+    /** how long close() waits for the drain task to flush queued frames
+     * (including a queued CloseFrame) before cancelling it: long enough for
+     * a full queue under normal load, short enough that close() stays
+     * responsive when the peer stops reading */
+    private static final long DRAIN_TIMEOUT_SECONDS = 2;
+
     private final LinkedBlockingQueue<WebSocketFrame> queue = new LinkedBlockingQueue<>(MAX_PENDING_FRAMES);
     private final AtomicInteger pending = new AtomicInteger();
     /** total bytes of queued (not yet written) frames: the frame-count bound
@@ -100,7 +106,7 @@ public abstract class BufferedWebSocket extends WebSocket {
             // from the drain task itself this would deadlock on our own
             // future for the full 2s timeout and then self-interrupt
             try {
-                future.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                future.get(DRAIN_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
             } catch (Exception ignored) {
                 future.cancel(true);
             }
@@ -126,6 +132,8 @@ public abstract class BufferedWebSocket extends WebSocket {
             onException(ex);
             doClose(CloseCode.AbnormalClosure, ex.toString(), false);
         } catch (InterruptedException ex) {
+            // the drain task is cancelled via future.cancel(true) on the
+            // close timeout path - interruption is the expected exit signal
         }
     }
 

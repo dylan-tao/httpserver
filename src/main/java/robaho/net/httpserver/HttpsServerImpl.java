@@ -38,10 +38,6 @@ public class HttpsServerImpl extends HttpsServer {
 
     final ServerImpl server;
 
-    HttpsServerImpl() throws IOException {
-        this(new InetSocketAddress(443), 0);
-    }
-
     HttpsServerImpl(
             InetSocketAddress addr, int backlog) throws IOException {
         server = new ServerImpl(this, "https", addr, backlog);

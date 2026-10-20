@@ -168,8 +168,8 @@ public class HTTP2Connection {
     final Logger logger;
     final HPackContext hpack = new HPackContext();
 
-    final AtomicLong sendWindow = new AtomicLong(65535);
-    final AtomicInteger receiveWindow = new AtomicInteger(65535);
+    final AtomicLong sendWindow = new AtomicLong(SettingParameter.INITIAL_WINDOW_SIZE);
+    final AtomicInteger receiveWindow = new AtomicInteger((int) SettingParameter.INITIAL_WINDOW_SIZE);
     final AtomicInteger requestsInProgress = new AtomicInteger();
 
     final HTTP2Stats stats;
@@ -177,7 +177,7 @@ public class HTTP2Connection {
     private final int connectionWindowSize;
 
     private int maxConcurrentStreams = -1;
-    private int highNumberStreams = 0;
+    private int peakConcurrentStreams = 0;
 
     private final Lock lock = new ReentrantLock();
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -228,7 +228,7 @@ public class HTTP2Connection {
 
     @Override
     public String toString() {
-        return "{" + httpConnection + ", streams=" + http2Streams.size() + ", high " + highNumberStreams + "}";
+        return "{" + httpConnection + ", streams=" + http2Streams.size() + ", high " + peakConcurrentStreams + "}";
     }
 
     public void close() {
@@ -277,13 +277,13 @@ public class HTTP2Connection {
      * @throws IOException
      */
     public boolean hasProperPreface() throws IOException {
-        String preface_match = (httpConnection.isSSL()) ? PREFACE : PARTIAL_PREFACE;
-        byte[] preface = new byte[preface_match.length()];
+        String expectedPreface = (httpConnection.isSSL()) ? PREFACE : PARTIAL_PREFACE;
+        byte[] preface = new byte[expectedPreface.length()];
         // a single read() may return short when the preface is segmented by
         // the transport; readFully loops until the whole preface arrived
         readFully(inputStream, preface);
         String prefaceStr = new String(preface);
-        return prefaceStr.equals(preface_match);
+        return prefaceStr.equals(expectedPreface);
     }
 
     public boolean isClosed() {
@@ -638,7 +638,7 @@ public class HTTP2Connection {
                     inHeaders = false;
                     continue;
                 }
-                highNumberStreams = Math.max(highNumberStreams, currentSize);
+                peakConcurrentStreams = Math.max(peakConcurrentStreams, currentSize);
                 byte[] headerBlock = Utils.combineByteArrays(headerBlockFragments);
                 HeaderFields fields = new HeaderFields();
                 fields.addAll(hpack.decodeFieldSegments(headerBlock));
@@ -727,23 +727,17 @@ public class HTTP2Connection {
     }
 
     public void sendSettingsAck() throws IOException {
-        try {
-            byte[] frame = FrameHeader.encode(0, FrameType.SETTINGS, FlagSet.of(FrameFlag.ACK), 0);
-            HTTP2Connection.this.writeFrame(frame);
-        } finally {
-            logger.log(Level.TRACE, () -> "sent Settings Ack");
-        }
+        byte[] frame = FrameHeader.encode(0, FrameType.SETTINGS, FlagSet.of(FrameFlag.ACK), 0);
+        writeFrame(frame);
+        logger.log(Level.TRACE, () -> "sent Settings Ack");
     }
 
     public void sendMySettings() throws IOException {
-        try {
-            FrameHeader header = new FrameHeader(0, FrameType.SETTINGS, FrameFlag.NONE, 0);
-            SettingsFrame frame = new SettingsFrame(header);
-            localSettings.forEach(setting -> frame.getSettingParameters().add(setting));
-            HTTP2Connection.this.writeFrame(frame.encode());
-        } finally {
-            logger.log(Level.TRACE, () -> "sent My Settings");
-        }
+        FrameHeader header = new FrameHeader(0, FrameType.SETTINGS, FrameFlag.NONE, 0);
+        SettingsFrame frame = new SettingsFrame(header);
+        localSettings.forEach(setting -> frame.getSettingParameters().add(setting));
+        writeFrame(frame.encode());
+        logger.log(Level.TRACE, () -> "sent My Settings");
     }
 
     public void sendWindowUpdate() throws IOException {
@@ -760,7 +754,7 @@ public class HTTP2Connection {
         try {
             receiveWindow.addAndGet(increment);
             WindowUpdateFrame frame = new WindowUpdateFrame(0, increment);
-            HTTP2Connection.this.writeFrame(frame.encode());
+            writeFrame(frame.encode());
         } finally {
             if(logger.isLoggable(Level.DEBUG)) {
                 logger.log(Level.DEBUG, () -> "sent connection window update, previous "+current+", now "+ receiveWindow.get());
@@ -782,20 +776,20 @@ public class HTTP2Connection {
 
     public void sendResetStream(HTTP2ErrorCode errorCode, int streamId) throws IOException {
         ResetStreamFrame frame = new ResetStreamFrame(errorCode, streamId);
-        HTTP2Connection.this.writeFrame(frame.encode());
+        writeFrame(frame.encode());
         logger.log(Level.TRACE, () -> "Sent ResetStream " + errorCode);
     }
 
     public void sendPing() throws IOException {
         PingFrame frame = new PingFrame();
-        HTTP2Connection.this.writeFrame(frame.encode());
+        writeFrame(frame.encode());
         if (HTTP2Stats.ENABLED) stats.pingsSent.incrementAndGet();
         logger.log(Level.TRACE, () -> "Sent Ping ");
     }
 
     private void sendPingAck(PingFrame ping) throws IOException {
         PingFrame frame = new PingFrame(ping);
-        HTTP2Connection.this.writeFrame(frame.encode());
+        writeFrame(frame.encode());
         logger.log(Level.TRACE, "Sent Ping Ack");
     }
 

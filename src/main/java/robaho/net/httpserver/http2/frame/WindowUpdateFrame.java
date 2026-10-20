@@ -57,7 +57,7 @@ public class WindowUpdateFrame extends BaseFrame {
     public byte[] encode() {
         byte[] buffer = new byte[9+4];
         getHeader().encode(buffer);
-        Utils.convertToBinary(buffer,9,windowSizeIncrement);
+        Utils.writeInt32(buffer,9,windowSizeIncrement,4);
         return buffer;
     }
 }

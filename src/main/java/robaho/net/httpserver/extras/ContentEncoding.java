@@ -5,9 +5,15 @@ import java.util.List;
 
 import com.sun.net.httpserver.Headers;
 
+/**
+ * extracts the charset parameter from the Content-Type header. despite the
+ * class name (kept for API compatibility), this has nothing to do with
+ * Content-Encoding - that header describes the response compression (e.g.
+ * gzip) and never carries a charset.
+ */
 public class ContentEncoding {
 
-    private static final String defaultCharset = StandardCharsets.ISO_8859_1.name();
+    private static final String DEFAULT_CHARSET = StandardCharsets.ISO_8859_1.name();
 
     /**
      * @return the charset parameter of the Content-type header, or the default.
@@ -17,7 +23,7 @@ public class ContentEncoding {
     public static String encoding(Headers headers) {
         List<String> values = headers.get("Content-type");
         if (values == null) {
-            return defaultCharset;
+            return DEFAULT_CHARSET;
         }
         for (String value : values) {
             for (String part : value.split(";")) {
@@ -30,6 +36,6 @@ public class ContentEncoding {
                 }
             }
         }
-        return defaultCharset;
+        return DEFAULT_CHARSET;
     }
 }

@@ -84,7 +84,7 @@ public class FormParser {
             String key = eq == -1 ? keyValue : keyValue.substring(0, eq);
             String value = eq == -1 ? null : keyValue.substring(eq + 1);
 
-            List<String> values = params.computeIfAbsent(key, k -> new ArrayList());
+            List<String> values = params.computeIfAbsent(key, k -> new ArrayList<>());
             if (value != null) {
                 values.add(value);
             }
@@ -108,7 +108,7 @@ public class FormParser {
             String key = decode(e.getKey(), encoding);
             for (String value : e.getValue()) {
                 String decodedValue = value == null ? null : decode(value, encoding);
-                List<String> values = decodedParams.computeIfAbsent(key, k -> new ArrayList());
+                List<String> values = decodedParams.computeIfAbsent(key, k -> new ArrayList<>());
                 if (decodedValue != null) {
                     values.add(decodedValue);
                 }

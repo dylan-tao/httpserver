@@ -86,11 +86,11 @@ public class MultipartFormParser {
      *
      * @return a map of key to either a String (non-file) or a File
      */
-    public static Map<String, List<Part>> parse(String encoding, String content_type, InputStream is, Path storage) throws IOException {
+    public static Map<String, List<Part>> parse(String encoding, String contentType, InputStream is, Path storage) throws IOException {
         Charset charset = encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
 
 
-        String boundary = parseBoundary(content_type);
+        String boundary = parseBoundary(contentType);
 
         // an unsynchronized buffered stream: the parser reads single bytes, and
         // BufferedInputStream.read() is synchronized per byte

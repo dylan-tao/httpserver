@@ -27,17 +27,17 @@ public class HTTP2Stats {
         double secs = Math.max((now-lastStatsTime)/1000.0, 0.001);
         lastStatsTime = now;
 
-        long _bytes = bytesSent.getAndSet(0);
-        long _frames = framesSent.getAndSet(0);
+        long bytes = bytesSent.getAndSet(0);
+        long frames = framesSent.getAndSet(0);
 
         return
                 "Http2 SSL Connections Since: "+sslConnections.getAndSet(0)+"\n" +
                 "Http2 Non-SSL Connections Since: "+nonsslConnections.getAndSet(0)+"\n" +
                 "Http2 Streams Since: "+totalStreams.getAndSet(0)+"\n" +
                 "Http2 Active Streams: "+activeStreams.get()+"\n" +
-                "Http2 Frames Sent/sec: "+(long)(_frames/(secs))+"\n"+
-                "Http2 Bytes Sent/sec: "+(long)(_bytes/(secs))+"\n"+
-                "Http2 Avg Frame Size: "+ (_frames==0 ? 0 : _bytes/_frames) +"\n"+
+                "Http2 Frames Sent/sec: "+(long)(frames/(secs))+"\n"+
+                "Http2 Bytes Sent/sec: "+(long)(bytes/(secs))+"\n"+
+                "Http2 Avg Frame Size: "+ (frames==0 ? 0 : bytes/frames) +"\n"+
                 "Http2 Flushes/sec: "+(long)(flushes.getAndSet(0)/(secs))+"\n"+
                 "Http2 Pauses/sec: "+(long)(pauses.getAndSet(0)/(secs))+"\n"+
                 "Http2 Pings Sent Since: "+pingsSent.getAndSet(0)+"\n";

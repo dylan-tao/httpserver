@@ -42,8 +42,9 @@ public class Utils {
 
 	}
 
-	public static void convertToBinary(byte[] buffer, int pos, int input) {
-		convertToBinary(buffer, pos, input, 4);
+	/** write a value as N big-endian bytes into the buffer at pos */
+	public static void writeInt32(byte[] buffer, int pos, int input, int length) {
+		convertToBinary(buffer, pos, input, length);
 	}
 
 	public static void convertToBinary(byte[] buffer, int pos, int input, int length) {

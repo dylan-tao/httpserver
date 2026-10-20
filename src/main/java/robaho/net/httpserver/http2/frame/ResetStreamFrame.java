@@ -36,7 +36,7 @@ public class ResetStreamFrame extends BaseFrame {
     }
     public byte[] encode() {
         byte[] buffer = new byte[4];
-        Utils.convertToBinary(buffer, 0, errorCode.getValue());
+        Utils.writeInt32(buffer, 0, errorCode.getValue(),4);
         return Utils.combineByteArrays(List.of(getHeader().encode(),buffer));
     }
 

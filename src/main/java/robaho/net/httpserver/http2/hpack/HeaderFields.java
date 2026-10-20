@@ -19,7 +19,7 @@ public class HeaderFields implements Iterable<HTTP2HeaderField> {
     private static final BloomSet requiredHeaderFields = BloomSet.of(":path",":method",":scheme");
     private static final BloomSet pseudoHeadersIn = BloomSet.of(":authority", ":method", ":path", ":scheme");
 
-    private final List<HTTP2HeaderField> fields = new ArrayList();
+    private final List<HTTP2HeaderField> fields = new ArrayList<>();
     private final OpenAddressMap pseudoHeaders = new OpenAddressMap(8);
 
     private boolean hasNonPseudoHeader = false;
