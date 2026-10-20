@@ -1,17 +1,16 @@
 package robaho.net.httpserver.http2;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.testng.Assert;
 import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 
 /**
  * A trailer header block larger than one frame (HEADERS without END_HEADERS

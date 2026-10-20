@@ -1,13 +1,13 @@
 package robaho.net.httpserver.extras;
 
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-
-import org.testng.Assert;
-import org.testng.annotations.Test;
 
 /** guards the FormParser rewrite (index scanning instead of split): the parse
  *  results must stay identical, including the split() quirks */

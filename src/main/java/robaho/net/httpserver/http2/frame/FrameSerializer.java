@@ -1,11 +1,11 @@
 package robaho.net.httpserver.http2.frame;
 
-import java.io.InputStream;
-
 import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.HTTP2Connection;
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
+
+import java.io.InputStream;
 
 public class FrameSerializer {
 

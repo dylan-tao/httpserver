@@ -24,8 +24,8 @@
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-
 import jdk.test.lib.net.URIBuilder;
+import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -40,7 +40,6 @@ import java.util.logging.SimpleFormatter;
 import java.util.logging.StreamHandler;
 
 import static org.testng.Assert.assertEquals;
-import org.testng.annotations.Test;
 
 
 public class HeadKeepAlive

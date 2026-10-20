@@ -32,10 +32,9 @@
  *           time where the port might appear available again.
  */
 
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-
 import com.sun.net.httpserver.HttpServer;
+
+import java.net.InetSocketAddress;
 
 
 public class SimpleHttpServerTest {

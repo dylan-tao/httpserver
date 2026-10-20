@@ -1,11 +1,11 @@
 package robaho.net.httpserver.http2.frame;
 
-import java.io.IOException;
-import java.io.OutputStream;
-
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
 import robaho.net.httpserver.http2.Utils;
+
+import java.io.IOException;
+import java.io.OutputStream;
 
 public class GoawayFrame extends BaseFrame {
     public final HTTP2ErrorCode errorCode;

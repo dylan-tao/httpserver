@@ -1,5 +1,12 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import org.testng.Assert;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -7,14 +14,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.testng.Assert;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 
 /**
  * Guards the ContextList lookup-cache invariant: the cache only stores exact

@@ -31,6 +31,12 @@
  * @summary  HttpExchange.getResponseBody().close() throws Exception
  */
 
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -41,13 +47,6 @@ import java.net.Proxy;
 import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
-import jdk.test.lib.net.URIBuilder;
 
 public class B6526913 {
 

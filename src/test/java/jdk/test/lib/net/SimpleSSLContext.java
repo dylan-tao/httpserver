@@ -22,12 +22,22 @@
  */
 package jdk.test.lib.net;
 
-import java.util.*;
-import java.io.*;
-import java.security.*;
-import java.security.cert.*;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.security.AccessController;
+import java.security.KeyManagementException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivilegedActionException;
+import java.security.PrivilegedExceptionAction;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateException;
 import java.util.function.Supplier;
-import javax.net.ssl.*;
 
 /**
  * Creates a simple usable SSLContext for SSLSocketFactory or a HttpsServer

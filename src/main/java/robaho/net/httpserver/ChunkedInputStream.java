@@ -25,7 +25,8 @@
 
 package robaho.net.httpserver;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
 
 class ChunkedInputStream extends LeftOverInputStream {
     ChunkedInputStream(ExchangeImpl t, InputStream src) {

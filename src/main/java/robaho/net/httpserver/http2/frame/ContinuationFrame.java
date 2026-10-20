@@ -1,9 +1,9 @@
 package robaho.net.httpserver.http2.frame;
 
+import robaho.net.httpserver.http2.HTTP2Exception;
+
 import java.io.IOException;
 import java.io.OutputStream;
-
-import robaho.net.httpserver.http2.HTTP2Exception;
 
 public class ContinuationFrame extends BaseFrame {
     private final byte[] body;

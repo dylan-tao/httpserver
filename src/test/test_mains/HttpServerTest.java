@@ -30,6 +30,11 @@
  * @run main/othervm HttpServerTest
  */
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -38,11 +43,6 @@ import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URL;
 import java.util.concurrent.CountDownLatch;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-import jdk.test.lib.net.URIBuilder;
 
 public class HttpServerTest implements HttpHandler {
     private static final int HTTP_STATUS_CODE_OK = 200;

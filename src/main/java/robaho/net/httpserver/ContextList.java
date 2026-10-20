@@ -25,7 +25,9 @@
 
 package robaho.net.httpserver;
 
-import java.util.*;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
@@ -77,7 +79,7 @@ class ContextList {
         var ctx = cache.get(key);
         if(ctx!=null) return ctx;
         ctx = findContext(protocol, path, false);
-        // only cache exact matches, otherwise path parameters will 
+        // only cache exact matches, otherwise path parameters will
         // explode memory
         if(ctx!=null && ctx.getPath().equals(path)) {
             cache.put(key,ctx);

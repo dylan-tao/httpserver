@@ -31,13 +31,14 @@
  */
 
 
-import java.nio.charset.Charset;
 import com.sun.net.httpserver.BasicAuthenticator;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.expectThrows;
-import static org.testng.Assert.assertEquals;
+import java.nio.charset.Charset;
+
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.expectThrows;
 
 
 public class BasicAuthenticatorExceptionCheck {

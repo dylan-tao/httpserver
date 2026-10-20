@@ -1,5 +1,7 @@
 package robaho.net.httpserver;
 
+import org.testng.annotations.Test;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -9,7 +11,6 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
-import org.testng.annotations.Test;
 
 public class RequestHeadersTest {
     @Test

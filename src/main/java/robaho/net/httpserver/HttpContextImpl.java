@@ -25,11 +25,18 @@
 
 package robaho.net.httpserver;
 
-import java.util.*;
+import com.sun.net.httpserver.Authenticator;
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
 import java.lang.System.Logger;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import com.sun.net.httpserver.*;
 
 /**
  * HttpContext represents a mapping between a protocol (http or https) together
@@ -75,7 +82,7 @@ class HttpContextImpl extends HttpContext {
 
     /**
      * returns the handler for this context
-     * 
+     *
      * @return the HttpHandler for this context
      */
     public HttpHandler getHandler() {
@@ -94,7 +101,7 @@ class HttpContextImpl extends HttpContext {
 
     /**
      * returns the path this context was created with
-     * 
+     *
      * @return this context's path
      */
     public String getPath() {
@@ -103,7 +110,7 @@ class HttpContextImpl extends HttpContext {
 
     /**
      * returns the server this context was created with
-     * 
+     *
      * @return this context's server
      */
     public HttpServer getServer() {
@@ -116,7 +123,7 @@ class HttpContextImpl extends HttpContext {
 
     /**
      * returns the protocol this context was created with
-     * 
+     *
      * @return this context's path
      */
     public String getProtocol() {

@@ -1,17 +1,16 @@
 package robaho.net.httpserver.http2;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.testng.Assert;
 import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 
 /**
  * Regression tests for the 2026-09-21 review batch (todo.md 复查-4 and 复查-6):

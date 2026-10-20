@@ -30,19 +30,20 @@
  * @summary light weight http server doesn't return correct status code for HEAD requests
  */
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.HttpURLConnection;
-import java.net.Proxy;
-import java.net.URL;
-import java.io.IOException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import jdk.test.lib.net.URIBuilder;
+
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class HeadTest {
 

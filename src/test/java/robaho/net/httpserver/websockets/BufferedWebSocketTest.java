@@ -1,5 +1,9 @@
 package robaho.net.httpserver.websockets;
 
+import com.sun.net.httpserver.HttpExchange;
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -8,11 +12,6 @@ import java.net.URI;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.testng.Assert;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.HttpExchange;
 
 /**
  * First coverage for BufferedWebSocket (previously untested, todo.md D-11):

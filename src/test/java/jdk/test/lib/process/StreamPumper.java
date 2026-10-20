@@ -25,9 +25,9 @@ package jdk.test.lib.process;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
-import java.io.InputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Future;

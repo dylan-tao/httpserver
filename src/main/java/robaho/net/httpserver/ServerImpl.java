@@ -24,8 +24,21 @@
  */
 package robaho.net.httpserver;
 
-import static java.nio.charset.StandardCharsets.ISO_8859_1;
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import robaho.net.httpserver.http2.HTTP2Connection;
+import robaho.net.httpserver.http2.HTTP2ErrorCode;
+import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.HTTP2Stats;
+import robaho.net.httpserver.http2.HTTP2Stream;
 
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -50,22 +63,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
-
-import com.sun.net.httpserver.Filter;
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpsConfigurator;
-
-import robaho.net.httpserver.http2.HTTP2Connection;
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.HTTP2Stats;
-import robaho.net.httpserver.http2.HTTP2Stream;
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 /**
  * Provides implementation for both HTTP and HTTPS

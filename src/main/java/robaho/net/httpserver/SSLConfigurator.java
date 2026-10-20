@@ -1,12 +1,11 @@
 package robaho.net.httpserver;
 
-import java.net.InetSocketAddress;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
 
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
-
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
+import java.net.InetSocketAddress;
 
 class SSLConfigurator {
     static void configure(SSLSocket s,HttpsConfigurator cfg) {

@@ -1,6 +1,14 @@
 package robaho.net.httpserver.websockets;
 
 
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+import robaho.net.httpserver.LoggingFilter;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;
@@ -11,15 +19,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static org.testng.Assert.fail;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
-import robaho.net.httpserver.LoggingFilter;
 
 public class MultipleWebSocketTest {
 

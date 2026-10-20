@@ -6,7 +6,7 @@ import java.util.Arrays;
 /** h2 load generator for the main-vs-op comparison: sequential, multiplexed,
  *  upload (flow-control aware) and download scenarios over one connection */
 public class H2Bench {
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
         int port = Integer.parseInt(args[0]);
         String scenario = args[1];
         int count = Integer.parseInt(args[2]);

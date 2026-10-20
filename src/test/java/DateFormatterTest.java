@@ -24,6 +24,11 @@
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+import org.testng.annotations.AfterTest;
+import org.testng.annotations.BeforeTest;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -38,10 +43,6 @@ import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import jdk.test.lib.net.URIBuilder;
-import org.testng.annotations.AfterTest;
-import org.testng.annotations.BeforeTest;
-import org.testng.annotations.Test;
 import static java.net.http.HttpResponse.BodyHandlers.ofString;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;

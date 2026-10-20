@@ -21,14 +21,14 @@
  * questions.
  */
 
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
 
 /**
  * Implements a basic static EchoHandler for an HTTP server

@@ -29,17 +29,17 @@
  * @run main/othervm AsyncHandlerTest
  */
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URL;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-import jdk.test.lib.net.URIBuilder;
 
 public class AsyncHandlerTest implements HttpHandler {
     private final HttpServer server;

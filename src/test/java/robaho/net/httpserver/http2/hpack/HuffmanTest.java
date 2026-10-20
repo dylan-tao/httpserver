@@ -2,7 +2,6 @@ package robaho.net.httpserver.http2.hpack;
 
 import org.testng.Assert;
 import org.testng.annotations.Test;
-
 import robaho.net.httpserver.http2.HTTP2Exception;
 
 /**

@@ -21,17 +21,25 @@
  * questions.
  */
 
-import java.util.concurrent.*;
-import java.util.logging.*;
-import java.io.*;
-import java.net.*;
-
-import com.sun.net.httpserver.*;
-
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import jdk.test.lib.net.SimpleSSLContext;
 import robaho.net.httpserver.LogFilter;
 import robaho.net.httpserver.extras.ContentEncoding;
 import robaho.net.httpserver.extras.QueryParameters;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.util.concurrent.Executors;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Implements a basic static content HTTP server

@@ -1,18 +1,16 @@
 package robaho.net.httpserver.websockets;
 
+import com.sun.net.httpserver.HttpExchange;
+import robaho.net.httpserver.Attributes;
+import robaho.net.httpserver.ServerConfig;
+
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import java.util.concurrent.locks.ReentrantLock;
-
-import com.sun.net.httpserver.HttpExchange;
-
-import robaho.net.httpserver.Attributes;
-import robaho.net.httpserver.ServerConfig;
 
 /**
  * a BufferedWebSocket allows the producer to buffer in user space (by limited

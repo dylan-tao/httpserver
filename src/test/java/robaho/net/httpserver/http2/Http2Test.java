@@ -1,5 +1,16 @@
 package robaho.net.httpserver.http2;
 
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import org.testng.Assert;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+import robaho.net.httpserver.Http2ExchangeImpl;
+import robaho.net.httpserver.LoggingFilter;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -12,19 +23,6 @@ import java.util.concurrent.Executors;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import org.testng.Assert;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
-import robaho.net.httpserver.Http2ExchangeImpl;
-import robaho.net.httpserver.LoggingFilter;
 
 @Test(enabled=false) // this is disabled since JDK HttpClient cannot perform "prior knowledge" Http2 connections over non-SSL
 public class Http2Test {
@@ -83,6 +81,6 @@ public class Http2Test {
                 exchange.getRequestBody().transferTo(exchange.getResponseBody());
             }
         }
-        
+
     }
 }

@@ -1,5 +1,11 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.HttpServer;
+import org.testng.Assert;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -8,14 +14,6 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-
-import org.testng.Assert;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 
 /**
  * HTTP/1.1 regressions from the 2026-10-09 audit: the exception path must not

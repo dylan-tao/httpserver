@@ -1,13 +1,12 @@
 package robaho.net.httpserver.websockets;
 
-import java.io.IOException;
-import java.security.NoSuchAlgorithmException;
-
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-
 import robaho.net.httpserver.Code;
+
+import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
 
 public abstract class WebSocketHandler implements HttpHandler {
 

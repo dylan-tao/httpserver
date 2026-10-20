@@ -1,14 +1,14 @@
 package robaho.net.httpserver.http2.frame;
 
-import java.io.IOException;
-import java.io.OutputStream;
-
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
 import robaho.net.httpserver.http2.Utils;
 
+import java.io.IOException;
+import java.io.OutputStream;
+
 public class WindowUpdateFrame extends BaseFrame {
-	
+
 	private int windowSizeIncrement;
 
 	public WindowUpdateFrame(FrameHeader header) {
@@ -18,7 +18,7 @@ public class WindowUpdateFrame extends BaseFrame {
         super(new FrameHeader(4,FrameType.WINDOW_UPDATE,FrameFlag.NONE,streamId));
         windowSizeIncrement = increment;
     }
-	
+
 	public int getWindowSizeIncrement()
 	{
 		return windowSizeIncrement;
@@ -52,7 +52,7 @@ public class WindowUpdateFrame extends BaseFrame {
         getHeader().writeTo(os);
         Utils.writeBinary(os, windowSizeIncrement);
     }
-    
+
     @Override
     public byte[] encode() {
         byte[] buffer = new byte[9+4];

@@ -25,6 +25,8 @@
 
 package robaho.net.httpserver;
 
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocket;
 import java.io.FilterInputStream;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -35,9 +37,6 @@ import java.lang.System.Logger.Level;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicLong;
-
-import javax.net.ssl.SSLSession;
-import javax.net.ssl.SSLSocket;
 
 /**
  * encapsulates all the connection specific state for a HTTP/S connection

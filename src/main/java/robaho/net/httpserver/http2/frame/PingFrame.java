@@ -1,13 +1,13 @@
 package robaho.net.httpserver.http2.frame;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.util.List;
-
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
 import robaho.net.httpserver.http2.Utils;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.List;
 
 public class PingFrame extends BaseFrame {
     public final byte[] body;

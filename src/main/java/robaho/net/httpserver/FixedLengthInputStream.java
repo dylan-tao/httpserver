@@ -25,7 +25,8 @@
 
 package robaho.net.httpserver;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * a class which allows the caller to read up to a defined

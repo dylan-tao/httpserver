@@ -1,26 +1,23 @@
 package robaho.net.httpserver;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.util.Arrays;
-
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocket;
-
-import org.testng.Assert;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
-
 import jdk.test.lib.net.SimpleSSLContext;
+import org.testng.Assert;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.Arrays;
 
 /**
  * End-to-end regressions for the JDK 25 parity hardening: request validation

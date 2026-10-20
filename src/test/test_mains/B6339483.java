@@ -30,6 +30,10 @@
  * @run main/othervm -Djava.net.preferIPv6Addresses=true B6339483
  */
 
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -39,11 +43,6 @@ import java.net.Proxy;
 import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpServer;
-
-import jdk.test.lib.net.URIBuilder;
 
 public class B6339483 {
 

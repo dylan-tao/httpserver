@@ -8,18 +8,18 @@ package robaho.net.httpserver.websockets;
  * %%
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the nanohttpd nor the names of its contributors
  *    may be used to endorse or promote products derived from this software without
  *    specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -33,8 +33,11 @@ package robaho.net.httpserver.websockets;
  * #L%
  */
 
-import java.io.IOException;
+import com.sun.net.httpserver.HttpExchange;
+import robaho.net.httpserver.ServerConfig;
+
 import java.io.EOFException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
@@ -44,11 +47,9 @@ import java.util.List;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import com.sun.net.httpserver.HttpExchange;
-
-import robaho.net.httpserver.ServerConfig;
-
-import static java.lang.System.Logger.Level.*;
+import static java.lang.System.Logger.Level.DEBUG;
+import static java.lang.System.Logger.Level.INFO;
+import static java.lang.System.Logger.Level.TRACE;
 
 public abstract class WebSocket {
 
@@ -124,7 +125,7 @@ public abstract class WebSocket {
     /**
      * Debug method. <b>Do not Override unless for debug purposes!</b><br>
      * This method is called before actually sending the frame.
-     * 
+     *
      * @param frame
      *              The sent WebSocket Frame.
      */

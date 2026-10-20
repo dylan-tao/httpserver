@@ -1,5 +1,12 @@
 package robaho.net.httpserver.extras;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import org.testng.Assert;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -7,16 +14,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-
-import org.testng.Assert;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-
-import robaho.net.httpserver.extras.ProxyHandler;
 
 /**
  * End-to-end checks for the ProxyHandler forwarding path (todo.md P2-34):

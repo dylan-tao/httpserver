@@ -1,28 +1,9 @@
 package robaho.net.httpserver.http2;
 
-import java.io.EOFException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-
 import com.sun.net.httpserver.Headers;
-
 import robaho.net.httpserver.HttpConnection;
 import robaho.net.httpserver.OptimizedHeaders;
 import robaho.net.httpserver.ServerConfig;
-import robaho.net.httpserver.http2.hpack.HPackContext;
-import robaho.net.httpserver.http2.hpack.HTTP2HeaderField;
-import robaho.net.httpserver.http2.hpack.HeaderFields;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.ContinuationFrame;
 import robaho.net.httpserver.http2.frame.DataFrame;
@@ -40,6 +21,24 @@ import robaho.net.httpserver.http2.frame.SettingParameter;
 import robaho.net.httpserver.http2.frame.SettingsFrame;
 import robaho.net.httpserver.http2.frame.SettingsMap;
 import robaho.net.httpserver.http2.frame.WindowUpdateFrame;
+import robaho.net.httpserver.http2.hpack.HPackContext;
+import robaho.net.httpserver.http2.hpack.HTTP2HeaderField;
+import robaho.net.httpserver.http2.hpack.HeaderFields;
+
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class HTTP2Connection {
 

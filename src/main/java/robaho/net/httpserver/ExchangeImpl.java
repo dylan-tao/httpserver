@@ -25,18 +25,24 @@
 
 package robaho.net.httpserver;
 
-import java.io.*;
-import java.net.*;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpPrincipal;
 
-import javax.net.ssl.*;
-
-import java.util.*;
+import javax.net.ssl.SSLSession;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.StandardSocketOptions;
+import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-
-import com.sun.net.httpserver.*;
+import java.util.List;
+import java.util.Map;
 
 class ExchangeImpl {
 

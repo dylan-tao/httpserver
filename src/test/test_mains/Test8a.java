@@ -31,14 +31,27 @@
  * @summary Light weight HTTP server
  */
 
-import com.sun.net.httpserver.*;
-
-import java.util.concurrent.*;
-import java.io.*;
-import java.net.*;
-import javax.net.ssl.*;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import jdk.test.lib.net.SimpleSSLContext;
 import jdk.test.lib.net.URIBuilder;
+
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import java.io.BufferedOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Test POST large file via fixed len encoding

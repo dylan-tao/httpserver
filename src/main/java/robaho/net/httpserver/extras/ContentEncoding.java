@@ -1,9 +1,9 @@
 package robaho.net.httpserver.extras;
 
+import com.sun.net.httpserver.Headers;
+
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-
-import com.sun.net.httpserver.Headers;
 
 /**
  * extracts the charset parameter from the Content-Type header. despite the

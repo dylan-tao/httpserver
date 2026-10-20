@@ -30,17 +30,16 @@
  * @author lev.priima@oracle.com
  */
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.io.IOException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-
 import jdk.test.lib.RawClient;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MissingTrailingSpace {
 

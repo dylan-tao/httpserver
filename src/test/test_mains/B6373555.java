@@ -29,12 +29,25 @@
  * @run main B6373555
  * @run main/othervm -Djava.net.preferIPv6Addresses=true B6373555
  */
-import java.net.*;
-import java.io.*;
-import java.util.*;
-import com.sun.net.httpserver.*;
-import java.util.concurrent.*;
+
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import jdk.test.lib.net.URIBuilder;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class B6373555 {
 

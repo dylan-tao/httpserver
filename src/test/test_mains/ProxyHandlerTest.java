@@ -1,15 +1,13 @@
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+import robaho.net.httpserver.extras.ProxyHandler;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-
-import jdk.test.lib.net.URIBuilder;
-import robaho.net.httpserver.extras.ProxyHandler;
 
 /**
  * @test

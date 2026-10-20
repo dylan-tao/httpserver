@@ -30,15 +30,22 @@
  *                   -Dsun.net.httpserver.idleInterval=4 Test5
  */
 
-import com.sun.net.httpserver.*;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.regex.*;
-import java.io.*;
-import java.net.*;
-import java.security.*;
-import javax.net.ssl.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Test pipe-lining (no block)

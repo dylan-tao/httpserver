@@ -1,21 +1,18 @@
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
+import jdk.test.lib.net.SimpleSSLContext;
+import jdk.test.lib.net.URIBuilder;
+import robaho.net.httpserver.extras.ProxyHandler;
 
+import javax.net.ssl.SSLContext;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-
-import javax.net.ssl.SSLContext;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsServer;
-
-import jdk.test.lib.net.SimpleSSLContext;
-import jdk.test.lib.net.URIBuilder;
-import robaho.net.httpserver.extras.ProxyHandler;
 
 /**
  * @test

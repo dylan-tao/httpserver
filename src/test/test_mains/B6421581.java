@@ -27,10 +27,18 @@
  * @summary NPE while closing HttpExchange.getResonseBody()
  */
 
-import com.sun.net.httpserver.*;
-import java.net.*;
-import java.io.*;
-import java.util.concurrent.*;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class B6421581 {
 

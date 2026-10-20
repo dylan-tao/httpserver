@@ -1,13 +1,13 @@
 package robaho.net.httpserver.http2.hpack;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-
 import robaho.net.httpserver.BloomSet;
 import robaho.net.httpserver.OpenAddressMap;
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 
 /**
  * container for emitted HTTP2HeaderField from field block decoding. Many of the rules of valid

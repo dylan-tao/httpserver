@@ -24,8 +24,9 @@
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-
 import jdk.test.lib.net.URIBuilder;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -40,11 +41,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static java.net.http.HttpClient.Builder.NO_PROXY;
-
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
 
 public class ExchangeAttributeTest {
 

@@ -29,12 +29,14 @@
  * @run testng/othervm HttpContextTest
  */
 
-import java.io.IOException;
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.testng.annotations.Test;
+
+import java.io.IOException;
+
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertThrows;
 

@@ -21,18 +21,19 @@
  * questions.
  */
 
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.logging.*;
-import java.io.*;
-import java.net.*;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.*;
-
-import javax.net.ssl.*;
-
-import com.sun.net.httpserver.*;
 
 /**
  * Implements a basic static content HTTP file server handler

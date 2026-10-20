@@ -30,17 +30,26 @@
  * @run main/othervm -Djava.net.preferIPv6Addresses=true TestLogging
  */
 
-import com.sun.net.httpserver.*;
-
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.logging.*;
-import java.io.*;
-import java.net.*;
-import java.security.*;
-import java.security.cert.*;
-import javax.net.ssl.*;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import jdk.test.lib.net.URIBuilder;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.Socket;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class TestLogging extends Test {
 

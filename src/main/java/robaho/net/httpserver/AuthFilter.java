@@ -25,9 +25,13 @@
 
 package robaho.net.httpserver;
 
-import com.sun.net.httpserver.*;
+import com.sun.net.httpserver.Authenticator;
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpPrincipal;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.Principal;
 
 public class AuthFilter extends Filter {

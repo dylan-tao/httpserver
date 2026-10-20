@@ -1,5 +1,8 @@
 package robaho.net.httpserver.extras;
 
+import robaho.net.httpserver.NoSyncBufferedInputStream;
+import robaho.net.httpserver.NoSyncBufferedOutputStream;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -16,9 +19,6 @@ import java.util.Map;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import robaho.net.httpserver.NoSyncBufferedInputStream;
-import robaho.net.httpserver.NoSyncBufferedOutputStream;
 
 /**
  * parse multipart form data

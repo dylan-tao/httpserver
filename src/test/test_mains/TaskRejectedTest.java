@@ -33,7 +33,6 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.MalformedURLException;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.URL;

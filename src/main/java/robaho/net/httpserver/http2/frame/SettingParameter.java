@@ -1,13 +1,14 @@
 package robaho.net.httpserver.http2.frame;
-import java.io.IOException;
-import java.io.OutputStream;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
 import robaho.net.httpserver.http2.Utils;
 
+import java.io.IOException;
+import java.io.OutputStream;
+
 public class SettingParameter {
-	
+
 	static final int PARAMETER_SIZE = 6;
 
 	public SettingIdentifier identifier;
@@ -21,13 +22,13 @@ public class SettingParameter {
 
     public SettingParameter() {
     }
-  
+
     public SettingParameter(SettingIdentifier identifier, long value) {
         this.identifier = identifier;
         this.value = value;
     }
-	
-	public static SettingParameter parse(byte[] param) throws HTTP2Exception 
+
+	public static SettingParameter parse(byte[] param) throws HTTP2Exception
 	{
         try {
             if(param.length != 6) {

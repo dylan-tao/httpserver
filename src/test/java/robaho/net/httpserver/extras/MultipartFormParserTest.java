@@ -1,21 +1,20 @@
 package robaho.net.httpserver.extras;
 
+import org.testng.Assert;
+import org.testng.annotations.Test;
+import robaho.net.httpserver.extras.MultipartFormParser.Part;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.FileInputStream;
-import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
-import org.testng.Assert;
-import org.testng.annotations.Test;
-
-import robaho.net.httpserver.extras.MultipartFormParser.Part;
 import static robaho.net.httpserver.extras.MultipartFormParser.parse;
 
 public class MultipartFormParserTest {

@@ -27,8 +27,9 @@
  * @summary  Test HttpServer stop method invocation before a start has been called
  */
 
-import java.net.InetSocketAddress;
 import com.sun.net.httpserver.HttpServer;
+
+import java.net.InetSocketAddress;
 
 
 public class StopNoStartTest {

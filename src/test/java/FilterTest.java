@@ -28,6 +28,14 @@
  * @run testng/othervm FilterTest
  */
 
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import org.testng.annotations.BeforeTest;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -39,21 +47,17 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import com.sun.net.httpserver.Filter;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-import org.testng.annotations.DataProvider;
-import org.testng.annotations.Test;
-import org.testng.annotations.BeforeTest;
+
 import static java.net.http.HttpClient.Builder.NO_PROXY;
-import static org.testng.Assert.*;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.expectThrows;
 
 public class FilterTest {
 

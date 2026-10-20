@@ -35,20 +35,19 @@ import com.sun.net.httpserver.BasicAuthenticator;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpHandlers;
 import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+import org.testng.annotations.Test;
+
 import java.net.Authenticator;
+import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
 import java.net.Proxy;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse.BodyHandlers;
-
-import jdk.test.lib.net.URIBuilder;
-
-import org.testng.annotations.Test;
 
 import static java.net.http.HttpClient.Builder.NO_PROXY;
 import static java.nio.charset.StandardCharsets.UTF_8;

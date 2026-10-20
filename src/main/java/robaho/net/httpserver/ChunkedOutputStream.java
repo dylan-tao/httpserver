@@ -25,7 +25,9 @@
 
 package robaho.net.httpserver;
 
-import java.io.*;
+import java.io.FilterOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;

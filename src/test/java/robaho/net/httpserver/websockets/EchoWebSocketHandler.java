@@ -1,8 +1,8 @@
 package robaho.net.httpserver.websockets;
 
-import java.io.IOException;
-
 import com.sun.net.httpserver.HttpExchange;
+
+import java.io.IOException;
 
 public class EchoWebSocketHandler extends WebSocketHandler {
 

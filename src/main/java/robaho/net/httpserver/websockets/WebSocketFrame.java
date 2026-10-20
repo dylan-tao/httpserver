@@ -33,6 +33,8 @@ package robaho.net.httpserver.websockets;
  * #L%
  */
 
+import robaho.net.httpserver.ServerConfig;
+
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -42,8 +44,6 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
-
-import robaho.net.httpserver.ServerConfig;
 
 public class WebSocketFrame {
 

@@ -30,14 +30,21 @@
  * @run main/othervm -Djava.net.preferIPv6Addresses=true B6393710
  */
 
-import com.sun.net.httpserver.*;
-
-import java.util.*;
-import java.util.concurrent.*;
-import java.io.*;
-import java.net.*;
-
+import com.sun.net.httpserver.BasicAuthenticator;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import jdk.test.lib.Utils;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
 
 /*
  * Test checks for following bug(s) when a POST containing a request body

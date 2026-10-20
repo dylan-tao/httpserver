@@ -1,12 +1,12 @@
 package robaho.net.httpserver.http2.frame;
 
+import robaho.net.httpserver.http2.HTTP2ErrorCode;
+import robaho.net.httpserver.http2.HTTP2Exception;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
-
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
 
 public class SettingsFrame extends BaseFrame {
 

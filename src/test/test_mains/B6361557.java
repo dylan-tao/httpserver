@@ -28,14 +28,23 @@
  * @summary  Lightweight HTTP server quickly runs out of file descriptors on Linux
  */
 
-import com.sun.net.httpserver.*;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 
-import java.util.*;
-import java.util.concurrent.*;
-import java.io.*;
-import java.nio.*;
-import java.nio.channels.*;
-import java.net.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * The test simply opens 1,000 separate connections

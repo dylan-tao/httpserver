@@ -30,6 +30,8 @@ import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -39,8 +41,6 @@ import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 
 import static java.net.NetworkInterface.getNetworkInterfaces;
 import static java.util.Collections.list;

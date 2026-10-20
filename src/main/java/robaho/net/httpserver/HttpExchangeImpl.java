@@ -25,10 +25,15 @@
 
 package robaho.net.httpserver;
 
-import java.io.*;
-import java.net.*;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpPrincipal;
 
-import com.sun.net.httpserver.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.URI;
 
 class HttpExchangeImpl extends HttpExchange implements AuthFilter.PrincipalExchange {
 

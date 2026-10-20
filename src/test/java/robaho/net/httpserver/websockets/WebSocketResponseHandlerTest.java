@@ -1,23 +1,20 @@
 package robaho.net.httpserver.websockets;
 
-import static org.testng.Assert.assertEquals;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import org.testng.Assert;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+import robaho.net.httpserver.Code;
+import robaho.net.httpserver.StubHttpExchange;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Arrays;
 
-import org.testng.Assert;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpExchange;
-
-import robaho.net.httpserver.Code;
-import robaho.net.httpserver.StubHttpExchange;
+import static org.testng.Assert.assertEquals;
 
 /*
  * #%L

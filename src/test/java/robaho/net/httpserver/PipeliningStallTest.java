@@ -1,5 +1,11 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.RawClient;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -10,14 +16,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
-import org.testng.annotations.Test;
-
-import jdk.test.lib.RawClient;
 
 /**
  * see issue #19

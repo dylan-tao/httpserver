@@ -32,10 +32,17 @@
  * @run testng/othervm HeadersTest
  */
 
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Array;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -50,19 +57,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
-import jdk.test.lib.net.URIBuilder;
-
-import org.testng.annotations.DataProvider;
-import org.testng.annotations.Test;
 
 import static java.net.http.HttpClient.Builder.NO_PROXY;
 import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;

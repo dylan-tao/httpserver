@@ -25,10 +25,12 @@
 
 package robaho.net.httpserver;
 
-import java.net.*;
-import java.io.*;
-import com.sun.net.httpserver.*;
-import com.sun.net.httpserver.spi.*;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsServer;
+import com.sun.net.httpserver.spi.HttpServerProvider;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
 
 public class DefaultHttpServerProvider extends HttpServerProvider {
     public HttpServer createHttpServer(InetSocketAddress addr, int backlog) throws IOException {

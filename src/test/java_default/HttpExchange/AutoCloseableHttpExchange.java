@@ -21,17 +21,22 @@
  * questions.
  */
 
-import com.sun.net.httpserver.*;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.*;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.URL;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import jdk.test.lib.net.URIBuilder;
 
 /**
  * @test

@@ -1,26 +1,20 @@
 package robaho.net.httpserver.http2.hpack;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Arrays;
-
+import com.sun.net.httpserver.Headers;
+import robaho.net.httpserver.OpenAddressMap;
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.frame.FrameFlag;
+import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
+import robaho.net.httpserver.http2.frame.FrameHeader;
+import robaho.net.httpserver.http2.frame.FrameType;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-
-import com.sun.net.httpserver.Headers;
-
-import robaho.net.httpserver.OpenAddressMap;
-import robaho.net.httpserver.http2.frame.FrameFlag;
-import robaho.net.httpserver.http2.frame.FrameHeader;
-import robaho.net.httpserver.http2.Utils;
-import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
-import robaho.net.httpserver.http2.frame.FrameType;
 
 public class HPackContext {
     /** deque: addFirst (newest, lowest index) and evict-pollLast (oldest)

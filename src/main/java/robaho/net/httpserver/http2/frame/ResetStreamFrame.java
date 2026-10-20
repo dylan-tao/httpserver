@@ -1,12 +1,13 @@
 package robaho.net.httpserver.http2.frame;
 
+import robaho.net.httpserver.http2.HTTP2ErrorCode;
+import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Utils;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
 import static robaho.net.httpserver.http2.Utils.convertToInt;
 
 public class ResetStreamFrame extends BaseFrame {

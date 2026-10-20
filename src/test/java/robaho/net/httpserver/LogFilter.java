@@ -22,11 +22,17 @@ package robaho.net.httpserver;
  * questions.
  */
 
-import java.io.*;
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-
-import com.sun.net.httpserver.*;
 
 public class LogFilter extends Filter {
 

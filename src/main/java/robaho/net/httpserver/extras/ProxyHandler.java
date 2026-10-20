@@ -1,5 +1,10 @@
 package robaho.net.httpserver.extras;
 
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+
+import javax.net.SocketFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -21,12 +26,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.logging.Logger;
-
-import javax.net.SocketFactory;
-
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
 
 /**
  * proxy requests to another host

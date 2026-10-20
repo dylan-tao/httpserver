@@ -29,20 +29,24 @@
  * @run main B6401598
  * @run main/othervm -Djava.net.preferIPv6Addresses=true B6401598
  */
-import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.Proxy;
-import java.net.URL;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.util.concurrent.*;
-
-import jdk.test.lib.net.URIBuilder;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import jdk.test.lib.net.URIBuilder;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class B6401598 {
 

@@ -1,5 +1,7 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.Headers;
+
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
@@ -9,8 +11,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
-
-import com.sun.net.httpserver.Headers;
 
 public class OptimizedHeaders extends Headers {
     private final OpenAddressMap<String,Object> map;

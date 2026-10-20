@@ -1,5 +1,22 @@
 package robaho.net.httpserver.http2;
 
+import com.sun.net.httpserver.Headers;
+import robaho.net.httpserver.NoSyncBufferedOutputStream;
+import robaho.net.httpserver.OptimizedHeaders;
+import robaho.net.httpserver.ServerConfig;
+import robaho.net.httpserver.http2.frame.BaseFrame;
+import robaho.net.httpserver.http2.frame.DataFrame;
+import robaho.net.httpserver.http2.frame.FrameFlag;
+import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
+import robaho.net.httpserver.http2.frame.FrameHeader;
+import robaho.net.httpserver.http2.frame.FrameType;
+import robaho.net.httpserver.http2.frame.ResetStreamFrame;
+import robaho.net.httpserver.http2.frame.SettingIdentifier;
+import robaho.net.httpserver.http2.frame.SettingParameter;
+import robaho.net.httpserver.http2.frame.WindowUpdateFrame;
+import robaho.net.httpserver.http2.hpack.HPackContext;
+
+import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -12,25 +29,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
-
-import javax.net.ssl.SSLSession;
-
-import com.sun.net.httpserver.Headers;
-
-import robaho.net.httpserver.NoSyncBufferedOutputStream;
-import robaho.net.httpserver.OptimizedHeaders;
-import robaho.net.httpserver.ServerConfig;
-import robaho.net.httpserver.http2.hpack.HPackContext;
-import robaho.net.httpserver.http2.frame.SettingParameter;
-import robaho.net.httpserver.http2.frame.BaseFrame;
-import robaho.net.httpserver.http2.frame.DataFrame;
-import robaho.net.httpserver.http2.frame.FrameFlag;
-import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
-import robaho.net.httpserver.http2.frame.FrameHeader;
-import robaho.net.httpserver.http2.frame.FrameType;
-import robaho.net.httpserver.http2.frame.ResetStreamFrame;
-import robaho.net.httpserver.http2.frame.SettingIdentifier;
-import robaho.net.httpserver.http2.frame.WindowUpdateFrame;
 
 public class HTTP2Stream {
 

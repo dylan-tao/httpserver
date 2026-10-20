@@ -1,10 +1,13 @@
 package robaho.net.httpserver;
 
-import java.util.*;
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+
+import java.io.IOException;
+import java.text.DateFormat;
+import java.util.Date;
 import java.util.logging.Logger;
-import java.text.*;
-import java.io.*;
-import com.sun.net.httpserver.*;
 
 public class LoggingFilter extends Filter {
 

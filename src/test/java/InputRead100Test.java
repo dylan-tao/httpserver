@@ -10,6 +10,10 @@
  * @summary Test 100 continue response handling ipv6
  * @run junit/othervm -Djava.net.preferIPv6Addresses=true InputRead100Test
  */
+
+import com.sun.net.httpserver.HttpServer;
+import org.testng.annotations.Test;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -21,11 +25,7 @@ import java.net.Socket;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sun.net.httpserver.HttpServer;
-
-import org.testng.annotations.Test;
-
-import static java.nio.charset.StandardCharsets.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class InputRead100Test {
     private static final String someContext = "/context";

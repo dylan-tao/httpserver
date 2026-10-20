@@ -1,28 +1,25 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
+import jdk.test.lib.net.SimpleSSLContext;
+import jdk.test.lib.net.URIBuilder;
 import org.testng.annotations.Test;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URISyntaxException;
 import java.net.URL;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSession;
-
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
-
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
-import com.sun.net.httpserver.HttpsServer;
-
-import jdk.test.lib.net.SimpleSSLContext;
-import jdk.test.lib.net.URIBuilder;
 
 public class HttpsConfiguratorTest {
     volatile boolean configureCalled = false;

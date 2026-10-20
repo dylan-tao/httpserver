@@ -23,6 +23,9 @@
 
 package jdk.test.lib;
 
+import jdk.test.lib.process.OutputAnalyzer;
+import jdk.test.lib.process.ProcessTools;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -38,6 +41,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.CopyOption;
 import java.nio.file.Files;
@@ -47,7 +51,6 @@ import java.nio.file.attribute.AclEntry;
 import java.nio.file.attribute.AclEntryType;
 import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.FileAttribute;
-import java.nio.channels.SocketChannel;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -55,16 +58,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Iterator;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
-import java.util.function.BooleanSupplier;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -72,8 +75,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static jdk.test.lib.Asserts.assertTrue;
-import jdk.test.lib.process.ProcessTools;
-import jdk.test.lib.process.OutputAnalyzer;
 
 /**
  * Common library for various test helper functions.

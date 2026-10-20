@@ -1,19 +1,17 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpPrincipal;
+import com.sun.net.httpserver.HttpsExchange;
+import robaho.net.httpserver.http2.HTTP2Stream;
+
+import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
-
-import javax.net.ssl.SSLSession;
-
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpPrincipal;
-import com.sun.net.httpserver.HttpsExchange;
-
-import robaho.net.httpserver.http2.HTTP2Stream;
 
 public class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.PrincipalExchange {
     private final Headers request;

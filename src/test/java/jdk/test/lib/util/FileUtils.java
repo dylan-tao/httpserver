@@ -23,6 +23,9 @@
 
 package jdk.test.lib.util;
 
+import com.sun.management.UnixOperatingSystemMXBean;
+import jdk.test.lib.Platform;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -48,9 +51,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import jdk.test.lib.Platform;
-
-import com.sun.management.UnixOperatingSystemMXBean;
 
 /**
  * Common library for various test file utility functions.

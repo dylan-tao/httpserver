@@ -1,13 +1,13 @@
 package robaho.net.httpserver.http2.hpack;
 
+import robaho.net.httpserver.http2.HTTP2ErrorCode;
+import robaho.net.httpserver.http2.HTTP2Exception;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Arrays;
-
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
 
 /**
  * HPACK huffman codec (RFC 7541 appendix B).
