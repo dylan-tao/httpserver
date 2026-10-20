@@ -40,7 +40,7 @@ class HttpsExchangeImpl extends HttpsExchange implements AuthFilter.PrincipalExc
 
     ExchangeImpl impl;
 
-    HttpsExchangeImpl(ExchangeImpl impl) throws IOException {
+    HttpsExchangeImpl(ExchangeImpl impl) {
         this.impl = impl;
     }
 

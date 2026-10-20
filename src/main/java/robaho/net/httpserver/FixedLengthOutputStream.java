@@ -44,14 +44,15 @@ class FixedLengthOutputStream extends FilterOutputStream {
     ExchangeImpl t;
 
     FixedLengthOutputStream(ExchangeImpl t, OutputStream src, long len) {
-        super(src);
         if (len < 0) {
             throw new IllegalArgumentException("Content-length: " + len);
         }
+        super(src);
         this.t = t;
         this.remaining = len;
     }
 
+    @Override
     public void write(int b) throws IOException {
         if (closed) {
             throw new IOException("stream closed");
@@ -63,6 +64,7 @@ class FixedLengthOutputStream extends FilterOutputStream {
         remaining--;
     }
 
+    @Override
     public void write(byte[] b, int off, int len) throws IOException {
         Objects.checkFromIndexSize(off, len, b.length);
         if (len == 0) {
@@ -79,6 +81,7 @@ class FixedLengthOutputStream extends FilterOutputStream {
         remaining -= len;
     }
 
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

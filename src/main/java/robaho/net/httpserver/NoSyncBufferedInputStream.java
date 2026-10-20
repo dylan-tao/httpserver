@@ -101,10 +101,10 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
     }
 
     public NoSyncBufferedInputStream(InputStream in, int size) {
-        super(in);
         if (size <= 0) {
             throw new IllegalArgumentException("buffer size " + size);
         }
+        super(in);
         this.bufferSize = size;
     }
 
@@ -286,6 +286,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      *                          or an I/O error occurs.
      * @see        java.io.FilterInputStream#in
      */
+    @Override
     public int read() throws IOException {
         if (pos >= count) {
             fill();
@@ -355,6 +356,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      *                          or an I/O error occurs.
      * @throws     IndexOutOfBoundsException {@inheritDoc}
      */
+    @Override
     public int read(byte[] b, int off, int len) throws IOException {
         ensureOpen();
         if ((off | len | (off + len) | (b.length - (off + len))) < 0) {
@@ -387,6 +389,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      *                      {@code in.skip(n)} throws an IOException,
      *                      or an I/O error occurs.
      */
+    @Override
     public long skip(long n) throws IOException {
         ensureOpen();
         if (n <= 0) {
@@ -417,6 +420,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      *                          invoking its {@link #close()} method,
      *                          or an I/O error occurs.
      */
+    @Override
     public int available() throws IOException {
         if (in == null)
             throw new IOException("Stream closed");
@@ -436,6 +440,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      *
      * @throws     IOException  if an I/O error occurs.
      */
+    @Override
     public void close() throws IOException {
         if(buf!=null) {
             buf = null;

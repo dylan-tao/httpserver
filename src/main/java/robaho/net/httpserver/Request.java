@@ -126,7 +126,7 @@ class Request {
     }
 
     /**
-     * @returns the request line or the empty string if not found
+     * @return the request line or the empty string if not found
      */
     public String requestLine() {
         return requestLine;

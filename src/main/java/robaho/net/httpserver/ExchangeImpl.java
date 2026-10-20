@@ -43,6 +43,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 class ExchangeImpl {
 
@@ -73,8 +74,8 @@ class ExchangeImpl {
      */
     InputStream uis;
     OutputStream uos;
-    LeftOverInputStream uis_orig; // uis may have be a user supplied wrapper
-    PlaceholderOutputStream uos_orig;
+    LeftOverInputStream uisOrig; // uis may have be a user supplied wrapper
+    PlaceholderOutputStream uosOrig;
 
     /* true after response headers sent */
     volatile boolean sentHeaders;
@@ -150,16 +151,16 @@ class ExchangeImpl {
          * c) if the close of the input/output streams fails
          */
         try {
-            if (uis_orig == null || uos == null) {
+            if (uisOrig == null || uos == null) {
                 connection.close();
                 return;
             }
-            if (!uos_orig.isWrapped()) {
+            if (!uosOrig.isWrapped()) {
                 connection.close();
                 return;
             }
-            if (!uis_orig.isClosed()) {
-                uis_orig.close();
+            if (!uisOrig.isClosed()) {
+                uisOrig.close();
             }
             uos.close();
         } catch (IOException e) {
@@ -175,17 +176,17 @@ class ExchangeImpl {
             // connection cannot be re-used
             uis = ris;
         } else if (reqContentLen == -1L) {
-            uis_orig = new ChunkedInputStream(this, ris);
-            uis = uis_orig;
+            uisOrig = new ChunkedInputStream(this, ris);
+            uis = uisOrig;
         } else {
-            uis_orig = new FixedLengthInputStream(this, ris, reqContentLen);
-            uis = uis_orig;
+            uisOrig = new FixedLengthInputStream(this, ris, reqContentLen);
+            uis = uisOrig;
         }
         return uis;
     }
 
     LeftOverInputStream getOriginalInputStream() {
-        return uis_orig;
+        return uisOrig;
     }
 
     /** drain and close the request stream so the connection can be reused.
@@ -217,8 +218,8 @@ class ExchangeImpl {
          * }
          */
         if (uos == null) {
-            uos_orig = new PlaceholderOutputStream(null);
-            uos = uos_orig;
+            uosOrig = new PlaceholderOutputStream(null);
+            uos = uosOrig;
         }
         return uos;
     }
@@ -230,7 +231,7 @@ class ExchangeImpl {
      */
     PlaceholderOutputStream getPlaceholderResponseBody() {
         getResponseBody();
-        return uos_orig;
+        return uosOrig;
     }
 
     // hard-coded formatting for Date header, rather than using slower DateFormatter
@@ -397,19 +398,7 @@ class ExchangeImpl {
         // one byte per char, so the char counts size the buffer exactly.
         // including the status line here gives all-or-nothing semantics: a
         // validation failure leaves nothing on the wire
-        int total = statusLine.length + 2; // trailing CRLF
-        for (Map.Entry<String, List<String>> entry : map.entrySet()) {
-            String key = entry.getKey();
-            int keyLen = key.length();
-            for (String val : entry.getValue()) {
-                // a CR/LF in a response header value would split the response
-                // (response splitting); refuse rather than write it through
-                if (val == null || val.indexOf('\r') >= 0 || val.indexOf('\n') >= 0) {
-                    throw new IOException("illegal response header value for " + key);
-                }
-                total += keyLen + 2 + val.length() + 2;
-            }
-        }
+        int total = getTotal(statusLine, map);
         // per-connection scratch: the h1 response head is written on the
         // connection's single VT, so the assembly buffer is reused across
         // responses (this was a per-response allocation)
@@ -429,7 +418,7 @@ class ExchangeImpl {
                 pos = writeAscii(key, head, pos);
                 head[pos++] = ':';
                 head[pos++] = ' ';
-                if (val == frameworkDate) {
+                if (Objects.equals(val, frameworkDate)) {
                     // the framework-set Date header: use the cached encoded
                     // bytes instead of re-encoding the string per response
                     byte[] dateBytes = ActivityTimer.dateAndTimeBytes();
@@ -445,6 +434,23 @@ class ExchangeImpl {
         head[pos++] = '\r';
         head[pos++] = '\n';
         os.write(head, 0, pos);
+    }
+
+    private static int getTotal(byte[] statusLine, Headers map) throws IOException {
+        int total = statusLine.length + 2; // trailing CRLF
+        for (Map.Entry<String, List<String>> entry : map.entrySet()) {
+            String key = entry.getKey();
+            int keyLen = key.length();
+            for (String val : entry.getValue()) {
+                // a CR/LF in a response header value would split the response
+                // (response splitting); refuse rather than write it through
+                if (val == null || val.indexOf('\r') >= 0 || val.indexOf('\n') >= 0) {
+                    throw new IOException("illegal response header value for " + key);
+                }
+                total += keyLen + 2 + val.length() + 2;
+            }
+        }
+        return total;
     }
 
     public InetSocketAddress getRemoteAddress() {
@@ -557,21 +563,25 @@ class PlaceholderOutputStream extends java.io.OutputStream {
         wrapped.write(b);
     }
 
+    @Override
     public void write(byte[] b) throws IOException {
         checkWrap();
         wrapped.write(b);
     }
 
+    @Override
     public void write(byte[] b, int off, int len) throws IOException {
         checkWrap();
         wrapped.write(b, off, len);
     }
 
+    @Override
     public void flush() throws IOException {
         checkWrap();
         wrapped.flush();
     }
 
+    @Override
     public void close() throws IOException {
         checkWrap();
         wrapped.close();

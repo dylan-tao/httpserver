@@ -36,12 +36,12 @@ import java.util.Objects;
  * a class which allows the caller to write an arbitrary
  * number of bytes to an underlying stream.
  * normal close() does not close the underlying stream
- *
+ * <p>
  * This class is buffered.
- *
+ * <p>
  * Each chunk is written in one go as :-
  * abcd\r\nxxxxxxxxxxxxxx\r\n
- *
+ * <p>
  * abcd is the chunk-size, and xxx is the chunk data
  * If the length is less than 4 chars (in size) then the buffer
  * is written with an offset.
@@ -57,7 +57,7 @@ class ChunkedOutputStream extends FilterOutputStream {
     static final int OFFSET = 6; /* initial <=4 bytes for len + CRLF */
     private int pos = OFFSET;
     private int count = 0;
-    final private byte[] buf = new byte[CHUNK_SIZE + OFFSET + 2];
+    private final byte[] buf = new byte[CHUNK_SIZE + OFFSET + 2];
     ExchangeImpl t;
 
     /* header of a full size chunk, for the zero copy large write path */
@@ -70,6 +70,7 @@ class ChunkedOutputStream extends FilterOutputStream {
         this.t = t;
     }
 
+    @Override
     public void write(int b) throws IOException {
         if (closed) {
             throw new StreamClosedException();
@@ -82,6 +83,7 @@ class ChunkedOutputStream extends FilterOutputStream {
         assert count < CHUNK_SIZE;
     }
 
+    @Override
     public void write(byte[] b, int off, int len) throws IOException {
         Objects.checkFromIndexSize(off, len, b.length);
         if (len == 0) {
@@ -139,6 +141,7 @@ class ChunkedOutputStream extends FilterOutputStream {
         pos = OFFSET;
     }
 
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;
@@ -168,6 +171,7 @@ class ChunkedOutputStream extends FilterOutputStream {
         }
     }
 
+    @Override
     public void flush() throws IOException {
         if (closed) {
             throw new StreamClosedException();

@@ -54,7 +54,7 @@ class ChunkedInputStream extends LeftOverInputStream {
         long len = 0;
         for (int i = 0; i < nchars; i++) {
             char c = arr[i];
-            int val = 0;
+            int val;
             if (c >= '0' && c <= '9') {
                 val = c - '0';
             } else if (c >= 'a' && c <= 'f') {
@@ -79,35 +79,34 @@ class ChunkedInputStream extends LeftOverInputStream {
     private int readChunkHeader() throws IOException {
         boolean gotCR = false;
         int c;
-        char[] len_arr = new char[16];
-        int len_size = 0;
-        boolean end_of_len = false;
+        char[] lenArr = new char[16];
+        int lenSize = 0;
+        boolean endOfLen = false;
         int read = 0;
 
         while ((c = in.read()) != -1) {
             char ch = (char) c;
             read++;
-            if ((len_size == len_arr.length - 1) ||
+            if ((lenSize == lenArr.length - 1) ||
                     (read > MAX_CHUNK_HEADER_SIZE)) {
                 throw new IOException("invalid chunk header");
             }
             if (gotCR) {
                 if (ch == LF) {
-                    int l = numeric(len_arr, len_size);
-                    return l;
+                    return numeric(lenArr, lenSize);
                 } else {
                     gotCR = false;
                 }
-                if (!end_of_len) {
-                    len_arr[len_size++] = ch;
+                if (!endOfLen) {
+                    lenArr[lenSize++] = ch;
                 }
             } else {
                 if (ch == CR) {
                     gotCR = true;
                 } else if (ch == ';') {
-                    end_of_len = true;
-                } else if (!end_of_len) {
-                    len_arr[len_size++] = ch;
+                    endOfLen = true;
+                } else if (!endOfLen) {
+                    lenArr[lenSize++] = ch;
                 }
             }
         }
@@ -197,6 +196,7 @@ class ChunkedInputStream extends LeftOverInputStream {
      * limitation for the moment. It only affects potential efficiency
      * rather than correctness.
      */
+    @Override
     public int available() throws IOException {
         if (eof || closed) {
             return 0;

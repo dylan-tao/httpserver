@@ -33,7 +33,9 @@ import java.security.PrivilegedAction;
  */
 
 @SuppressWarnings("removal")
-public class ServerConfig {
+public final class ServerConfig {
+
+    private ServerConfig() {}
 
     private static final int DEFAULT_IDLE_TIMER_SCHEDULE_MILLIS = 10000; // 10 sec.
 

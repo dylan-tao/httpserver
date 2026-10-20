@@ -135,7 +135,7 @@ public class OpenAddressMap<K,V> {
         }
     }
     public Iterable<K> keys() {
-        return () -> new KeyIterator();
+        return KeyIterator::new;
     }
 
     /** iterate live (non tombstone) entries without building an intermediate collection */

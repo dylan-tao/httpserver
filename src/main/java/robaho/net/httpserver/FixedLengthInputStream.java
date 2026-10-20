@@ -38,10 +38,10 @@ class FixedLengthInputStream extends LeftOverInputStream {
     private long remaining;
 
     FixedLengthInputStream(ExchangeImpl t, InputStream src, long len) {
-        super(t, src);
         if (len < 0) {
             throw new IllegalArgumentException("Content-length: " + len);
         }
+        super(t, src);
         this.remaining = len;
     }
 
@@ -69,6 +69,7 @@ class FixedLengthInputStream extends LeftOverInputStream {
         return remaining == 0;
     }
 
+    @Override
     public int available() throws IOException {
         if (eof) {
             return 0;

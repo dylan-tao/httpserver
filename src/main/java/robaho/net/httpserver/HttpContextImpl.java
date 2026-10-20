@@ -66,7 +66,7 @@ class HttpContextImpl extends HttpContext {
      * constructor is package private.
      */
     HttpContextImpl(String protocol, String path, HttpHandler cb, ServerImpl server) {
-        if (path == null || protocol == null || path.length() < 1 || path.charAt(0) != '/') {
+        if (path == null || protocol == null || path.isEmpty() || path.charAt(0) != '/') {
             throw new IllegalArgumentException("Illegal value for path or protocol");
         }
         this.protocol = protocol.toLowerCase(Locale.ROOT);

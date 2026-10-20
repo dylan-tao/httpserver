@@ -35,10 +35,10 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
     }
 
     public NoSyncBufferedOutputStream(OutputStream out, int size) {
-        super(out);
         if (size <= 0) {
             throw new IllegalArgumentException("buffer size " + size);
         }
+        super(out);
         this.bufferSize = size;
     }
 

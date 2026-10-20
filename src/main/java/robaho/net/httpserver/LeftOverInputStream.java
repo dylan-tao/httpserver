@@ -35,11 +35,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * a (filter) input stream which can tell us if bytes are "left over"
  * on the underlying stream which can be read (without blocking)
  * on another instance of this class.
- *
+ * <p>
  * The class can also report if all bytes "expected" to be read
  * were read, by the time close() was called. In that case,
  * bytes may be drained to consume them (by calling drain() ).
- *
+ * <p>
  * isEOF() returns true, when all expected bytes have been read
  */
 abstract class LeftOverInputStream extends FilterInputStream {
@@ -49,7 +49,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
     protected volatile boolean eof = false;
     byte[] one = new byte[1];
 
-    public LeftOverInputStream(ExchangeImpl t, InputStream src) {
+    protected LeftOverInputStream(ExchangeImpl t, InputStream src) {
         super(src);
         this.t = t;
         this.server = t.getServerImpl();
@@ -63,6 +63,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
 
     /** matches read(): a concurrent close (e.g. from a timeout task) must not
      * interleave with a read and corrupt stream state */
+    @Override
     public void close() throws IOException {
         lock.lock();
         try {
@@ -114,6 +115,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
         return eof;
     }
 
+    @Override
     public int read() throws IOException {
         lock.lock();
         try {
@@ -139,6 +141,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
      * Content-Length is rejected up front in the request parser) */
     private long totalRead;
 
+    @Override
     public int read(byte[] b, int off, int len) throws IOException {
         lock.lock();
         try {
@@ -162,6 +165,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
      * bypass HTTP framing entirely (Content-Length/chunked state would not
      * advance), desyncing the connection: discard through the framing-aware
      * readImpl instead */
+    @Override
     public long skip(long n) throws IOException {
         lock.lock();
         try {
