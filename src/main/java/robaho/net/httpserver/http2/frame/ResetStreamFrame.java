@@ -28,7 +28,7 @@ public class ResetStreamFrame extends BaseFrame {
         os.flush();
     }
 
-    static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws Exception {
+    static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception, java.io.IOException {
         if(body.length != 4) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }

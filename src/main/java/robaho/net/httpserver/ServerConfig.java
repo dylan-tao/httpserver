@@ -94,7 +94,7 @@ public class ServerConfig {
     private static int maxReqHeaders;
     private static int maxReqHeaderSize;
     private static long maxRequestBodySize;
-    // max time a request or response is allowed to take
+    // max time a request is allowed to take
     private static long maxReqTime;
 
     // the value of the TCP_NODELAY socket-level option

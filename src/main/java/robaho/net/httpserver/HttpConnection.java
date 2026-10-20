@@ -176,7 +176,7 @@ public class HttpConnection {
                 return;
             }
             try {
-                /* need to ensure temporary selectors are closed */
+                /* ensure the socket is closed */
                 is.close();
             } catch (IOException e) {
                 logger.log(Level.TRACE, "error closing input stream", e);

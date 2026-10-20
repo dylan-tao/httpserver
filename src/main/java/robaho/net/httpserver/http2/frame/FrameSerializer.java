@@ -15,12 +15,12 @@ public class FrameSerializer {
 	 * frame, and the per-frame allocation was pure churn. the FrameHeader
 	 * record itself is NOT reusable - every frame object retains its header.
 	 */
-	public static BaseFrame deserialize(InputStream inputStream, byte[] headerScratch) throws Exception {
+	public static BaseFrame deserialize(InputStream inputStream, byte[] headerScratch) throws HTTP2Exception, java.io.IOException {
 
 		BaseFrame baseFrame;
 
         HTTP2Connection.readFully(inputStream, headerScratch);
-		FrameHeader frameHeader = FrameHeader.Parse(headerScratch);
+		FrameHeader frameHeader = FrameHeader.parse(headerScratch);
 
         if(frameHeader.length() > ServerConfig.http2MaxFrameSize()) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);

@@ -78,7 +78,7 @@ public class HTTP2Connection {
     /** scratch for DATA frame headers on the send path: reused per frame
      * instead of allocating 9 bytes each. used ONLY while holding the
      * connection lock (both call sites in Http2OutputStream hold it) */
-    final byte[] frameHeaderScratch = new byte[9];
+    final byte[] frameHeaderScratch = new byte[FrameHeader.LENGTH];
 
     /** count of writer threads parked in the in-loop flow-control park (the
      * connection-window park site). lets the connection-level WINDOW_UPDATE
@@ -290,7 +290,7 @@ public class HTTP2Connection {
         return closed.get();
     }
 
-    public void handle() throws Exception {
+    public void handle() throws HTTP2Exception, java.io.IOException {
         try {
             processFrames();
         } catch (HTTP2Exception e) {
@@ -327,7 +327,7 @@ public class HTTP2Connection {
         }
     }
 
-    private void processFrames() throws Exception {
+    private void processFrames() throws HTTP2Exception, java.io.IOException {
         boolean inHeaders = false;
         // true while an incomplete header block belongs to a TRAILER (not a new
         // stream's request): at completion time the registry lookup cannot
@@ -340,7 +340,7 @@ public class HTTP2Connection {
         // main HTTP2
         // per-frame header scratch: the reader thread is the sole deserialize
         // caller, so the 9-byte buffer is reused across frames
-        byte[] headerScratch = new byte[9];
+        byte[] headerScratch = new byte[FrameHeader.LENGTH];
         while (!httpConnection.isClosed()) {
             BaseFrame frame = FrameSerializer.deserialize(inputStream, headerScratch);
 
@@ -401,7 +401,7 @@ public class HTTP2Connection {
                         if(logger.isLoggable(Level.DEBUG)) {
                             logger.log(Level.DEBUG, () -> "received connection window update " + windowSizeIncrement + ", new size " + sendWindow.get());
                         }
-                        if (sendWindow.get() > 2147483647) {
+                        if (sendWindow.get() > Integer.MAX_VALUE) {
                             throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "maximum window size exceeded");
                         }
                         // wake every stream's writer when any is parked on the
@@ -697,7 +697,7 @@ public class HTTP2Connection {
 
         for (SettingParameter parameter : remoteSettingFrame.getSettingParameters()) {
             if (parameter.identifier == SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE) {
-                if (parameter.value > 2147483647) {
+                if (parameter.value > Integer.MAX_VALUE) {
                     throw new HTTP2Exception(HTTP2ErrorCode.FLOW_CONTROL_ERROR, "Invalid value for SETTINGS_INITIAL_WINDOW_SIZE " + parameter.value);
                 }
                 logger.log(Level.DEBUG, () -> "received initial window size of " + parameter.value);

@@ -47,10 +47,10 @@ public class H2Bench {
             }
             case "upload256k" -> {
                 try (H2Client c = new H2Client(port)) {
-                    upload(c, 256 * 1024, 10); // warmup
+                    upload(c, 256 * 1024); // warmup
                     t0 = System.nanoTime();
                     for (int i = 0; i < count; i++) {
-                        upload(c, 256 * 1024, 0);
+                        upload(c, 256 * 1024);
                         ok++;
                     }
                     t1 = System.nanoTime();
@@ -99,7 +99,7 @@ public class H2Bench {
 
     /** single-stream upload with both-window flow control: send 16KB DATA
      *  frames while the windows allow, blocking on WINDOW_UPDATE otherwise */
-    static void upload(H2Client c, int total, int warmupRounds) throws IOException {
+    static void upload(H2Client c, int total) throws IOException {
         int s = c.sendRequest("POST", "/echo", false);
         long connWindow = 65535, streamWindow = 65535;
         byte[] chunk = new byte[16384];

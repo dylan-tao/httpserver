@@ -90,7 +90,7 @@ public class FormParser {
             }
             paramCount++;
             if (MAX_PARAMS != 0 && paramCount > MAX_PARAMS) {
-                throw new IllegalStateException("number of request parameters %d is higher than maximum of %d, aborting. Can be configured using 'http.maxParams'".formatted(paramCount, MAX_PARAMS));
+                throw new IllegalStateException("number of request parameters %d is higher than maximum of %d, aborting. Can be configured using 'robaho.net.httpserver.max_form_params'".formatted(paramCount, MAX_PARAMS));
             }
             start = amp + 1;
         }

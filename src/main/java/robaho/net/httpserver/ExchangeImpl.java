@@ -52,6 +52,8 @@ class ExchangeImpl {
     OutputStream ros;
     /* close the underlying connection when this exchange finished */
     boolean close;
+    /** the Date header value this exchange set (see sendResponseHeaders) */
+    private String frameworkDate;
     boolean closed;
     boolean http10 = false;
 
@@ -139,7 +141,7 @@ class ExchangeImpl {
          * close the underlying connection if,
          * a) the streams not set up yet, no response can be sent, or
          * b) if the wrapper output stream is not set up, or
-         * c) if the close of the input/outpu stream fails
+         * c) if the close of the input/output streams fails
          */
         try {
             if (uis_orig == null || uos == null) {
@@ -239,7 +241,7 @@ class ExchangeImpl {
         // if header validation fails nothing reaches the stream, so a
         // handler that catches and retries cannot emit a double status line
         boolean noContentToSend = false; // assume there is content
-        boolean noContentLengthHeader = false; // must not send Content-length is set
+        boolean noContentLengthHeader = false; // must not be sent if set
 
         Integer bufferSize = (Integer)this.getAttribute(Attributes.SOCKET_WRITE_BUFFER);
         if(bufferSize!=null) {
@@ -276,7 +278,11 @@ class ExchangeImpl {
         }
 
         if(!informational) {
-            rspHdrs.set("Date", ActivityTimer.dateAndTime());
+            // keep the reference: writeHeaders compares against it to use the
+            // cached pre-encoded Date bytes (identity comparison is safe
+            // because BOTH sides go through this single assignment)
+            frameworkDate = ActivityTimer.dateAndTime();
+            rspHdrs.set("Date", frameworkDate);
         }
 
         if (isHeadRequest() || rCode == 304) {
@@ -417,7 +423,7 @@ class ExchangeImpl {
                 pos = writeAscii(key, head, pos);
                 head[pos++] = ':';
                 head[pos++] = ' ';
-                if (val == ActivityTimer.dateAndTime()) {
+                if (val == frameworkDate) {
                     // the framework-set Date header: use the cached encoded
                     // bytes instead of re-encoding the string per response
                     byte[] dateBytes = ActivityTimer.dateAndTimeBytes();

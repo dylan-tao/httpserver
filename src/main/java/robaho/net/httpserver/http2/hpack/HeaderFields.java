@@ -62,10 +62,6 @@ public class HeaderFields implements Iterable<HTTP2HeaderField> {
     public Iterator<HTTP2HeaderField> iterator() {
         return fields.iterator();
     }
-    public void clear() {
-        fields.clear();
-        hasNonPseudoHeader = false;
-    }
     /**
      * perform the multi-field validation of the collection of header fields
      */

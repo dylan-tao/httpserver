@@ -61,17 +61,20 @@ public abstract class WebSocket {
 
     private final List<WebSocketFrame> continuousFrames = new LinkedList<WebSocketFrame>();
 
+    /** running total of the current fragmented message's payload bytes:
+     * maintained incrementally as fragments arrive (the old checkMessageSize
+     * re-summed the whole fragment list per fragment - O(n^2) per message) */
+    private long continuousBytes;
+
     private volatile State state = State.UNCONNECTED;
 
     /** close info recorded when the closing handshake begins, so the read
-     * loop exit can surface the real code instead of a generic 1011 */
-    private volatile CloseCode pendingCloseCode;
-    private volatile String pendingCloseReason;
-    private volatile boolean pendingCloseByRemote;
-    /** set whenever close info has been recorded (locally or from a remote
+     * loop exit can surface the real code instead of a generic 1011.
+     * recorded = true whenever info was recorded (locally or from a remote
      * close frame): an application-defined 3xxx/4xxx close code has no
-     * CloseCode mapping (null) and must still not be reported as 1011 */
-    private volatile boolean pendingCloseRecorded;
+     * CloseCode mapping (code = null) and must still not be reported as 1011 */
+    private record CloseInfo(CloseCode code, String reason, boolean initiatedByRemote, boolean recorded) {}
+    private volatile CloseInfo pendingClose;
 
     /** serializes frame writes AND the close transition: a user-thread send
      * must not interleave with the read thread's close (garbled tail frames),
@@ -103,7 +106,10 @@ public abstract class WebSocket {
 
     protected abstract void onMessage(WebSocketFrame message) throws WebSocketException;
 
-    protected abstract void onPong(WebSocketFrame pong) throws WebSocketException;
+    /** called when a pong frame arrives. rarely needed: the framework
+     * answers pings automatically; override only for keepalive monitoring */
+    protected void onPong(WebSocketFrame pong) throws WebSocketException {
+    }
 
     protected void onException(IOException exception) {
         if(state!=State.CLOSING && state!=State.CLOSED) {
@@ -126,7 +132,14 @@ public abstract class WebSocket {
         logger.log(TRACE, "frame sent: {0}", frame);
     }
 
-    public void close(CloseCode code, String reason, boolean initiatedByRemote) throws IOException {
+    /** close this websocket with a normal closure. the 3-arg variant is
+     * internal: initiatedByRemote is a fact the framework tracks, not a
+     * parameter for the caller to guess */
+    public void close(CloseCode code, String reason) throws IOException {
+        close(code, reason, false);
+    }
+
+    void close(CloseCode code, String reason, boolean initiatedByRemote) throws IOException {
         logger.log(INFO, "closing websocket {0}", uri);
         boolean completeClose;
         lock.lock();
@@ -142,10 +155,7 @@ public abstract class WebSocket {
                 // record the close info: after the closing handshake completes
                 // (or the peer disappears) the read loop exits and must surface
                 // this code, not a generic internal error
-                pendingCloseCode = code;
-                pendingCloseReason = reason;
-                pendingCloseByRemote = initiatedByRemote;
-                pendingCloseRecorded = true;
+                pendingClose = new CloseInfo(code, reason, initiatedByRemote, true);
                 sendFrame(new CloseFrame(code, reason));
                 completeClose = false;
             } else {
@@ -219,6 +229,7 @@ public abstract class WebSocket {
             checkMessageSize(frame);
             this.continuousOpCode = frame.getOpCode();
             this.continuousFrames.clear();
+            this.continuousBytes = frame.getBinaryPayload().length;
             this.continuousFrames.add(frame);
         } else if (frame.isFin()) {
             // Last
@@ -226,6 +237,7 @@ public abstract class WebSocket {
                 throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence was not started.");
             }
             checkMessageSize(frame);
+            this.continuousBytes += frame.getBinaryPayload().length;
             this.continuousFrames.add(frame);
             WebSocketFrame message = new WebSocketFrame(this.continuousOpCode, this.continuousFrames);
             if (this.continuousOpCode == OpCode.Text) {
@@ -242,23 +254,21 @@ public abstract class WebSocket {
             onMessage(message);
             this.continuousOpCode = null;
             this.continuousFrames.clear();
+            this.continuousBytes = 0;
         } else if (this.continuousOpCode == null) {
             // Unexpected
             throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence was not started.");
         } else {
             // Intermediate
             checkMessageSize(frame);
+            this.continuousBytes += frame.getBinaryPayload().length;
             this.continuousFrames.add(frame);
         }
     }
 
     /** reject a fragmented message whose total size exceeds the configured maximum */
     private void checkMessageSize(WebSocketFrame frame) throws WebSocketException {
-        long total = frame.getBinaryPayload().length;
-        for (WebSocketFrame f : this.continuousFrames) {
-            total += f.getBinaryPayload().length;
-        }
-        if (total > ServerConfig.getMaxWebSocketMessageSize()) {
+        if (continuousBytes + frame.getBinaryPayload().length > ServerConfig.getMaxWebSocketMessageSize()) {
             throw new WebSocketException(CloseCode.MessageTooBig,
                     "aggregated message exceeds " + ServerConfig.getMaxWebSocketMessageSize() + " bytes");
         }
@@ -316,12 +326,12 @@ public abstract class WebSocket {
                 doClose(CloseCode.AbnormalClosure, e.toString(), false);
             }
         } finally {
-            if (this.state == State.CLOSING && pendingCloseRecorded) {
+            if (this.state == State.CLOSING && pendingClose != null && pendingClose.recorded()) {
                 // the closing handshake began (locally or remotely) but did not
                 // complete - surface the recorded close code and reason. the code
                 // is null for application-defined 3xxx/4xxx codes (no CloseCode
                 // mapping), but the reason and initiator are the real ones
-                doClose(pendingCloseCode, pendingCloseReason, pendingCloseByRemote);
+                doClose(pendingClose.code(), pendingClose.reason(), pendingClose.initiatedByRemote());
             } else if (this.state != State.CLOSED) {
                 doClose(CloseCode.InternalServerError, "Handler terminated without closing the connection.", false);
             }

@@ -306,7 +306,7 @@ public class HTTP2Stream {
             break;
         case WINDOW_UPDATE:
             int windowSizeIncrement = ((WindowUpdateFrame)frame).getWindowSizeIncrement();
-            if(sendWindow.addAndGet(windowSizeIncrement)> 2147483647) {
+            if(sendWindow.addAndGet(windowSizeIncrement)> Integer.MAX_VALUE) {
                 connection.sendResetStream(HTTP2ErrorCode.FLOW_CONTROL_ERROR, streamId);
                 close();
             }
@@ -541,7 +541,7 @@ public class HTTP2Stream {
                     // header through the per-connection scratch (lock-held):
                     // one 9-byte allocation per DATA frame saved
                     FrameHeader.encodeInto(connection.frameHeaderScratch, _len, FrameType.DATA, FrameFlag.NONE, streamId);
-                    connection.outputStream.write(connection.frameHeaderScratch, 0, 9);
+                    connection.outputStream.write(connection.frameHeaderScratch, 0, FrameHeader.LENGTH);
                     connection.outputStream.write(b,off,_len);
                     if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     if (ServerConfig.http2DisableFlushDelay()) {
@@ -595,7 +595,7 @@ public class HTTP2Stream {
                 try {
                     if(!streamOutputClosed) {
                         FrameHeader.encodeInto(connection.frameHeaderScratch, 0, FrameType.DATA, END_STREAM, streamId);
-                        connection.outputStream.write(connection.frameHeaderScratch, 0, 9);
+                        connection.outputStream.write(connection.frameHeaderScratch, 0, FrameHeader.LENGTH);
                         if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     }
                     if(lastRequest) {

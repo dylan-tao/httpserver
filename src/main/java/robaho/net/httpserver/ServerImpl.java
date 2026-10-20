@@ -86,6 +86,11 @@ class ServerImpl {
     // in-flight exchanges (h1 + h2 doFilter sections): lets stop(delay) return
     // as soon as the server goes idle instead of sleeping the full delay
     private final java.util.concurrent.atomic.AtomicInteger activeExchanges = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** h2 keepalive ping interval: the reader loop schedules the task at this
+     * period and the idle-cleaner treats a ping as activity for the same
+     * window - both sites must agree, hence one named constant */
+    private static final long H2_PING_INTERVAL_MILLIS = 1000;
     private volatile boolean finished = false;
     private boolean bound = false;
     private boolean started = false;
@@ -134,7 +139,7 @@ class ServerImpl {
         timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
         // note: the shared ActivityTimer clock runs on its own daemon timer
         // (see ActivityTimer) so it survives this server instance
-        timer.schedule(Http2Exchange.createTask(),1000,1000);
+        timer.schedule(Http2Exchange.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
             createContext("/__stats",new StatsHandler());
@@ -265,7 +270,7 @@ class ServerImpl {
         } catch (IOException e) {
         }
         if (executor instanceof DefaultExecutor de) {
-            // since we created it, shut it done when stopping because it is private
+            // since we created it, shut it down when stopping because it is private
             de.shutdown();
         }
         long latest = System.currentTimeMillis() + delay * 1000L;
@@ -556,7 +561,7 @@ class ServerImpl {
                 public void run() {
                     long now = System.currentTimeMillis();
                     for(var exchange : allHttp2Exchanges) {
-                        if(exchange.connection.lastActivityTime + 1000 < now) {
+                        if(exchange.connection.lastActivityTime + H2_PING_INTERVAL_MILLIS < now) {
                             try {
                                 // the ping write refreshes lastActivityTime via the
                                 // activity timer stream; restore it afterwards so a
@@ -679,9 +684,7 @@ class ServerImpl {
                 if (contentLength != null) {
                     try {
                         if (Long.parseLong(contentLength) > bodySizeLimit) {
-                            response.set(":status", "413");
-                            stream.writeResponseHeaders(true);
-                            out.close();
+                            rejectStream(stream, out, "413");
                             return;
                         }
                     } catch (NumberFormatException ignored) {
@@ -695,9 +698,7 @@ class ServerImpl {
             HttpContextImpl ctx = contexts.findContext(protocol, uriPath);
             if (ctx == null) {
                 logger.log(Level.DEBUG, "No context found for request "+uriPath+", rejecting as not found");
-                response.set(":status","404");
-                stream.writeResponseHeaders(true);
-                out.close();
+                rejectStream(stream, out, "404");
                 return;
             }
 
@@ -705,7 +706,7 @@ class ServerImpl {
 
             try {
                 activeExchanges.incrementAndGet();
-                buildChain(ctx).doFilter(new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
+                doFilterTracked(buildChain(ctx), new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
             } catch (IOException e) {
                 // common with clients breaking connections; the stream is
                 // closed by the performRequest finally block
@@ -760,6 +761,10 @@ class ServerImpl {
                         nis.shrinkForNextRequest();
                     }
                     runPerRequest();
+                } catch (RequestRejectedException e) {
+                    // a malformed request: reply and close (sendReply's
+                    // closeNow sets connection.closed, ending the loop)
+                    reject(e.code, e.requestLine, e.getMessage());
                 } catch (IOException e) {
                     // these are common with clients breaking connections etc
                     logger.log(Level.TRACE, "ServerImpl IOException", e);
@@ -808,8 +813,7 @@ class ServerImpl {
                 // the idle cleaner may concurrently shrink the output buffer
                 // the reply is written into
                 connection.inRequest = true;
-                reject(Code.HTTP_BAD_REQUEST, "-", "Request line too long");
-                return;
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, "-", "Request line too long");
             }
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
@@ -840,93 +844,45 @@ class ServerImpl {
             logger.log(Level.DEBUG, () -> "Exchange request line: "+ requestLine);
             int space = requestLine.indexOf(" ");
             if (space == -1) {
-                reject(Code.HTTP_BAD_REQUEST,
-                        requestLine, "Bad request line");
-                return;
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Bad request line");
             }
             String method = requestLine.substring(0, space);
             int start = space + 1;
             space = requestLine.indexOf(" ", start);
             if (space == -1) {
-                reject(Code.HTTP_BAD_REQUEST,
-                        requestLine, "Bad request line");
-                return;
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Bad request line");
             }
             String uriStr = requestLine.substring(start, space);
             // reject authority-form ambiguity: "//" can be parsed as an
             // authority component rather than a path (JDK parity)
             if (uriStr.startsWith("//")) {
-                reject(Code.HTTP_BAD_REQUEST, requestLine, "Bad request URI");
-                return;
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Bad request URI");
             }
             URI uri;
             try {
                 uri = new URI(uriStr);
             } catch (URISyntaxException e3) {
-                reject(Code.HTTP_BAD_REQUEST,
-                        requestLine, "URISyntaxException thrown");
-                return;
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown");
             }
             start = space + 1;
             String version = requestLine.substring(start);
             if (!"HTTP/1.1".equals(version) && !"HTTP/1.0".equals(version)) {
                 // the h2c PRI line was already handled above; anything else
                 // is an unsupported protocol version
-                reject(Code.HTTP_VERSION, requestLine, "Unsupported HTTP version");
-                return;
+                throw new RequestRejectedException(Code.HTTP_VERSION, requestLine, "Unsupported HTTP version");
             }
             Headers headers;
             try {
                 headers = req.headers();
             } catch (IOException e) {
-                reject(Code.HTTP_BAD_REQUEST, requestLine, "Malformed header line");
-                return;
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Malformed header line");
             }
 
-            /* checks for unsupported combinations of lengths and encodings */
-            List<String> clHeader = headers.get("Content-length");
-            List<String> teHeader = headers.get("Transfer-encoding");
-            if (clHeader != null && (teHeader != null || clHeader.size() > 1)) {
-                reject(Code.HTTP_BAD_REQUEST, requestLine,
-                        "Conflicting or malformed headers detected");
-                return;
-            }
-            long clen = 0L;
-            String headerValue = null;
-            List<String> teValueList = teHeader;
-            if (teValueList != null && !teValueList.isEmpty()) {
-                headerValue = teValueList.get(0);
-            }
-            if (headerValue != null) {
-                if (headerValue.equalsIgnoreCase("chunked") && teValueList.size() == 1) {
-                    clen = -1L;
-                } else {
-                    reject(Code.HTTP_NOT_IMPLEMENTED,
-                            requestLine, "Unsupported Transfer-Encoding value");
-                    return;
-                }
-            } else {
-                headerValue = headers.getFirst("Content-length");
-                if (headerValue != null) {
-                    // RFC 7230 5.3: Content-Length is 1*DIGIT only - the JDK's
-                    // parseLong also accepts a leading '+' or '-'
-                    if (!isDigits(headerValue)) {
-                        reject(Code.HTTP_BAD_REQUEST,
-                                requestLine, "Illegal Content-length value");
-                        return;
-                    }
-                    try {
-                        clen = Long.parseLong(headerValue);
-                    } catch (NumberFormatException e2) {
-                        reject(Code.HTTP_BAD_REQUEST,
-                                requestLine, "NumberFormatException thrown");
-                        return;
-                    }
-                }
-            }
+            long clen = resolveBodyLength(requestLine, headers);
+
             // a declared large body: switch to the full-size read buffer so
             // the body is consumed in 16KB reads, not 2KB
-            if (clen > 8192 && rawin instanceof NoSyncBufferedInputStream nis) {
+            if (clen > NoSyncBufferedInputStream.GROW_BODY_THRESHOLD && rawin instanceof NoSyncBufferedInputStream nis) {
                 nis.growBuffer();
             }
             long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
@@ -934,23 +890,18 @@ class ServerImpl {
                 // declared Content-Length over the opt-in body cap. chunked
                 // bodies without a declared length are bounded incrementally
                 // in LeftOverInputStream
-                reject(Code.HTTP_ENTITY_TOO_LARGE, requestLine,
+                throw new RequestRejectedException(Code.HTTP_ENTITY_TOO_LARGE, requestLine,
                         "Request body exceeds the configured maximum of " + bodySizeLimit + " bytes");
-                return;
             }
             logger.log(Level.TRACE,() -> "protocol "+protocol+" uri "+uri+" headers "+headers);
             String uriPath = Optional.ofNullable(uri.getPath()).orElse("/");
             ctx = contexts.findContext(protocol, uriPath);
             if (ctx == null) {
-                reject(Code.HTTP_NOT_FOUND,
-                        requestLine, "No context found for request");
-                return;
+                throw new RequestRejectedException(Code.HTTP_NOT_FOUND, requestLine, "No context found for request");
             }
             connection.setContext(ctx);
             if (ctx.getHandler() == null) {
-                reject(Code.HTTP_INTERNAL_ERROR,
-                        requestLine, "No handler for context");
-                return;
+                throw new RequestRejectedException(Code.HTTP_INTERNAL_ERROR, requestLine, "No handler for context");
             }
             tx = new ExchangeImpl(method, uri, req, clen, connection);
             String chdr = headers.getFirst("Connection");
@@ -999,16 +950,7 @@ class ServerImpl {
             tx.getRequestBody();
             tx.getResponseBody();
             Filter.Chain uc = buildChain(ctx);
-            activeExchanges.incrementAndGet();
-            try {
-                if (https) {
-                    uc.doFilter(new HttpsExchangeImpl(tx));
-                } else {
-                    uc.doFilter(new HttpExchangeImpl(tx));
-                }
-            } finally {
-                activeExchanges.decrementAndGet();
-            }
+            doFilterTracked(uc, https ? new HttpsExchangeImpl(tx) : new HttpExchangeImpl(tx));
             if (tx.close) {
                 closeConnection(connection);
             } else {
@@ -1023,6 +965,55 @@ class ServerImpl {
             }
         }
 
+        /** resolve the request body length from the Content-Length /
+         *  Transfer-Encoding headers: 0 = none, -1 = chunked. throws
+         *  RequestRejectedException on conflicting or malformed values */
+        private long resolveBodyLength(String requestLine, Headers headers) throws IOException {
+            List<String> clHeader = headers.get("Content-length");
+            List<String> teHeader = headers.get("Transfer-encoding");
+            if (clHeader != null && (teHeader != null || clHeader.size() > 1)) {
+                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine,
+                        "Conflicting or malformed headers detected");
+            }
+            if (teHeader != null && !teHeader.isEmpty()) {
+                String teValue = teHeader.get(0);
+                if (teValue.equalsIgnoreCase("chunked") && teHeader.size() == 1) {
+                    return -1L;
+                }
+                throw new RequestRejectedException(Code.HTTP_NOT_IMPLEMENTED, requestLine,
+                        "Unsupported Transfer-Encoding value");
+            }
+            String headerValue = headers.getFirst("Content-length");
+            if (headerValue != null) {
+                // RFC 7230 5.3: Content-Length is 1*DIGIT only - the JDK's
+                // parseLong also accepts a leading '+' or '-'
+                if (!isDigits(headerValue)) {
+                    throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine,
+                            "Illegal Content-length value");
+                }
+                try {
+                    return Long.parseLong(headerValue);
+                } catch (NumberFormatException e2) {
+                    throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine,
+                            "NumberFormatException thrown");
+                }
+            }
+            return 0L;
+        }
+
+        /** a request was rejected during parsing: run()'s catch replies and
+         * closes - replaces the 14 reject+return pairs that used to be
+         * scattered through runPerRequest */
+        private static class RequestRejectedException extends IOException {
+            final int code;
+            final String requestLine;
+
+            RequestRejectedException(int code, String requestLine, String message) {
+                super(message);
+                this.code = code;
+                this.requestLine = requestLine;
+            }
+        }
         void reject(int code, String requestStr, String message) {
             logReply(code, requestStr, message);
             sendReply(
@@ -1145,6 +1136,26 @@ class ServerImpl {
     }
 
     /** returns true when s consists only of ASCII digits (1*DIGIT, RFC 7230) */
+    /** run the filter chain with the in-flight exchange counter maintained:
+     * shared by the h1 and h2 request paths so the counting cannot drift */
+    private void doFilterTracked(Filter.Chain chain, com.sun.net.httpserver.HttpExchange exchange) throws IOException {
+        activeExchanges.incrementAndGet();
+        try {
+            chain.doFilter(exchange);
+        } finally {
+            activeExchanges.decrementAndGet();
+        }
+    }
+
+    /** reject an h2 stream with a bare status response: the h2 counterpart of
+     * the h1 reject() helper (h1/h2 error paths must not drift apart) */
+    private static void rejectStream(robaho.net.httpserver.http2.HTTP2Stream stream,
+            java.io.OutputStream out, String status) throws IOException {
+        stream.getResponseHeaders().set(":status", status);
+        stream.writeResponseHeaders(true);
+        out.close();
+    }
+
     private static boolean isDigits(String s) {
         if (s.isEmpty()) {
             return false;

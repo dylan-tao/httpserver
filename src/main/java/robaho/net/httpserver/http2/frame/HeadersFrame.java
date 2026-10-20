@@ -72,7 +72,7 @@ public class HeadersFrame extends BaseFrame {
 	 * @throws HTTP2Exception
 	 * @throws Exception
 	 */
-	public static HeadersFrame parse(byte[] frameBody, FrameHeader header) throws HTTP2Exception, Exception {
+	public static HeadersFrame parse(byte[] frameBody, FrameHeader header) throws HTTP2Exception, java.io.IOException {
 
         if(frameBody == null) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);

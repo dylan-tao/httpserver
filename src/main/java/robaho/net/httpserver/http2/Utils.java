@@ -6,11 +6,11 @@ import java.util.List;
 
 public class Utils {
 
-	public static int convertToInt(byte[] bytes, int off) throws Exception {
+	public static int convertToInt(byte[] bytes, int off) throws java.io.IOException {
 		return convertToInt(bytes, off, 4);
 	}
 
-	public static int convertToInt(byte[] bytes, int off, int length) throws Exception {
+	public static int convertToInt(byte[] bytes, int off, int length) throws java.io.IOException {
 		int result = 0;
 		if (off + length <= bytes.length) {
 
@@ -21,13 +21,13 @@ public class Utils {
 			}
 
 		} else {
-			throw new Exception(String.format("cannot read %s bytes from offset, goes beyond array boundaries", length));
+			throw new java.io.IOException("cannot read " + length + " bytes from offset, goes beyond array boundaries");
 		}
 		return result;
 
 	}
 
-	public static long convertToLong(byte[] bytes, int off, int length) throws Exception {
+	public static long convertToLong(byte[] bytes, int off, int length) throws java.io.IOException {
 		long result = 0;
 		if (off + length <= bytes.length) {
 			int counter = 0;
@@ -36,7 +36,7 @@ public class Utils {
 				counter++;
 			}
 		} else {
-			throw new Exception(String.format("cannot read %s bytes from offset, goes beyond array boundries", length));
+			throw new java.io.IOException("cannot read " + length + " bytes from offset, goes beyond array boundaries");
 		}
 		return result;
 

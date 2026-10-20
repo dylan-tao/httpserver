@@ -11,10 +11,6 @@ public class GoawayFrame extends BaseFrame {
     public final HTTP2ErrorCode errorCode;
     public final int lastSeenStream;
 
-	public GoawayFrame(FrameHeader header,HTTP2ErrorCode errorCode) {
-		this(header,errorCode,0);
-	}
-
 	public GoawayFrame(FrameHeader header,HTTP2ErrorCode errorCode,int lastSeenStream) {
 		super(header);
         this.errorCode = errorCode;

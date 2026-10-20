@@ -143,6 +143,12 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * the full bufferSize on demand when a request actually needs it */
     private static final int IDLE_READ_BUFFER_SIZE = 2048;
 
+    /** request bodies larger than this grow the read buffer from the small
+     * idle size to the full bufferSize, so bulk body reads are 16KB, not
+     * 2KB. related to IDLE_READ_BUFFER_SIZE (grow trigger) and bufferSize
+     * (grow target) */
+    public static final int GROW_BODY_THRESHOLD = 8192;
+
     /**
      * Shrink the read buffer and line buffer for an idle connection. called
      * by the READER thread (the same thread that owns the buffer) after a

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.HTTP2Exception;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
 /**
@@ -18,6 +19,9 @@ import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
  * @param streamIdentifier 31-bit unsigned integer uniquely identifies a frame
  */
 public record FrameHeader(int length, FrameType type, FlagSet flags, int streamIdentifier) {
+
+    /** the fixed size of an HTTP/2 frame header in bytes */
+    public static final int LENGTH = 9;
 
 	@Override
 	public String toString() {
@@ -39,7 +43,7 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 	 * @return
 	 * @throws Exception
 	 */
-	public static FrameHeader Parse(byte[] tmpBuffer) throws Exception {
+	public static FrameHeader parse(byte[] tmpBuffer) throws HTTP2Exception, java.io.IOException {
 		FrameHeader frameHeader = null;
 
 		FrameType type = null;
