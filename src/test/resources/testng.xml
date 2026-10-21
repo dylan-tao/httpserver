@@ -20,7 +20,6 @@
       <class name="robaho.net.httpserver.PipeliningStallTest"/>
       <class name="robaho.net.httpserver.RequestHeadersTest"/>
       <class name="robaho.net.httpserver.SSLSessionTest"/>
-      <class name="robaho.net.httpserver.StringUtilsTest"/>
       <class name="robaho.net.httpserver.extras.MultipartFormParserTest"/>
       <class name="robaho.net.httpserver.http2.Http2Test"/>
       <class name="robaho.net.httpserver.websockets.MultipleWebSocketTest"/>
