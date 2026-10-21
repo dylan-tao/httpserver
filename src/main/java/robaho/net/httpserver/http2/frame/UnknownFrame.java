@@ -3,9 +3,9 @@ package robaho.net.httpserver.http2.frame;
 import java.io.IOException;
 import java.io.OutputStream;
 
-class NotImplementedFrame extends BaseFrame {
+class UnknownFrame extends BaseFrame {
     private final byte[] body;
-    public NotImplementedFrame(FrameHeader header,byte[] body) {
+    public UnknownFrame(FrameHeader header,byte[] body) {
         super(header);
         this.body = body;
     }
@@ -16,6 +16,6 @@ class NotImplementedFrame extends BaseFrame {
     }
 
     static BaseFrame parse(byte[] body, FrameHeader frameHeader) {
-        return new NotImplementedFrame(frameHeader,body);
+        return new UnknownFrame(frameHeader,body);
     }
 }

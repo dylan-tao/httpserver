@@ -1,7 +1,7 @@
 package robaho.net.httpserver.websockets;
 
 import com.sun.net.httpserver.HttpExchange;
-import robaho.net.httpserver.Attributes;
+import robaho.net.httpserver.AttributeKeys;
 import robaho.net.httpserver.ServerConfig;
 
 import java.io.IOException;
@@ -83,7 +83,7 @@ public abstract class BufferedWebSocket extends WebSocket {
     public BufferedWebSocket(HttpExchange exchange, int kernelBufferSizeBytes) {
         super(exchange);
         if (kernelBufferSizeBytes != 0) {
-            exchange.setAttribute(Attributes.SOCKET_WRITE_BUFFER, kernelBufferSizeBytes);
+            exchange.setAttribute(AttributeKeys.SOCKET_WRITE_BUFFER, kernelBufferSizeBytes);
         }
         future = getExecutor().submit(() -> {
             drainThread = Thread.currentThread();

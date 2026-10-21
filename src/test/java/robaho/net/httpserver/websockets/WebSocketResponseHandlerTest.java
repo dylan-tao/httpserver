@@ -5,7 +5,7 @@ import com.sun.net.httpserver.HttpExchange;
 import org.testng.Assert;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import robaho.net.httpserver.Code;
+import robaho.net.httpserver.HttpStatus;
 import robaho.net.httpserver.StubHttpExchange;
 
 import java.io.ByteArrayInputStream;
@@ -176,7 +176,7 @@ public class WebSocketResponseHandlerTest {
 
         handler.handle(exchange);
 
-        assertEquals(Code.HTTP_BAD_REQUEST, exchange.getResponseCode());
+        assertEquals(HttpStatus.HTTP_BAD_REQUEST, exchange.getResponseCode());
     }
 
     @Test
@@ -197,7 +197,7 @@ public class WebSocketResponseHandlerTest {
     public void testWrongWebsocketVersionReturnsErrorResponse() throws IOException {
         this.headers.set("sec-websocket-version", "12");
         handler.handle(exchange);
-        assertEquals(Code.HTTP_BAD_REQUEST, exchange.getResponseCode());
+        assertEquals(HttpStatus.HTTP_BAD_REQUEST, exchange.getResponseCode());
     }
 
     @Test

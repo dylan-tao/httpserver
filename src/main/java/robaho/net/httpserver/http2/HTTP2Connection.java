@@ -10,9 +10,9 @@ import robaho.net.httpserver.http2.frame.DataFrame;
 import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameHeader;
-import robaho.net.httpserver.http2.frame.FrameSerializer;
+import robaho.net.httpserver.http2.frame.FrameParser;
 import robaho.net.httpserver.http2.frame.FrameType;
-import robaho.net.httpserver.http2.frame.GoawayFrame;
+import robaho.net.httpserver.http2.frame.GoAwayFrame;
 import robaho.net.httpserver.http2.frame.HeadersFrame;
 import robaho.net.httpserver.http2.frame.PingFrame;
 import robaho.net.httpserver.http2.frame.ResetStreamFrame;
@@ -23,7 +23,7 @@ import robaho.net.httpserver.http2.frame.SettingsMap;
 import robaho.net.httpserver.http2.frame.WindowUpdateFrame;
 import robaho.net.httpserver.http2.hpack.HPackContext;
 import robaho.net.httpserver.http2.hpack.HTTP2HeaderField;
-import robaho.net.httpserver.http2.hpack.HeaderFields;
+import robaho.net.httpserver.http2.hpack.HeaderFieldList;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -341,7 +341,7 @@ public class HTTP2Connection {
         // caller, so the 9-byte buffer is reused across frames
         byte[] headerScratch = new byte[FrameHeader.LENGTH];
         while (!httpConnection.isClosed()) {
-            BaseFrame frame = FrameSerializer.deserialize(inputStream, headerScratch);
+            BaseFrame frame = FrameParser.deserialize(inputStream, headerScratch);
 
             int streamId = frame.getHeader().streamIdentifier();
             // box once per frame: every registry get/put below autoboxes the
@@ -366,7 +366,7 @@ public class HTTP2Connection {
                     }
                     continue;
                 case GOAWAY:
-                    GoawayFrame goaway = (GoawayFrame) frame;
+                    GoAwayFrame goaway = (GoAwayFrame) frame;
                     if (goaway.errorCode == HTTP2ErrorCode.NO_ERROR) {
                         // graceful shutdown (RFC 7540 6.8): the peer will not
                         // open new streams beyond lastSeenStream. finish the
@@ -423,9 +423,9 @@ public class HTTP2Connection {
                         continue;
                     }
                     break;
-                case NOT_IMPLEMENTED:
+                case UNKNOWN:
                     if (inHeaders) {
-                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "NOT_IMPLEMENTED frame received while headers being received");
+                        throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR, "UNKNOWN frame received while headers being received");
                     }
                     // unknown/unsupported frame types must be ignored
                     // (RFC 7540 4.1): routing them into the stream dispatch
@@ -639,7 +639,7 @@ public class HTTP2Connection {
                 }
                 peakConcurrentStreams = Math.max(peakConcurrentStreams, currentSize);
                 byte[] headerBlock = BinaryCodec.concat(headerBlockFragments);
-                HeaderFields fields = new HeaderFields();
+                HeaderFieldList fields = new HeaderFieldList();
                 fields.addAll(hpack.decodeFieldSegments(headerBlock));
                 // streamID is not present and has to be greater than all
                 // the stream IDs present
@@ -764,7 +764,7 @@ public class HTTP2Connection {
     public void sendGoAway(HTTP2ErrorCode errorCode) throws IOException {
         lock();
         try {
-            GoawayFrame frame = new GoawayFrame(errorCode, lastSeenStreamId);
+            GoAwayFrame frame = new GoAwayFrame(errorCode, lastSeenStreamId);
             frame.writeTo(outputStream);
             outputStream.flush();
         } finally {

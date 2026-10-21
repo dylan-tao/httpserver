@@ -7,7 +7,7 @@ import robaho.net.httpserver.http2.HTTP2Exception;
 
 import java.io.InputStream;
 
-public class FrameSerializer {
+public class FrameParser {
 
 	/**
 	 * Deserialize one frame from the stream. {@code headerScratch} is a
@@ -40,7 +40,7 @@ public class FrameSerializer {
 			baseFrame = DataFrame.parse(body,frameHeader);
 			break;
 		case GOAWAY:
-			baseFrame = GoawayFrame.parse(body,frameHeader);
+			baseFrame = GoAwayFrame.parse(body,frameHeader);
 			break;
 		case PING:
 			baseFrame = PingFrame.parse(body,frameHeader);
@@ -61,7 +61,7 @@ public class FrameSerializer {
 			baseFrame = WindowUpdateFrame.parse(body, frameHeader);
 			break;
 		default:
-            baseFrame = NotImplementedFrame.parse(body,frameHeader);
+            baseFrame = UnknownFrame.parse(body,frameHeader);
 			break;
 		}
 

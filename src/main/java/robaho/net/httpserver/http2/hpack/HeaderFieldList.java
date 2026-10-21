@@ -14,7 +14,7 @@ import java.util.List;
  * headers require multi-field inspection, so aggregating and validating at the end is an easier
  * design
  */
-public class HeaderFields implements Iterable<HTTP2HeaderField> {
+public class HeaderFieldList implements Iterable<HTTP2HeaderField> {
     private static final BloomSet prohibitedHeaderFields = BloomSet.of("connection");
     private static final BloomSet requiredHeaderFields = BloomSet.of(":path",":method",":scheme");
     private static final BloomSet pseudoHeadersIn = BloomSet.of(":authority", ":method", ":path", ":scheme");

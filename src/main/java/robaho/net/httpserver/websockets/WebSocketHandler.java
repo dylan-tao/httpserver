@@ -3,7 +3,7 @@ package robaho.net.httpserver.websockets;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import robaho.net.httpserver.Code;
+import robaho.net.httpserver.HttpStatus;
 
 import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
@@ -18,23 +18,23 @@ public abstract class WebSocketHandler implements HttpHandler {
         // (e.g. from a stubbed exchange) is not rejected.
         String requestMethod = exchange.getRequestMethod();
         if (requestMethod != null && !"GET".equalsIgnoreCase(requestMethod)) {
-            Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST, "websocket handshake must be a GET");
+            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "websocket handshake must be a GET");
             return;
         }
 
         if (!isWebsocketRequested(headers)) {
-            Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST, "not a websocket upgrade request");
+            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "not a websocket upgrade request");
             return;
         }
 
         if (!Util.HEADER_WEBSOCKET_VERSION_VALUE.equalsIgnoreCase(headers.getFirst(Util.HEADER_WEBSOCKET_VERSION))) {
-            Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST,
+            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST,
                     "Invalid Websocket-Version " + headers.getFirst(Util.HEADER_WEBSOCKET_VERSION));
             return;
         }
 
         if (!headers.containsKey(Util.HEADER_WEBSOCKET_KEY)) {
-            Util.sendResponseHeaders(exchange, Code.HTTP_BAD_REQUEST, "Missing Websocket-Key");
+            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "Missing Websocket-Key");
             return;
         }
 
@@ -42,7 +42,7 @@ public abstract class WebSocketHandler implements HttpHandler {
             exchange.getResponseHeaders().add(Util.HEADER_WEBSOCKET_ACCEPT,
                     Util.makeAcceptKey(headers.getFirst(Util.HEADER_WEBSOCKET_KEY)));
         } catch (NoSuchAlgorithmException e) {
-            Util.sendResponseHeaders(exchange, Code.HTTP_INTERNAL_ERROR,
+            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_INTERNAL_ERROR,
                     "The SHA-1 Algorithm required for websockets is not available on the server.");
             return;
         }
@@ -63,7 +63,7 @@ public abstract class WebSocketHandler implements HttpHandler {
         exchange.getResponseHeaders().add(Util.HEADER_UPGRADE, Util.HEADER_UPGRADE_VALUE);
         exchange.getResponseHeaders().add(Util.HEADER_CONNECTION, Util.HEADER_CONNECTION_VALUE);
 
-        exchange.sendResponseHeaders(Code.HTTP_SWITCHING_PROTOCOLS, 0);
+        exchange.sendResponseHeaders(HttpStatus.HTTP_SWITCHING_PROTOCOLS, 0);
 
         // construct the user websocket only after the 101: the handshake
         // result (accepted subprotocol etc.) is known at this point, and a

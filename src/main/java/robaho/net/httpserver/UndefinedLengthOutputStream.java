@@ -37,11 +37,11 @@ import java.util.Objects;
  * The underlying connection needs to be closed afterwards.
  */
 
-class UndefLengthOutputStream extends FilterOutputStream {
+class UndefinedLengthOutputStream extends FilterOutputStream {
     private boolean closed = false;
     ExchangeImpl t;
 
-    UndefLengthOutputStream(ExchangeImpl t, OutputStream src) {
+    UndefinedLengthOutputStream(ExchangeImpl t, OutputStream src) {
         super(src);
         this.t = t;
     }

@@ -29,7 +29,7 @@ public class HPackContext {
 
     public HTTP2HeaderField getHeaderField(int index) {
         if (index > 0 && index <= 61) {
-            return RFC7541Parser.getHeaderField(index);
+            return RFC7541StaticTable.getHeaderField(index);
         } else {
             // walk the deque: index 62 is the most recently added entry
             int i = index - 62;
@@ -342,10 +342,10 @@ public class HPackContext {
 
     private static byte[] encodeHeader(String name, String value) {
         if(":status".equals(name)) {
-            byte[] result = RFC7541Parser.STATUSES.get(value);
+            byte[] result = RFC7541StaticTable.STATUSES.get(value);
             if(result!=null) return result;
         }
-        var index = RFC7541Parser.getIndex(name);
+        var index = RFC7541StaticTable.getIndex(name);
 
         // single allocation for the whole field: the previous version built
         // 2-3 intermediate byte[] per header (encodeString growth via
@@ -463,7 +463,7 @@ public class HPackContext {
 
 }
 
-class RFC7541Parser {
+class RFC7541StaticTable {
 
     private static final HTTP2HeaderField[] STATIC_HEADER_TABLE = new HTTP2HeaderField[62];
     static final Map<String,byte[]> STATUSES = Map.of(

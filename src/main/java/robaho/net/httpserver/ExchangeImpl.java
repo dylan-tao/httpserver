@@ -250,7 +250,7 @@ class ExchangeImpl {
         boolean noContentToSend = false; // assume there is content
         boolean noContentLengthHeader = false; // must not be sent if set
 
-        Integer bufferSize = (Integer)this.getAttribute(Attributes.SOCKET_WRITE_BUFFER);
+        Integer bufferSize = (Integer)this.getAttribute(AttributeKeys.SOCKET_WRITE_BUFFER);
         if(bufferSize!=null) {
             getConnection().getSocket().setOption(StandardSocketOptions.SO_SNDBUF, bufferSize);
         }
@@ -318,7 +318,7 @@ class ExchangeImpl {
         } else { /* standard response with possible response data */
             if (contentLen == 0) {
                 if (http10) {
-                    o.setWrappedStream(new UndefLengthOutputStream(this, ros));
+                    o.setWrappedStream(new UndefinedLengthOutputStream(this, ros));
                     close = true;
                 } else {
                     rspHdrs.set("Transfer-encoding", "chunked");
@@ -378,7 +378,7 @@ class ExchangeImpl {
         if (code == 101) {
             return STATUS_101;
         }
-        return STATUS_LINES.computeIfAbsent(code, c -> ("HTTP/1.1 " + c + Code.msg(c) + "\r\n").getBytes(ISO_CHARSET));
+        return STATUS_LINES.computeIfAbsent(code, c -> ("HTTP/1.1 " + c + HttpStatus.msg(c) + "\r\n").getBytes(ISO_CHARSET));
     }
 
     /** encode a String as ISO-8859-1 directly into the target buffer (zero

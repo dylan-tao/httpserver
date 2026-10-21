@@ -11,7 +11,7 @@ import java.util.List;
  * Content-Encoding - that header describes the response compression (e.g.
  * gzip) and never carries a charset.
  */
-public class ContentEncoding {
+public class ContentTypeCharset {
 
     private static final String DEFAULT_CHARSET = StandardCharsets.ISO_8859_1.name();
 
@@ -20,7 +20,7 @@ public class ContentEncoding {
      *         (the charset is a Content-Type parameter - Content-Encoding
      *         describes the compression, e.g. gzip, and never carries a charset)
      */
-    public static String encoding(Headers headers) {
+    public static String charset(Headers headers) {
         List<String> values = headers.get("Content-type");
         if (values == null) {
             return DEFAULT_CHARSET;

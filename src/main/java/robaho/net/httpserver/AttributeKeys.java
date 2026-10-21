@@ -4,9 +4,9 @@ package robaho.net.httpserver;
  * specialized HttpExchange attributes that can be used to control some
  * internals on a per connection basis
  */
-public final class Attributes {
+public final class AttributeKeys {
 
-    private Attributes() {}
+    private AttributeKeys() {}
 
     /**
      * an Integer which sets the size of the kernel socket write buffer

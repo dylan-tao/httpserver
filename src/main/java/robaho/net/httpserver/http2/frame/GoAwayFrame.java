@@ -7,17 +7,17 @@ import robaho.net.httpserver.http2.BinaryCodec;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class GoawayFrame extends BaseFrame {
+public class GoAwayFrame extends BaseFrame {
     public final HTTP2ErrorCode errorCode;
     public final int lastSeenStream;
 
-	public GoawayFrame(FrameHeader header,HTTP2ErrorCode errorCode,int lastSeenStream) {
+	public GoAwayFrame(FrameHeader header,HTTP2ErrorCode errorCode,int lastSeenStream) {
 		super(header);
         this.errorCode = errorCode;
         this.lastSeenStream = lastSeenStream;
 	}
 
-	public GoawayFrame(HTTP2ErrorCode errorCode,int lastSeenStream) {
+	public GoAwayFrame(HTTP2ErrorCode errorCode,int lastSeenStream) {
 		this(new FrameHeader(8,FrameType.GOAWAY,FrameFlag.NONE,0),errorCode,lastSeenStream);
 	}
 
@@ -46,7 +46,7 @@ public class GoawayFrame extends BaseFrame {
                 // drain instead of a connection teardown
                 code = HTTP2ErrorCode.INTERNAL_ERROR;
             }
-            return new GoawayFrame(frameHeader, code, lastSeenStream);
+            return new GoAwayFrame(frameHeader, code, lastSeenStream);
         } catch (Exception e) {
             throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
         }

@@ -36,7 +36,7 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 	/**
 	 * Parse the 9 bytes frame header to determine length, type, flags and the
 	 * stream identifier. frame length validation against the advertised
-	 * max frame size happens in FrameSerializer.deserialize; stream id
+	 * max frame size happens in FrameParser.deserialize; stream id
 	 * ordering in HTTP2Connection.processFrames
 	 *
 	 * @param tmpBuffer 9 bytes frame header

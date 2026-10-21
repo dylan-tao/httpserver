@@ -29,7 +29,7 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import jdk.test.lib.net.SimpleSSLContext;
 import robaho.net.httpserver.LogFilter;
-import robaho.net.httpserver.extras.ContentEncoding;
+import robaho.net.httpserver.extras.ContentTypeCharset;
 import robaho.net.httpserver.extras.QueryParameters;
 
 import java.io.File;
@@ -106,7 +106,7 @@ public class SimpleFileServer {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            QueryParameters qp = QueryParameters.decode(ContentEncoding.encoding(exchange.getRequestHeaders()), exchange.getRequestURI().getQuery());
+            QueryParameters qp = QueryParameters.decode(ContentTypeCharset.charset(exchange.getRequestHeaders()), exchange.getRequestURI().getQuery());
             long size = Long.parseLong(qp.getFirst("size"));
             byte[] buffer = new byte[1024 * 1024];
             exchange.getResponseHeaders().set("content-type", "application/octet-stream");
@@ -124,7 +124,7 @@ public class SimpleFileServer {
     private static class HelloWorldHandler implements HttpHandler {
         private static final byte[] bytes = "Hello World".getBytes();
         public void handle(HttpExchange exchange) throws IOException {
-            QueryParameters qp = QueryParameters.decode(ContentEncoding.encoding(exchange.getRequestHeaders()), exchange.getRequestURI().getQuery());
+            QueryParameters qp = QueryParameters.decode(ContentTypeCharset.charset(exchange.getRequestHeaders()), exchange.getRequestURI().getQuery());
             long size = bytes.length;
             exchange.sendResponseHeaders(200, size);
             OutputStream os = exchange.getResponseBody();

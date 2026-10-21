@@ -137,7 +137,7 @@ class ServerImpl {
         timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
         // note: the shared ActivityTimer clock runs on its own daemon timer
         // (see ActivityTimer) so it survives this server instance
-        timer.schedule(Http2Exchange.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
+        timer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
             createContext("/__stats",new StatsHandler());
@@ -171,7 +171,7 @@ class ServerImpl {
             for(var connection : allConnections) {
                 connection.debug();
             }
-            Http2Exchange.debug();
+            Http2ConnectionHandler.debug();
             exchange.sendResponseHeaders(200,-1);
         }
     }
@@ -482,7 +482,7 @@ class ServerImpl {
                     if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
                         nis.growBuffer();
                     }
-                    Http2Exchange t = new Http2Exchange(protocol, c);
+                    Http2ConnectionHandler t = new Http2ConnectionHandler(protocol, c);
                     t.run();
                 } else {
                     Exchange t = new Exchange(protocol, c);
@@ -523,19 +523,19 @@ class ServerImpl {
         }
     }
 
-    class Http2Exchange implements Runnable,HTTP2Connection.StreamHandler {
+    class Http2ConnectionHandler implements Runnable,HTTP2Connection.StreamHandler {
         final HttpConnection connection;
         final HTTP2Connection http2;
         final String protocol;
 
-        private static final Set<Http2Exchange> allHttp2Exchanges = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        private static final Set<Http2ConnectionHandler> allHttp2Connections = Collections.newSetFromMap(new ConcurrentHashMap<>());
         static void debug() {
-            for(var exchange : allHttp2Exchanges) {
+            for(var exchange : allHttp2Connections) {
                 exchange.http2.debug();
             }
         }
 
-        Http2Exchange(String protocol, HttpConnection conn) throws IOException {
+        Http2ConnectionHandler(String protocol, HttpConnection conn) throws IOException {
             this.connection = conn;
             this.protocol = protocol;
 
@@ -558,7 +558,7 @@ class ServerImpl {
                 @Override
                 public void run() {
                     long now = System.currentTimeMillis();
-                    for(var exchange : allHttp2Exchanges) {
+                    for(var exchange : allHttp2Connections) {
                         if(exchange.connection.lastActivityTime + H2_PING_INTERVAL_MILLIS < now) {
                             try {
                                 // the ping write refreshes lastActivityTime via the
@@ -586,7 +586,7 @@ class ServerImpl {
 
         @Override
         public void run() {
-            allHttp2Exchanges.add(this);
+            allHttp2Connections.add(this);
 
             try {
                 if(!http2.hasProperPreface()) {
@@ -611,7 +611,7 @@ class ServerImpl {
                 } catch (Throwable t) {
                     logger.log(Level.WARNING, "error closing http2 connection "+http2, t);
                 }
-                allHttp2Exchanges.remove(this);
+                allHttp2Connections.remove(this);
             }
         }
 
@@ -811,7 +811,7 @@ class ServerImpl {
                 // the idle cleaner may concurrently shrink the output buffer
                 // the reply is written into
                 connection.inRequest = true;
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, "-", "Request line too long");
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, "-", "Request line too long");
             }
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
@@ -823,7 +823,7 @@ class ServerImpl {
                 }
                 // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
                 connection.getSocket().setTcpNoDelay(ServerConfig.http2NoDelay());
-                Http2Exchange exchange = new Http2Exchange(protocol, connection);
+                Http2ConnectionHandler exchange = new Http2ConnectionHandler(protocol, connection);
                 exchange.run();
                 return;
             }
@@ -842,38 +842,38 @@ class ServerImpl {
             logger.log(Level.DEBUG, () -> "Exchange request line: "+ requestLine);
             int space = requestLine.indexOf(" ");
             if (space == -1) {
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Bad request line");
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request line");
             }
             String method = requestLine.substring(0, space);
             int start = space + 1;
             space = requestLine.indexOf(" ", start);
             if (space == -1) {
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Bad request line");
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request line");
             }
             String uriStr = requestLine.substring(start, space);
             // reject authority-form ambiguity: "//" can be parsed as an
             // authority component rather than a path (JDK parity)
             if (uriStr.startsWith("//")) {
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Bad request URI");
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request URI");
             }
             URI uri;
             try {
                 uri = new URI(uriStr);
             } catch (URISyntaxException e3) {
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown");
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown");
             }
             start = space + 1;
             String version = requestLine.substring(start);
             if (!"HTTP/1.1".equals(version) && !"HTTP/1.0".equals(version)) {
                 // the h2c PRI line was already handled above; anything else
                 // is an unsupported protocol version
-                throw new RequestRejectedException(Code.HTTP_VERSION, requestLine, "Unsupported HTTP version");
+                throw new RequestRejectedException(HttpStatus.HTTP_VERSION, requestLine, "Unsupported HTTP version");
             }
             Headers headers;
             try {
                 headers = req.headers();
             } catch (IOException e) {
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine, "Malformed header line");
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Malformed header line");
             }
 
             long clen = resolveBodyLength(requestLine, headers);
@@ -888,18 +888,18 @@ class ServerImpl {
                 // declared Content-Length over the opt-in body cap. chunked
                 // bodies without a declared length are bounded incrementally
                 // in LeftOverInputStream
-                throw new RequestRejectedException(Code.HTTP_ENTITY_TOO_LARGE, requestLine,
+                throw new RequestRejectedException(HttpStatus.HTTP_ENTITY_TOO_LARGE, requestLine,
                         "Request body exceeds the configured maximum of " + bodySizeLimit + " bytes");
             }
             logger.log(Level.TRACE,() -> "protocol "+protocol+" uri "+uri+" headers "+headers);
             String uriPath = Optional.ofNullable(uri.getPath()).orElse("/");
             ctx = contexts.findContext(protocol, uriPath);
             if (ctx == null) {
-                throw new RequestRejectedException(Code.HTTP_NOT_FOUND, requestLine, "No context found for request");
+                throw new RequestRejectedException(HttpStatus.HTTP_NOT_FOUND, requestLine, "No context found for request");
             }
             connection.setContext(ctx);
             if (ctx.getHandler() == null) {
-                throw new RequestRejectedException(Code.HTTP_INTERNAL_ERROR, requestLine, "No handler for context");
+                throw new RequestRejectedException(HttpStatus.HTTP_INTERNAL_ERROR, requestLine, "No handler for context");
             }
             tx = new ExchangeImpl(method, uri, req, clen, connection);
             String chdr = headers.getFirst("Connection");
@@ -934,7 +934,7 @@ class ServerImpl {
             if (exp != null && exp.equalsIgnoreCase("100-continue")) {
                 logReply(100, requestLine, null);
                 sendReply(
-                        Code.HTTP_CONTINUE, false, null);
+                        HttpStatus.HTTP_CONTINUE, false, null);
             }
             /*
                 * uf is the list of filters seen/set by the user.
@@ -970,7 +970,7 @@ class ServerImpl {
             List<String> clHeader = headers.get("Content-length");
             List<String> teHeader = headers.get("Transfer-encoding");
             if (clHeader != null && (teHeader != null || clHeader.size() > 1)) {
-                throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine,
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine,
                         "Conflicting or malformed headers detected");
             }
             if (teHeader != null && !teHeader.isEmpty()) {
@@ -978,7 +978,7 @@ class ServerImpl {
                 if (teValue.equalsIgnoreCase("chunked") && teHeader.size() == 1) {
                     return -1L;
                 }
-                throw new RequestRejectedException(Code.HTTP_NOT_IMPLEMENTED, requestLine,
+                throw new RequestRejectedException(HttpStatus.HTTP_NOT_IMPLEMENTED, requestLine,
                         "Unsupported Transfer-Encoding value");
             }
             String headerValue = headers.getFirst("Content-length");
@@ -986,13 +986,13 @@ class ServerImpl {
                 // RFC 7230 5.3: Content-Length is 1*DIGIT only - the JDK's
                 // parseLong also accepts a leading '+' or '-'
                 if (!isDigits(headerValue)) {
-                    throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine,
+                    throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine,
                             "Illegal Content-length value");
                 }
                 try {
                     return Long.parseLong(headerValue);
                 } catch (NumberFormatException e2) {
-                    throw new RequestRejectedException(Code.HTTP_BAD_REQUEST, requestLine,
+                    throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine,
                             "NumberFormatException thrown");
                 }
             }
@@ -1015,7 +1015,7 @@ class ServerImpl {
         void reject(int code, String requestStr, String message) {
             logReply(code, requestStr, message);
             sendReply(
-                    code, true, "<h1>" + code + Code.msg(code) + "</h1>" + message);
+                    code, true, "<h1>" + code + HttpStatus.msg(code) + "</h1>" + message);
         }
 
         void sendReply(
@@ -1023,7 +1023,7 @@ class ServerImpl {
             try {
                 StringBuilder builder = new StringBuilder(512);
                 builder.append("HTTP/1.1 ")
-                        .append(code).append(Code.msg(code)).append("\r\n");
+                        .append(code).append(HttpStatus.msg(code)).append("\r\n");
 
                 var informational = (code >= 100 && code < 200);
 
@@ -1066,7 +1066,7 @@ class ServerImpl {
         } else {
             r = requestStr;
         }
-        logger.log(Level.DEBUG, () -> "reply "+ r + " [" + code + Code.msg(code) + "] (" + (text!=null ? text : "") + ")");
+        logger.log(Level.DEBUG, () -> "reply "+ r + " [" + code + HttpStatus.msg(code) + "] (" + (text!=null ? text : "") + ")");
     }
 
     HttpServer getWrapper() {
