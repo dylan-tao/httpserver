@@ -1,6 +1,6 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2Exception;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -18,7 +18,7 @@ public class ContinuationFrame extends BaseFrame {
         getHeader().writeTo(os);
     }
 
-    public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {
+    public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws Http2Exception {
         return new ContinuationFrame(frameHeader,body);
     }
     public byte[] getHeaderBlock() {

@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
@@ -24,17 +24,17 @@ public class WindowUpdateFrame extends BaseFrame {
 		return windowSizeIncrement;
 	}
 
-	public static WindowUpdateFrame parse(byte[] frameBody, FrameHeader header) throws HTTP2Exception {
+	public static WindowUpdateFrame parse(byte[] frameBody, FrameHeader header) throws Http2Exception {
 
         if(frameBody.length!=4) {
-            throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
 
         WindowUpdateFrame frame = new WindowUpdateFrame(header);
         try {
             frame.windowSizeIncrement = BinaryCodec.readInt(frameBody, 0);
         } catch (Exception e) {
-            throw new HTTP2Exception(HTTP2ErrorCode.INTERNAL_ERROR);
+            throw new Http2Exception(Http2ErrorCode.INTERNAL_ERROR);
         }
         // the payload is [reserved bit][31-bit increment]: RFC 7540 4.1 says
         // the reserved bit MUST be ignored when receiving - mask it off rather
@@ -42,7 +42,7 @@ public class WindowUpdateFrame extends BaseFrame {
         // PROTOCOL_ERROR per RFC 7540 6.9
         frame.windowSizeIncrement &= 0x7FFFFFFF;
         if(frame.windowSizeIncrement==0) {
-            throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"window size increment == 0");
+            throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,"window size increment == 0");
         }
         return frame;
 	}

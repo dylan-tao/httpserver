@@ -1,6 +1,6 @@
 package robaho.net.httpserver.http2;
 
-public enum HTTP2ErrorCode {
+public enum Http2ErrorCode {
 	
 	NO_ERROR (0x0),
 	PROTOCOL_ERROR (0x1),
@@ -19,7 +19,7 @@ public enum HTTP2ErrorCode {
 	
 	int value;
 
-	HTTP2ErrorCode(int value) {
+	Http2ErrorCode(int value) {
 		this.value = value;
 	}
 
@@ -27,10 +27,10 @@ public enum HTTP2ErrorCode {
 		return value;
 	}
 
-	public static HTTP2ErrorCode getEnum(int value) {
-		HTTP2ErrorCode result = HTTP2ErrorCode.NO_ERROR;
+	public static Http2ErrorCode getEnum(int value) {
+		Http2ErrorCode result = Http2ErrorCode.NO_ERROR;
 
-		for (HTTP2ErrorCode e : HTTP2ErrorCode.values()) {
+		for (Http2ErrorCode e : Http2ErrorCode.values()) {
 			if (e.getValue() == value)
 				result = e;
 		}

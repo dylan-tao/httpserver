@@ -1,6 +1,6 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2Exception;
 
 /**
  * An enumeration to define all the Flags that can be attached to a frame
@@ -27,7 +27,7 @@ public enum FrameFlag {
         return value;
     }
 
-    public static FlagSet getEnumSet(byte value, FrameType type) throws HTTP2Exception {
+    public static FlagSet getEnumSet(byte value, FrameType type) throws Http2Exception {
         if (value == 0) {
             return NONE;
         }

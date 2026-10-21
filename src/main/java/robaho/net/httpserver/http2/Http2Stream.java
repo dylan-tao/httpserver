@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
-public class HTTP2Stream {
+public class Http2Stream {
 
     private final int streamId;
 
@@ -39,11 +39,11 @@ public class HTTP2Stream {
     private final AtomicLong receiveWindow = new AtomicLong(SettingParameter.INITIAL_WINDOW_SIZE);
     private final int initialWindowSize;
 
-    private final HTTP2Connection connection;
+    private final Http2Connection connection;
     private final Logger logger;
     private final robaho.net.httpserver.NoSyncBufferedOutputStream outputStream;
     private final DataIn dataIn;
-    private final HTTP2Connection.StreamHandler handler;
+    private final Http2Connection.StreamHandler handler;
     private final Headers requestHeaders;
     private final Headers responseHeaders = new OptimizedHeaders(16);
     private final AtomicBoolean headersSent = new AtomicBoolean(false);
@@ -69,7 +69,7 @@ public class HTTP2Stream {
 
     private long dataInSize = 0;
 
-    public HTTP2Stream(int streamId, HTTP2Connection connection, Headers requestHeaders, HTTP2Connection.StreamHandler handler) throws IOException {
+    public Http2Stream(int streamId, Http2Connection connection, Headers requestHeaders, Http2Connection.StreamHandler handler) throws IOException {
         this.streamId = streamId;
         this.connection = connection;
         this.logger = connection.logger;
@@ -211,7 +211,7 @@ public class HTTP2Stream {
                 // DATA path enforces this, the trailer path must too, or a
                 // short body is silently treated as the complete request
                 try {
-                    resetAndClose(HTTP2ErrorCode.PROTOCOL_ERROR);
+                    resetAndClose(Http2ErrorCode.PROTOCOL_ERROR);
                 } catch (IOException e) {
                     logger.log(Level.DEBUG, () -> "error resetting stream " + streamId + " on content-length mismatch", e);
                 }
@@ -227,21 +227,21 @@ public class HTTP2Stream {
      * emit frames for a stream the server just reset (RFC 7540 5.1 closed
      * state); halfClosed must be set before close() so the data input does
      * not block waiting for more data on a reset stream */
-    private void resetAndClose(HTTP2ErrorCode code) throws IOException {
+    private void resetAndClose(Http2ErrorCode code) throws IOException {
         connection.sendResetStream(code, streamId);
         rstReceived = true;
         halfClosed = true;
         close();
     }
 
-    public void processFrame(BaseFrame frame) throws HTTP2Exception, IOException {
+    public void processFrame(BaseFrame frame) throws Http2Exception, IOException {
 
         switch (frame.getHeader().type()) {
         case HEADERS:
         case CONTINUATION:
             if(halfClosed) {
                 // stream error (RFC 7540 5.1): reset the stream, not the connection
-                connection.sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
+                connection.sendResetStream(Http2ErrorCode.STREAM_CLOSED, streamId);
                 return;
             }
             halfClosed = frame.getHeader().flags().contains(FrameFlag.END_STREAM);
@@ -253,11 +253,11 @@ public class HTTP2Stream {
                 logger.log(Level.TRACE,()->"received data frame, length "+dataFrame.body.length+" on stream "+streamId);
             }
             if(halfClosed) {
-                connection.sendResetStream(HTTP2ErrorCode.STREAM_CLOSED, streamId);
+                connection.sendResetStream(Http2ErrorCode.STREAM_CLOSED, streamId);
                 return;
             }
             if(!streamOpen) {
-                connection.sendResetStream(HTTP2ErrorCode.PROTOCOL_ERROR, streamId);
+                connection.sendResetStream(Http2ErrorCode.PROTOCOL_ERROR, streamId);
                 return;
             }
             // stream level flow control accounting happens on receipt and uses
@@ -265,7 +265,7 @@ public class HTTP2Stream {
             // the window is re-opened as the handler consumes the data
             if (receiveWindow.addAndGet(-frame.getHeader().length()) < 0) {
                 // the peer sent beyond the stream flow control window
-                resetAndClose(HTTP2ErrorCode.FLOW_CONTROL_ERROR);
+                resetAndClose(Http2ErrorCode.FLOW_CONTROL_ERROR);
                 return;
             }
             // the padding octets are discarded on receipt (DataFrame.parse strips
@@ -283,13 +283,13 @@ public class HTTP2Stream {
             // rejected up front at dispatch with a 413)
             long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
             if (bodySizeLimit >= 0 && dataInSize > bodySizeLimit) {
-                resetAndClose(HTTP2ErrorCode.ENHANCE_YOUR_CALM);
+                resetAndClose(Http2ErrorCode.ENHANCE_YOUR_CALM);
                 return;
             }
             if (dataFrame.getHeader().flags().contains(FrameFlag.END_STREAM)) {
                 long expected = expectedSize();
                 if(expected!=-1 && dataInSize!=expected) {
-                    resetAndClose(HTTP2ErrorCode.PROTOCOL_ERROR);
+                    resetAndClose(Http2ErrorCode.PROTOCOL_ERROR);
                     break;
                 }
                 halfClosed = true;
@@ -306,7 +306,7 @@ public class HTTP2Stream {
         case WINDOW_UPDATE:
             int windowSizeIncrement = ((WindowUpdateFrame)frame).getWindowSizeIncrement();
             if(sendWindow.addAndGet(windowSizeIncrement)> Integer.MAX_VALUE) {
-                connection.sendResetStream(HTTP2ErrorCode.FLOW_CONTROL_ERROR, streamId);
+                connection.sendResetStream(Http2ErrorCode.FLOW_CONTROL_ERROR, streamId);
                 close();
             }
             // wake a writer blocked on the send window immediately
@@ -330,13 +330,13 @@ public class HTTP2Stream {
         LockSupport.unpark(writerThread);
     }
 
-    private void performRequest() throws IOException, HTTP2Exception {
+    private void performRequest() throws IOException, Http2Exception {
         if(!handlingRequest.compareAndSet(false, true)) {
-            throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"already received headers for stream "+streamId);
+            throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,"already received headers for stream "+streamId);
         }
         connection.httpConnection.requestCount.incrementAndGet();
         connection.requestsInProgress.incrementAndGet();
-        if (HTTP2Stats.ENABLED) connection.stats.activeStreams.incrementAndGet();
+        if (Http2Stats.ENABLED) connection.stats.activeStreams.incrementAndGet();
 
         InputStream in = halfClosed ? InputStream.nullInputStream() : dataIn;
 
@@ -385,7 +385,7 @@ public class HTTP2Stream {
             } catch (IOException e) {
                 // the response could not be encoded (e.g. missing :status):
                 // fail this stream rather than leaving the request hanging
-                connection.sendResetStream(HTTP2ErrorCode.INTERNAL_ERROR, streamId);
+                connection.sendResetStream(Http2ErrorCode.INTERNAL_ERROR, streamId);
                 throw e;
             }
         }
@@ -417,7 +417,7 @@ public class HTTP2Stream {
             connection.lock();
             try {
                 connection.outputStream.flush();
-                if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
+                if (Http2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
             } finally {
                 connection.unlock();
             }
@@ -435,7 +435,7 @@ public class HTTP2Stream {
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
-            if (HTTP2Stats.ENABLED) connection.stats.bytesSent.addAndGet(len);
+            if (Http2Stats.ENABLED) connection.stats.bytesSent.addAndGet(len);
             // test outside of lock so other streams can progress. the park is
             // bounded only as a safety net: a WINDOW_UPDATE (or stream close)
             // unparks the writer immediately. writerThread is recorded only
@@ -452,7 +452,7 @@ public class HTTP2Stream {
                 if (sendWindow.get()>0) {
                     break;
                 }
-                if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
+                if (Http2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
                 LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
             }
             if (rstReceived) {
@@ -512,7 +512,7 @@ public class HTTP2Stream {
                             // record: retry immediately instead of parking
                             continue;
                         }
-                        if (HTTP2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
+                        if (Http2Stats.ENABLED) connection.stats.pauses.incrementAndGet();
                         flushConnection();
                         LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(50));
                         if(connection.isClosed()) {
@@ -542,10 +542,10 @@ public class HTTP2Stream {
                     FrameHeader.encodeInto(connection.frameHeaderScratch, _len, FrameType.DATA, FrameFlag.NONE, streamId);
                     connection.outputStream.write(connection.frameHeaderScratch, 0, FrameHeader.LENGTH);
                     connection.outputStream.write(b,off,_len);
-                    if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
+                    if (Http2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     if (ServerConfig.http2DisableFlushDelay()) {
                         connection.outputStream.flush();
-                        if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
+                        if (Http2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
                     }
                 } finally {
                     connection.unlock();
@@ -595,19 +595,19 @@ public class HTTP2Stream {
                     if(!streamOutputClosed) {
                         FrameHeader.encodeInto(connection.frameHeaderScratch, 0, FrameType.DATA, END_STREAM, streamId);
                         connection.outputStream.write(connection.frameHeaderScratch, 0, FrameHeader.LENGTH);
-                        if (HTTP2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
+                        if (Http2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
                     }
                     if(lastRequest) {
                         connection.outputStream.flush();
-                        if (HTTP2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
+                        if (Http2Stats.ENABLED) connection.stats.flushes.incrementAndGet();
                     }
                 } finally {
                     connection.unlock();
                 }
                 dataIn.close();
             } finally {
-                if (HTTP2Stats.ENABLED) connection.stats.activeStreams.decrementAndGet();
-                HTTP2Stream.this.close();
+                if (Http2Stats.ENABLED) connection.stats.activeStreams.decrementAndGet();
+                Http2Stream.this.close();
             }
         }
     }

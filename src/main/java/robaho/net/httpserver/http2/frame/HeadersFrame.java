@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.BinaryCodec;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
@@ -69,17 +69,17 @@ public class HeadersFrame extends BaseFrame {
 	 * @param header
 	 *            FrameHeader
 	 * @return HeadersFrame object
-	 * @throws HTTP2Exception
+	 * @throws Http2Exception
 	 * @throws Exception
 	 */
-	public static HeadersFrame parse(byte[] frameBody, FrameHeader header) throws HTTP2Exception, java.io.IOException {
+	public static HeadersFrame parse(byte[] frameBody, FrameHeader header) throws Http2Exception, java.io.IOException {
 
         if(frameBody == null) {
-            throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
 
         if(header.length() != frameBody.length) {
-            throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
 
         int paramIndex = 0;
@@ -90,7 +90,7 @@ public class HeadersFrame extends BaseFrame {
         if (header.flags().contains(FrameFlag.PADDED)) {
             int padLength = BinaryCodec.readInt(frameBody, paramIndex, 1);
             if(padLength >= header.length()) {
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
+                throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
             }
             headersFrame.setPadLength(padLength);
             paramIndex += 1;
@@ -108,7 +108,7 @@ public class HeadersFrame extends BaseFrame {
             headersFrame.setDependentStream(streamId & 0x7FFFFFFFL);
             if (headersFrame.dependentStreamId == header.streamIdentifier()) {
                 // cannot depend on itself
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
+                throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
             }
 
             headersFrame.setWeight( (frameBody[paramIndex] & 0xFF) +1 );

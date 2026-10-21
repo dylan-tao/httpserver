@@ -1,9 +1,9 @@
 package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.ServerConfig;
-import robaho.net.httpserver.http2.HTTP2Connection;
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2Connection;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 
 import java.io.InputStream;
 
@@ -15,19 +15,19 @@ public class FrameParser {
 	 * frame, and the per-frame allocation was pure churn. the FrameHeader
 	 * record itself is NOT reusable - every frame object retains its header.
 	 */
-	public static BaseFrame deserialize(InputStream inputStream, byte[] headerScratch) throws HTTP2Exception, java.io.IOException {
+	public static BaseFrame deserialize(InputStream inputStream, byte[] headerScratch) throws Http2Exception, java.io.IOException {
 
 		BaseFrame baseFrame;
 
-        HTTP2Connection.readFully(inputStream, headerScratch);
+        Http2Connection.readFully(inputStream, headerScratch);
 		FrameHeader frameHeader = FrameHeader.parse(headerScratch);
 
         if(frameHeader.length() > ServerConfig.http2MaxFrameSize()) {
-            throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
 
         byte[] body = new byte[frameHeader.length()];
-        HTTP2Connection.readFully(inputStream, body);
+        Http2Connection.readFully(inputStream, body);
 
 		switch (frameHeader.type()) {
 		case HEADERS:

@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
@@ -28,11 +28,11 @@ public class SettingParameter {
         this.value = value;
     }
 
-	public static SettingParameter parse(byte[] param) throws HTTP2Exception
+	public static SettingParameter parse(byte[] param) throws Http2Exception
 	{
         try {
             if(param.length != 6) {
-                throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+                throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
             }
             SettingParameter result = new SettingParameter();
             result.identifier = SettingIdentifier.getEnum(BinaryCodec.readInt(param,0, 2));
@@ -41,13 +41,13 @@ public class SettingParameter {
             }
             result.value = BinaryCodec.readLong(param, 2, 4);
             if(!result.identifier.validateValue(result.value)) {
-                throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"Invalid value for setting "+result.identifier+" "+result.value);
+                throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,"Invalid value for setting "+result.identifier+" "+result.value);
             }
             return result;
-        } catch (HTTP2Exception ex) {
+        } catch (Http2Exception ex) {
             throw ex;
         } catch (Exception ex) {
-            throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,ex);
+            throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,ex);
         }
 	}
     public void writeTo(OutputStream os) throws IOException {

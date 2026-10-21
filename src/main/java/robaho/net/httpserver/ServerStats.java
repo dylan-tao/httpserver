@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 class ServerStats {
     /** hot-path counters are gated behind this compile-time constant (see
-     * HTTP2Stats.ENABLED) */
+     * Http2Stats.ENABLED) */
     static final boolean ENABLED = ServerConfig.statsEnabled();
 
     final AtomicLong connectionCount = new AtomicLong();

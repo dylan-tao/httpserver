@@ -33,7 +33,7 @@ package robaho.net.httpserver.websockets;
  * #L%
  */
 
-public enum State {
+public enum WebSocketLifecycle {
     UNCONNECTED,
     CONNECTING,
     OPEN,

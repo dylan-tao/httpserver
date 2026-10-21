@@ -67,7 +67,7 @@ public abstract class WebSocket {
      * re-summed the whole fragment list per fragment - O(n^2) per message) */
     private long continuousBytes;
 
-    private volatile State state = State.UNCONNECTED;
+    private volatile WebSocketLifecycle state = WebSocketLifecycle.UNCONNECTED;
 
     /** close info recorded when the closing handshake begins, so the read
      * loop exit can surface the real code instead of a generic 1011.
@@ -91,13 +91,13 @@ public abstract class WebSocket {
 
         logger.log(INFO, "connecting websocket {0}", uri);
 
-        this.state = State.CONNECTING;
+        this.state = WebSocketLifecycle.CONNECTING;
         this.in = exchange.getRequestBody();
         this.out = exchange.getResponseBody();
     }
 
     public boolean isOpen() {
-        return state == State.OPEN;
+        return state == WebSocketLifecycle.OPEN;
     }
 
     protected void onOpen() throws WebSocketException {
@@ -113,7 +113,7 @@ public abstract class WebSocket {
     }
 
     protected void onException(IOException exception) {
-        if(state!=State.CLOSING && state!=State.CLOSED) {
+        if(state!=WebSocketLifecycle.CLOSING && state!=WebSocketLifecycle.CLOSED) {
             logger.log(TRACE, "exception on websocket", exception);
         }
     }
@@ -145,14 +145,14 @@ public abstract class WebSocket {
         boolean completeClose;
         lock.lock();
         try {
-            if (this.state == State.CLOSED) {
+            if (this.state == WebSocketLifecycle.CLOSED) {
                 // already fully closed: overwriting the state to CLOSING
                 // below would let the subsequent doClose re-fire onClose
                 return;
             }
-            State oldState = this.state;
-            this.state = State.CLOSING;
-            if (oldState == State.OPEN) {
+            WebSocketLifecycle oldState = this.state;
+            this.state = WebSocketLifecycle.CLOSING;
+            if (oldState == WebSocketLifecycle.OPEN) {
                 // record the close info: after the closing handshake completes
                 // (or the peer disappears) the read loop exits and must surface
                 // this code, not a generic internal error
@@ -180,7 +180,7 @@ public abstract class WebSocket {
     void doClose(CloseCode code, String reason, boolean initiatedByRemote) {
         lock.lock();
         try {
-            if (this.state == State.CLOSED) {
+            if (this.state == WebSocketLifecycle.CLOSED) {
                 return;
             }
             if (this.in != null) {
@@ -195,7 +195,7 @@ public abstract class WebSocket {
                 } catch (IOException expected) {
                 }
             }
-            this.state = State.CLOSED;
+            this.state = WebSocketLifecycle.CLOSED;
             onClose(code, reason, initiatedByRemote);
         } finally {
             lock.unlock();
@@ -212,7 +212,7 @@ public abstract class WebSocket {
             reason = ((CloseFrame) frame).getCloseReason();
         }
         logger.log(TRACE, "handleCloseFrame: {0}, code={1}, reason={2}, state {3}", uri, code, reason, this.state);
-        if (this.state == State.CLOSING) {
+        if (this.state == WebSocketLifecycle.CLOSING) {
             // Answer for my requested close
             doClose(code, reason, false);
         } else {
@@ -302,10 +302,10 @@ public abstract class WebSocket {
 
     void readWebsocket() {
         try {
-            state = State.OPEN;
+            state = WebSocketLifecycle.OPEN;
             logger.log(DEBUG, "websocket open {0}", uri);
             onOpen();
-            while (this.state == State.OPEN) {
+            while (this.state == WebSocketLifecycle.OPEN) {
                 WebSocketFrame frame = WebSocketFrame.read(in);
                 if (!frame.isMasked()) {
                     // all client-to-server frames must be masked (RFC 6455 5.1)
@@ -327,13 +327,13 @@ public abstract class WebSocket {
                 doClose(CloseCode.AbnormalClosure, e.toString(), false);
             }
         } finally {
-            if (this.state == State.CLOSING && pendingClose != null && pendingClose.recorded()) {
+            if (this.state == WebSocketLifecycle.CLOSING && pendingClose != null && pendingClose.recorded()) {
                 // the closing handshake began (locally or remotely) but did not
                 // complete - surface the recorded close code and reason. the code
                 // is null for application-defined 3xxx/4xxx codes (no CloseCode
                 // mapping), but the reason and initiator are the real ones
                 doClose(pendingClose.code(), pendingClose.reason(), pendingClose.initiatedByRemote());
-            } else if (this.state != State.CLOSED) {
+            } else if (this.state != WebSocketLifecycle.CLOSED) {
                 doClose(CloseCode.InternalServerError, "Handler terminated without closing the connection.", false);
             }
             logger.log(TRACE, "readWebsocket() exiting {0}", uri);

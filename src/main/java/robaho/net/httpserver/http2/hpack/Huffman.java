@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.hpack;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -138,14 +138,14 @@ public class Huffman {
         return new Tables(codes, lengths);
     }
 
-    public static String decode(byte[] value) throws HTTP2Exception {
+    public static String decode(byte[] value) throws Http2Exception {
         return decode(value, 0, value.length);
     }
 
     /** decode a region of the header block in place: the caller has already
      * validated the bounds, so the previous copyOfRange per name/value was a
      * duplicate allocation */
-    public static String decode(byte[] value, int offset, int length) throws HTTP2Exception {
+    public static String decode(byte[] value, int offset, int length) throws Http2Exception {
         Tables t = TABLES;
         // RFC 7541 5.2: the decoded symbol sequence is the UTF-8 encoding of
         // the header value - collect raw bytes, then convert once (decoding
@@ -165,7 +165,7 @@ public class Huffman {
                 bits++;
 
                 if (bits > MAX_CODE_LENGTH) {
-                    throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "invalid huffman code");
+                    throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "invalid huffman code");
                 }
 
                 long base = t.firstCode[bits];
@@ -174,7 +174,7 @@ public class Huffman {
                     if (codeOffset >= 0 && codeOffset < t.count[bits]) {
                         int symbol = t.symbols[t.firstIndex[bits] + (int) codeOffset];
                         if (symbol == EOS) {
-                            throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "decoded data contains EOS");
+                            throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "decoded data contains EOS");
                         }
                         decoded[pos++] = (byte) symbol;
                         acc = 0;
@@ -186,7 +186,7 @@ public class Huffman {
 
         // any remaining bits must be padding: fewer than 8 bits, all ones
         if (bits > 7 || (bits > 0 && acc != (1L << bits) - 1)) {
-            throw new HTTP2Exception(HTTP2ErrorCode.COMPRESSION_ERROR, "decoded data has incorrect padding");
+            throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "decoded data has incorrect padding");
         }
 
         return new String(decoded, 0, pos, java.nio.charset.StandardCharsets.UTF_8);

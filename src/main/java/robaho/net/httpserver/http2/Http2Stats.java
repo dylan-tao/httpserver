@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class HTTP2Stats {
+public class Http2Stats {
     /** hot-path counters are gated behind this compile-time constant: they
      * cost ~8 volatile RMWs per request otherwise, but are only read via
      * /__stats when robaho.net.httpserver.EnableStats is set */

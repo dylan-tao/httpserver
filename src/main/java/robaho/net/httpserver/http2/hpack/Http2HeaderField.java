@@ -1,15 +1,15 @@
 package robaho.net.httpserver.http2.hpack;
 
-public class HTTP2HeaderField {
+public class Http2HeaderField {
 
 	public String name;
 	public String value;
     public String normalizedName;
 
-    public HTTP2HeaderField() {
+    public Http2HeaderField() {
     }
     
-    public HTTP2HeaderField(String name, String value) {
+    public Http2HeaderField(String name, String value) {
         this.name = name;
         this.value = value;
         this.normalizedName = normalize(name);

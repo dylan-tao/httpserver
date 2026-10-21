@@ -158,16 +158,16 @@ public class WebSocketResponseHandlerTest {
     public void testConnectionHeaderHandlesKeepAlive_FixingFirefoxConnectIssue() throws IOException {
         this.headers.set("connection", "keep-alive, Upgrade");
         handler.handle(exchange);
-        testResponseHeader(Util.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
-        testResponseHeader(Util.HEADER_WEBSOCKET_PROTOCOL, "chat");
+        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
+        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, "chat");
     }
 
     @Test
     public void testHandshakeReturnsResponseWithExpectedHeaders() throws IOException {
         handler.handle(exchange);
 
-        testResponseHeader(Util.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
-        testResponseHeader(Util.HEADER_WEBSOCKET_PROTOCOL, "chat");
+        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
+        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, "chat");
     }
 
     @Test
@@ -183,14 +183,14 @@ public class WebSocketResponseHandlerTest {
     public void testWrongConnectionHeaderReturnsNullResponse() throws IOException {
         this.headers.set("connection", "Junk");
         handler.handle(exchange);
-        testResponseHeader(Util.HEADER_UPGRADE, null);
+        testResponseHeader(WebSocketHandshake.HEADER_UPGRADE, null);
     }
 
     @Test
     public void testWrongUpgradeHeaderReturnsNullResponse() throws IOException {
         this.headers.set("upgrade", "not a websocket");
         handler.handle(exchange);
-        testResponseHeader(Util.HEADER_UPGRADE, null);
+        testResponseHeader(WebSocketHandshake.HEADER_UPGRADE, null);
     }
 
     @Test

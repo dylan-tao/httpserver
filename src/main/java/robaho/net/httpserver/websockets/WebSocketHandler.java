@@ -18,50 +18,50 @@ public abstract class WebSocketHandler implements HttpHandler {
         // (e.g. from a stubbed exchange) is not rejected.
         String requestMethod = exchange.getRequestMethod();
         if (requestMethod != null && !"GET".equalsIgnoreCase(requestMethod)) {
-            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "websocket handshake must be a GET");
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "websocket handshake must be a GET");
             return;
         }
 
         if (!isWebsocketRequested(headers)) {
-            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "not a websocket upgrade request");
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "not a websocket upgrade request");
             return;
         }
 
-        if (!Util.HEADER_WEBSOCKET_VERSION_VALUE.equalsIgnoreCase(headers.getFirst(Util.HEADER_WEBSOCKET_VERSION))) {
-            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST,
-                    "Invalid Websocket-Version " + headers.getFirst(Util.HEADER_WEBSOCKET_VERSION));
+        if (!WebSocketHandshake.HEADER_WEBSOCKET_VERSION_VALUE.equalsIgnoreCase(headers.getFirst(WebSocketHandshake.HEADER_WEBSOCKET_VERSION))) {
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST,
+                    "Invalid Websocket-Version " + headers.getFirst(WebSocketHandshake.HEADER_WEBSOCKET_VERSION));
             return;
         }
 
-        if (!headers.containsKey(Util.HEADER_WEBSOCKET_KEY)) {
-            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "Missing Websocket-Key");
+        if (!headers.containsKey(WebSocketHandshake.HEADER_WEBSOCKET_KEY)) {
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "Missing Websocket-Key");
             return;
         }
 
         try {
-            exchange.getResponseHeaders().add(Util.HEADER_WEBSOCKET_ACCEPT,
-                    Util.makeAcceptKey(headers.getFirst(Util.HEADER_WEBSOCKET_KEY)));
+            exchange.getResponseHeaders().add(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT,
+                    WebSocketHandshake.makeAcceptKey(headers.getFirst(WebSocketHandshake.HEADER_WEBSOCKET_KEY)));
         } catch (NoSuchAlgorithmException e) {
-            Util.sendResponseHeaders(exchange, HttpStatus.HTTP_INTERNAL_ERROR,
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_INTERNAL_ERROR,
                     "The SHA-1 Algorithm required for websockets is not available on the server.");
             return;
         }
 
         // only echo a sub protocol this handler actually supports; echoing an
         // unsupported one would make the client believe it was negotiated
-        String requestedProtocol = headers.getFirst(Util.HEADER_WEBSOCKET_PROTOCOL);
+        String requestedProtocol = headers.getFirst(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL);
         if (requestedProtocol != null) {
             for (String candidate : requestedProtocol.split(",")) {
                 String accepted = supportsProtocol(candidate.trim());
                 if (accepted != null) {
-                    exchange.getResponseHeaders().add(Util.HEADER_WEBSOCKET_PROTOCOL, accepted);
+                    exchange.getResponseHeaders().add(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, accepted);
                     break;
                 }
             }
         }
 
-        exchange.getResponseHeaders().add(Util.HEADER_UPGRADE, Util.HEADER_UPGRADE_VALUE);
-        exchange.getResponseHeaders().add(Util.HEADER_CONNECTION, Util.HEADER_CONNECTION_VALUE);
+        exchange.getResponseHeaders().add(WebSocketHandshake.HEADER_UPGRADE, WebSocketHandshake.HEADER_UPGRADE_VALUE);
+        exchange.getResponseHeaders().add(WebSocketHandshake.HEADER_CONNECTION, WebSocketHandshake.HEADER_CONNECTION_VALUE);
 
         exchange.sendResponseHeaders(HttpStatus.HTTP_SWITCHING_PROTOCOLS, 0);
 
@@ -87,20 +87,20 @@ public abstract class WebSocketHandler implements HttpHandler {
     public static boolean isWebsocketRequested(Headers headers) {
         // the Connection header is a comma separated token list: "X-UpgradeFoo"
         // must not match an "Upgrade" token
-        var values = headers.get(Util.HEADER_CONNECTION);
+        var values = headers.get(WebSocketHandshake.HEADER_CONNECTION);
         if (values == null) {
             return false;
         }
         boolean connectionUpgrade = values.stream()
                 .flatMap(v -> java.util.Arrays.stream(v.split(",")))
                 .map(String::trim)
-                .anyMatch(s -> Util.HEADER_CONNECTION_VALUE.equalsIgnoreCase(s));
+                .anyMatch(s -> WebSocketHandshake.HEADER_CONNECTION_VALUE.equalsIgnoreCase(s));
         if (!connectionUpgrade) {
             return false;
         }
         // check for proper upgrade type
-        String upgrade = headers.getFirst(Util.HEADER_UPGRADE);
-        return Util.HEADER_UPGRADE_VALUE.equalsIgnoreCase(upgrade);
+        String upgrade = headers.getFirst(WebSocketHandshake.HEADER_UPGRADE);
+        return WebSocketHandshake.HEADER_UPGRADE_VALUE.equalsIgnoreCase(upgrade);
     }
 
     protected abstract WebSocket openWebSocket(HttpExchange exchange);

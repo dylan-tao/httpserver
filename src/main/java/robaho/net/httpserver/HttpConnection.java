@@ -74,7 +74,7 @@ public class HttpConnection {
     /** the h2 protocol handler for h2c/h2 connections, set when the
      * connection is upgraded; null for plain h1. lets the idle cleaner
      * reach the h2 stream buffer pool for shrinking */
-    robaho.net.httpserver.http2.HTTP2Connection http2Connection;
+    robaho.net.httpserver.http2.Http2Connection http2Connection;
 
     public AtomicLong requestCount = new AtomicLong();
     private final String connectionId;

@@ -1,6 +1,6 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.BinaryCodec;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
@@ -37,13 +37,13 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 	 * Parse the 9 bytes frame header to determine length, type, flags and the
 	 * stream identifier. frame length validation against the advertised
 	 * max frame size happens in FrameParser.deserialize; stream id
-	 * ordering in HTTP2Connection.processFrames
+	 * ordering in Http2Connection.processFrames
 	 *
 	 * @param tmpBuffer 9 bytes frame header
 	 * @return
 	 * @throws Exception
 	 */
-	public static FrameHeader parse(byte[] tmpBuffer) throws HTTP2Exception, java.io.IOException {
+	public static FrameHeader parse(byte[] tmpBuffer) throws Http2Exception, java.io.IOException {
 		FrameHeader frameHeader = null;
 
 		FrameType type = null;

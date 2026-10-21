@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
@@ -21,16 +21,16 @@ public class PriorityFrame extends BaseFrame {
         getHeader().writeTo(os);
     }
 
-    static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception, java.io.IOException {
+    static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws Http2Exception, java.io.IOException {
         var frame = new PriorityFrame(frameHeader);
         if(body.length != 5) {
-            throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
         var tmp = BinaryCodec.readInt(body, 0, 4);
         frame.exclusive = (tmp & 0x80000000) != 0;
         frame.streamDependency = tmp & 0x7FFFFFFF;
         if(frame.streamDependency == frameHeader.streamIdentifier()) {
-            throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
+            throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
         }
         frame.weight = (body[4] & 0xFF) + 1;
         return frame;

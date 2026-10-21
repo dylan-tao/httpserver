@@ -7,8 +7,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 
-public final class Util {
-    private Util() {
+public final class WebSocketHandshake {
+    private WebSocketHandshake() {
     }
 
 
@@ -38,7 +38,7 @@ public final class Util {
 
     public static String makeAcceptKey(String key) throws NoSuchAlgorithmException {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
-        String text = key + Util.WEBSOCKET_KEY_MAGIC;
+        String text = key + WebSocketHandshake.WEBSOCKET_KEY_MAGIC;
         // the key and magic are ASCII; hashing the char count instead of the
         // byte count truncates the input when non-ASCII characters appear
         md.update(text.getBytes(java.nio.charset.StandardCharsets.US_ASCII));

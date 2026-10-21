@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.hpack;
 
 import org.testng.Assert;
 import org.testng.annotations.Test;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2Exception;
 
 /**
  * Huffman decoding against the RFC 7541 appendix vectors, plus the two
@@ -28,14 +28,14 @@ public class HuffmanTest {
         Assert.assertEquals(Huffman.decode(new byte[5]), "00000000");
     }
 
-    @Test(expectedExceptions = HTTP2Exception.class)
+    @Test(expectedExceptions = Http2Exception.class)
     public void testInvalidPaddingRejected() throws Exception {
         // 0x00 = '0' (5 bits) + 3 zero bits: padding must be the EOS prefix
         // (all ones, fewer than 8 bits) per RFC 7541 5.2
         Huffman.decode(new byte[] { 0x00 });
     }
 
-    @Test(expectedExceptions = HTTP2Exception.class)
+    @Test(expectedExceptions = Http2Exception.class)
     public void testEosSymbolRejected() throws Exception {
         // 0xFF... is the prefix of the 30+ bit EOS symbol: decoding it must
         // fail rather than produce data

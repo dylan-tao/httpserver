@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.frame;
 
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -20,19 +20,19 @@ public class SettingsFrame extends BaseFrame {
 		return params;
 	}
 
-	public static SettingsFrame parse(byte[] frameBody, FrameHeader header) throws HTTP2Exception {
+	public static SettingsFrame parse(byte[] frameBody, FrameHeader header) throws Http2Exception {
         if (header.streamIdentifier() != 0) {
-            throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
+            throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
         }
 
         if(header.flags().contains(FrameFlag.ACK)) {
             if(header.length() != 0) {
-                throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+                throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
             }
         }
 
         if(frameBody.length % 6 != 0) {
-            throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
 
         SettingsFrame result = new SettingsFrame(header);

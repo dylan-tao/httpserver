@@ -31,11 +31,11 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
-import robaho.net.httpserver.http2.HTTP2Connection;
-import robaho.net.httpserver.http2.HTTP2ErrorCode;
-import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.HTTP2Stats;
-import robaho.net.httpserver.http2.HTTP2Stream;
+import robaho.net.httpserver.http2.Http2Connection;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.http2.Http2Stats;
+import robaho.net.httpserver.http2.Http2Stream;
 
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
@@ -111,7 +111,7 @@ class ServerImpl {
 
     // statistics
     private final ServerStats stats = new ServerStats();
-    private final HTTP2Stats http2Stats = new HTTP2Stats();
+    private final Http2Stats http2Stats = new Http2Stats();
 
     ServerImpl(HttpServer wrapper, String protocol, InetSocketAddress addr, int backlog) throws IOException {
 
@@ -523,9 +523,9 @@ class ServerImpl {
         }
     }
 
-    class Http2ConnectionHandler implements Runnable,HTTP2Connection.StreamHandler {
+    class Http2ConnectionHandler implements Runnable,Http2Connection.StreamHandler {
         final HttpConnection connection;
-        final HTTP2Connection http2;
+        final Http2Connection http2;
         final String protocol;
 
         private static final Set<Http2ConnectionHandler> allHttp2Connections = Collections.newSetFromMap(new ConcurrentHashMap<>());
@@ -548,7 +548,7 @@ class ServerImpl {
                 http2Stats.nonsslConnections.incrementAndGet();
             }
 
-            http2 = new HTTP2Connection(conn,http2Stats,connection.getInputStream(), connection.getOutputStream(), this);
+            http2 = new Http2Connection(conn,http2Stats,connection.getInputStream(), connection.getOutputStream(), this);
             // let the idle cleaner reach the h2 stream buffer pool for shrinking
             conn.http2Connection = http2;
         }
@@ -590,13 +590,13 @@ class ServerImpl {
 
             try {
                 if(!http2.hasProperPreface()) {
-                    http2.sendGoAway(HTTP2ErrorCode.PROTOCOL_ERROR);
+                    http2.sendGoAway(Http2ErrorCode.PROTOCOL_ERROR);
                     logger.log(Level.WARNING, "ServerImpl HTTP2 preface failed");
                     return;
                 }
                 http2.sendMySettings();
                 http2.handle();
-            } catch (HTTP2Exception ex) {
+            } catch (Http2Exception ex) {
                 logger.log(Level.WARNING, "ServerImpl http2 protocol exception "+http2,ex);
             } catch (IOException ex) {
                 stats.socketExceptionCount.incrementAndGet();
@@ -621,11 +621,11 @@ class ServerImpl {
         }
 
         @Override
-        public void handleStream(HTTP2Stream stream,InputStream in, OutputStream out) throws IOException {
+        public void handleStream(Http2Stream stream,InputStream in, OutputStream out) throws IOException {
             connection.requestCount.incrementAndGet();
             if (ServerStats.ENABLED) stats.requestCount.incrementAndGet();
 
-            if (HTTP2Stats.ENABLED) http2Stats.totalStreams.incrementAndGet();
+            if (Http2Stats.ENABLED) http2Stats.totalStreams.incrementAndGet();
 
             var request = stream.getRequestHeaders();
             var response = stream.getResponseHeaders();
@@ -1147,7 +1147,7 @@ class ServerImpl {
 
     /** reject an h2 stream with a bare status response: the h2 counterpart of
      * the h1 reject() helper (h1/h2 error paths must not drift apart) */
-    private static void rejectStream(robaho.net.httpserver.http2.HTTP2Stream stream,
+    private static void rejectStream(robaho.net.httpserver.http2.Http2Stream stream,
             java.io.OutputStream out, String status) throws IOException {
         stream.getResponseHeaders().set(":status", status);
         stream.writeResponseHeaders(true);
