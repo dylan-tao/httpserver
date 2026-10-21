@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -32,7 +32,7 @@ public class WindowUpdateFrame extends BaseFrame {
 
         WindowUpdateFrame frame = new WindowUpdateFrame(header);
         try {
-            frame.windowSizeIncrement = Utils.convertToInt(frameBody, 0);
+            frame.windowSizeIncrement = BinaryCodec.readInt(frameBody, 0);
         } catch (Exception e) {
             throw new HTTP2Exception(HTTP2ErrorCode.INTERNAL_ERROR);
         }
@@ -50,14 +50,14 @@ public class WindowUpdateFrame extends BaseFrame {
     @Override
     public void writeTo(OutputStream os) throws IOException {
         getHeader().writeTo(os);
-        Utils.writeBinary(os, windowSizeIncrement);
+        BinaryCodec.writeInt(os, windowSizeIncrement);
     }
 
     @Override
     public byte[] encode() {
         byte[] buffer = new byte[9+4];
         getHeader().encode(buffer);
-        Utils.writeInt32(buffer,9,windowSizeIncrement,4);
+        BinaryCodec.writeInt(buffer,9,windowSizeIncrement,4);
         return buffer;
     }
 }

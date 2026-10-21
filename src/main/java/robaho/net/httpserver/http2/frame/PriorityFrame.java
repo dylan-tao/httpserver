@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -26,7 +26,7 @@ public class PriorityFrame extends BaseFrame {
         if(body.length != 5) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
-        var tmp = Utils.convertToInt(body, 0, 4);
+        var tmp = BinaryCodec.readInt(body, 0, 4);
         frame.exclusive = (tmp & 0x80000000) != 0;
         frame.streamDependency = tmp & 0x7FFFFFFF;
         if(frame.streamDependency == frameHeader.streamIdentifier()) {

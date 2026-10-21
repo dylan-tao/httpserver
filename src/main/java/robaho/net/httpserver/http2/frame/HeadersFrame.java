@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
 import java.io.IOException;
@@ -88,7 +88,7 @@ public class HeadersFrame extends BaseFrame {
 
         //check for PADDED flag and if set then store padding length
         if (header.flags().contains(FrameFlag.PADDED)) {
-            int padLength = Utils.convertToInt(frameBody, paramIndex, 1);
+            int padLength = BinaryCodec.readInt(frameBody, paramIndex, 1);
             if(padLength >= header.length()) {
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR);
             }
@@ -99,7 +99,7 @@ public class HeadersFrame extends BaseFrame {
         //check for PRIORITY flag and if set then store the Exclusive bit (isExclusive) and store streamID
         if (header.flags().contains(FrameFlag.PRIORITY)) {
 
-            var streamId = Utils.convertToInt(frameBody, paramIndex, 4);
+            var streamId = BinaryCodec.readInt(frameBody, paramIndex, 4);
             paramIndex += 4;
 
             if ((streamId & 0x80000000L) == 0x80000000L) {

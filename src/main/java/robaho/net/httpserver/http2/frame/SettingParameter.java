@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -35,11 +35,11 @@ public class SettingParameter {
                 throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
             }
             SettingParameter result = new SettingParameter();
-            result.identifier = SettingIdentifier.getEnum(Utils.convertToInt(param,0, 2));
+            result.identifier = SettingIdentifier.getEnum(BinaryCodec.readInt(param,0, 2));
             if(result.identifier == SettingIdentifier.SETTINGS_NONE) {
                 return null;
             }
-            result.value = Utils.convertToLong(param, 2, 4);
+            result.value = BinaryCodec.readLong(param, 2, 4);
             if(!result.identifier.validateValue(result.value)) {
                 throw new HTTP2Exception(HTTP2ErrorCode.PROTOCOL_ERROR,"Invalid value for setting "+result.identifier+" "+result.value);
             }
@@ -51,7 +51,7 @@ public class SettingParameter {
         }
 	}
     public void writeTo(OutputStream os) throws IOException {
-        Utils.writeBinary(os,identifier.getValue(), 2);
-        Utils.writeBinary(os,(int)value, 4);
+        BinaryCodec.writeInt(os,identifier.getValue(), 2);
+        BinaryCodec.writeInt(os,(int)value, 4);
     }
 }

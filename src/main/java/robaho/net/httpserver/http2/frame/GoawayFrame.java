@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -24,8 +24,8 @@ public class GoawayFrame extends BaseFrame {
     @Override
     public void writeTo(OutputStream os) throws IOException {
         getHeader().writeTo(os);
-        Utils.writeBinary(os, lastSeenStream);
-        Utils.writeBinary(os, errorCode.getValue());
+        BinaryCodec.writeInt(os, lastSeenStream);
+        BinaryCodec.writeInt(os, errorCode.getValue());
     }
 
     public static BaseFrame parse(byte[] body, FrameHeader frameHeader) throws HTTP2Exception {
@@ -36,8 +36,8 @@ public class GoawayFrame extends BaseFrame {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
         try {
-            var lastSeenStream = Utils.convertToInt(body, 0, 4);
-            var errorCode = Utils.convertToInt(body, 4, 4);
+            var lastSeenStream = BinaryCodec.readInt(body, 0, 4);
+            var errorCode = BinaryCodec.readInt(body, 4, 4);
             var code = HTTP2ErrorCode.getEnum(errorCode);
             if (code.getValue() != errorCode) {
                 // unknown error code: RFC 7540 7 allows treating it as

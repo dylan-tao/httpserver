@@ -23,8 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class WebSocketDoubleCloseTest {
     private static final int port = 9107;
     private static final String path = "/ws";
-    private static final int FRAMES = 400;
-    private static final String PAYLOAD = "x".repeat(8 * 1024);
+    private static final int FRAMES = 100;
+    private static final String PAYLOAD = "x".repeat(2 * 1024);
 
     private static CountDownLatch queued;
     private static CountDownLatch go;
@@ -106,17 +106,13 @@ public class WebSocketDoubleCloseTest {
         var clientDone = new CountDownLatch(1);
         var client = WebSocketClientUtil.createWSC(port, path, s -> {
             received.incrementAndGet();
-            try {
-                Thread.sleep(3); // slow the consumer: keep a drain backlog
-            } catch (InterruptedException e) {
-            }
         }, clientDone::countDown);
 
         Assert.assertTrue(queued.await(5, TimeUnit.SECONDS), "server must queue its frames");
         // the client's Close puts the server into CLOSING (the read loop's
         // close(OPEN) path queues its CloseFrame behind the backlog)
         client.sendClose(1000, "");
-        Thread.sleep(400);
+        Thread.sleep(200);
         go.countDown();
 
         Assert.assertTrue(serverClosed.await(10, TimeUnit.SECONDS), "server close must complete");

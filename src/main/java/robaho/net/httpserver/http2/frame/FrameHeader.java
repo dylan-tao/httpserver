@@ -1,7 +1,7 @@
 package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
 import java.io.IOException;
@@ -52,7 +52,7 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 		int length = 0;
 		int readIndex = 0;
 
-		length = Utils.convertToInt(tmpBuffer, readIndex, 3);
+		length = BinaryCodec.readInt(tmpBuffer, readIndex, 3);
 		readIndex += 3;
 
 		type = FrameType.getEnum(tmpBuffer[readIndex]);
@@ -61,7 +61,7 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 		flag = FrameFlag.getEnumSet(tmpBuffer[readIndex], type);
 		readIndex++;
 
-		streamIdentifier = Utils.convertToInt(tmpBuffer, readIndex);
+		streamIdentifier = BinaryCodec.readInt(tmpBuffer, readIndex);
 		readIndex += 4;
 
 		streamIdentifier = streamIdentifier & 0x7FFFFFFF;
@@ -74,7 +74,7 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
 	public static String debug(byte[] header) {
 		try {
 			var type = FrameType.getEnum(header[3]);
-			return "length=" + Utils.convertToInt(header, 0, 3) + ", type " + type + ", flags " + FrameFlag.getEnumSet(header[4], type) + ", stream " + Utils.convertToInt(header, 5);
+			return "length=" + BinaryCodec.readInt(header, 0, 3) + ", type " + type + ", flags " + FrameFlag.getEnumSet(header[4], type) + ", stream " + BinaryCodec.readInt(header, 5);
 		} catch (Exception ex) {
 			return "<unable to parse>";
 		}
@@ -114,9 +114,9 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
      * avoids the 9-byte allocation of encode() when the caller already has
      * the target array (HPACK frame assembly, the locked DATA write path) */
     public static void encodeInto(byte[] buffer, int length, FrameType frameType, FlagSet flags, int streamId) {
-        Utils.writeInt32(buffer, 0, length, 3);
+        BinaryCodec.writeInt(buffer, 0, length, 3);
         buffer[3] = (byte) (frameType.value & 0xFF);
         buffer[4] = flags.value();
-        Utils.writeInt32(buffer, 5, streamId, 4);
+        BinaryCodec.writeInt(buffer, 5, streamId, 4);
     }
 }

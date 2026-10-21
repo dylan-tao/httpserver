@@ -317,7 +317,7 @@ public class HTTP2Connection {
      * unregistered while the block was still in flight: the trailer is then
      * simply ignored */
     private void completeTrailer(HTTP2Stream stream, boolean endStream) throws HTTP2Exception {
-        hpack.decodeFieldSegments(Utils.combineByteArrays(headerBlockFragments));
+        hpack.decodeFieldSegments(BinaryCodec.concat(headerBlockFragments));
         headerBlockFragments.clear();
         headerBlockBytes = 0;
         pendingTrailerEndStream = false;
@@ -638,7 +638,7 @@ public class HTTP2Connection {
                     continue;
                 }
                 peakConcurrentStreams = Math.max(peakConcurrentStreams, currentSize);
-                byte[] headerBlock = Utils.combineByteArrays(headerBlockFragments);
+                byte[] headerBlock = BinaryCodec.concat(headerBlockFragments);
                 HeaderFields fields = new HeaderFields();
                 fields.addAll(hpack.decodeFieldSegments(headerBlock));
                 // streamID is not present and has to be greater than all

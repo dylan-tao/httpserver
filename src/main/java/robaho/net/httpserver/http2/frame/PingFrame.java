@@ -2,7 +2,7 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 
 import java.io.IOException;
@@ -43,6 +43,6 @@ public class PingFrame extends BaseFrame {
         return new PingFrame(frameHeader, body);
     }
     public byte[] encode() {
-        return Utils.combineByteArrays(List.of(getHeader().encode(),body));
+        return BinaryCodec.concat(List.of(getHeader().encode(),body));
     }
 }

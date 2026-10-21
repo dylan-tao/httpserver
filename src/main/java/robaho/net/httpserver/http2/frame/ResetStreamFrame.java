@@ -2,13 +2,13 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.HTTP2ErrorCode;
 import robaho.net.httpserver.http2.HTTP2Exception;
-import robaho.net.httpserver.http2.Utils;
+import robaho.net.httpserver.http2.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 
-import static robaho.net.httpserver.http2.Utils.convertToInt;
+import static robaho.net.httpserver.http2.BinaryCodec.readInt;
 
 public class ResetStreamFrame extends BaseFrame {
     final public HTTP2ErrorCode errorCode;
@@ -25,7 +25,7 @@ public class ResetStreamFrame extends BaseFrame {
     @Override
     public void writeTo(OutputStream os) throws IOException {
         getHeader().writeTo(os);
-        Utils.writeBinary(os,errorCode.getValue(),4);
+        BinaryCodec.writeInt(os,errorCode.getValue(),4);
         os.flush();
     }
 
@@ -33,12 +33,12 @@ public class ResetStreamFrame extends BaseFrame {
         if(body.length != 4) {
             throw new HTTP2Exception(HTTP2ErrorCode.FRAME_SIZE_ERROR);
         }
-        return new ResetStreamFrame(frameHeader,HTTP2ErrorCode.getEnum(convertToInt(body, 0)));
+        return new ResetStreamFrame(frameHeader,HTTP2ErrorCode.getEnum(readInt(body, 0)));
     }
     public byte[] encode() {
         byte[] buffer = new byte[4];
-        Utils.writeInt32(buffer, 0, errorCode.getValue(),4);
-        return Utils.combineByteArrays(List.of(getHeader().encode(),buffer));
+        BinaryCodec.writeInt(buffer, 0, errorCode.getValue(),4);
+        return BinaryCodec.concat(List.of(getHeader().encode(),buffer));
     }
 
 }
