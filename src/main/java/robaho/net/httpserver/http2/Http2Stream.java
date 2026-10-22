@@ -6,6 +6,7 @@ import robaho.net.httpserver.OptimizedHeaders;
 import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.DataFrame;
+import robaho.net.httpserver.http2.frame.DataFrameBodyPool;
 import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameHeader;
@@ -423,9 +424,14 @@ public class Http2Stream {
             }
         }
 
+        /** scratch for the single-byte write: avoids a byte[1] allocation
+         * per call on the SSE-style handler path */
+        private final byte[] single = new byte[1];
+
         @Override
         public void write(int b) throws IOException {
-            write(new byte[]{(byte) b});
+            single[0] = (byte) b;
+            write(single, 0, 1);
         }
 
         @Override
@@ -694,7 +700,10 @@ public class Http2Stream {
                     available-=bytesToRead;
                     read+=bytesToRead;
                     if(available==0) { // remove top buffer from queue
-                        queue.poll();
+                        // the sole owner (this thread) just consumed the last
+                        // byte: full-size DATA bodies go back to the pool,
+                        // everything else is GC'd
+                        DataFrameBodyPool.release(queue.poll());
                         offset=0;
                     }
                 }

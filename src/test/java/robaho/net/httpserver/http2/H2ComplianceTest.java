@@ -451,6 +451,41 @@ public class H2ComplianceTest {
         }
     }
 
+    /** full-size DATA frames exercise the frame body pool
+     *  (DataFrameBodyPool): bodies of exactly the advertised max frame size
+     *  are borrowed on receipt and returned once fully consumed. two
+     *  sequential uploads on one connection force a released buffer to be
+     *  re-borrowed - any pool bug (a returned-then-reused array still
+     *  referenced somewhere) surfaces as an echo mismatch, and the
+     *  position-dependent byte pattern means a stale buffer cannot match */
+    @Test
+    public void testFullSizeDataFrameBodiesRoundTrip() throws Exception {
+        int frame = 16384; // the server's advertised max frame size (default)
+        try (H2Client client = new H2Client(server.getAddress().getPort())) {
+            for (int round = 0; round < 2; round++) {
+                int total = 3 * frame + 100; // 3 full frames + a short tail
+                byte[] body = new byte[total];
+                for (int i = 0; i < total; i++) {
+                    body[i] = (byte) (i * 7 + round * 3);
+                }
+                int stream = client.sendRequest("POST", "/echo", false);
+                int sent = 0;
+                while (sent < total) {
+                    int n = Math.min(frame, total - sent);
+                    boolean end = sent + n == total;
+                    client.sendData(stream, java.util.Arrays.copyOfRange(body, sent, sent + n), end);
+                    sent += n;
+                }
+                var response = client.awaitResponse(stream);
+                Assert.assertFalse(response.goaway(), "upload must not trigger GOAWAY");
+                Assert.assertNull(response.rstErrorCode(), "upload must not be reset");
+                Assert.assertEquals(response.status(), 200, "upload must complete");
+                Assert.assertEquals(response.data(), body,
+                    "echoed body must match byte-for-byte (round " + round + ")");
+            }
+        }
+    }
+
     /** SETTINGS_MAX_FRAME_SIZE outside the RFC 7540 6.5.2 range
      *  (16384..16777215) must be a connection error: a 0 value would
      *  otherwise compute _len=0 for every DATA write and wedge the writer */

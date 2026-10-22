@@ -28,6 +28,7 @@
       <class name="robaho.net.httpserver.SlowBodyKeepAliveTest"/>
       <class name="robaho.net.httpserver.http2.hpack.HuffmanTest"/>
       <class name="robaho.net.httpserver.http2.H2ComplianceTest"/>
+      <class name="robaho.net.httpserver.http2.Http2AlpnTest"/>
       <class name="robaho.net.httpserver.http2.MultiFrameTrailerTest"/>
       <class name="robaho.net.httpserver.http2.Review3Test"/>
       <class name="robaho.net.httpserver.extras.ProxyForwardingTest"/>

@@ -85,10 +85,11 @@ class ServerImpl {
     // as soon as the server goes idle instead of sleeping the full delay
     private final java.util.concurrent.atomic.AtomicInteger activeExchanges = new java.util.concurrent.atomic.AtomicInteger();
 
-    /** h2 keepalive ping interval: the reader loop schedules the task at this
-     * period and the idle-cleaner treats a ping as activity for the same
-     * window - both sites must agree, hence one named constant */
-    private static final long H2_PING_INTERVAL_MILLIS = 1000;
+    /** h2 keepalive ping interval (ServerConfig.http2PingIntervalMillis):
+     * the reader loop schedules the task at this period and the task treats
+     * a connection as ping-worthy after the same window - both sites read
+     * the one config value. <= 0 disables the ping entirely */
+    private static final long H2_PING_INTERVAL_MILLIS = ServerConfig.http2PingIntervalMillis();
     private volatile boolean finished = false;
     private boolean bound = false;
     private boolean started = false;
@@ -137,7 +138,9 @@ class ServerImpl {
         timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
         // note: the shared CachedClock clock runs on its own daemon timer
         // (see CachedClock) so it survives this server instance
-        timer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
+        if (H2_PING_INTERVAL_MILLIS > 0) {
+            timer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
+        }
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
             createContext("/__stats",new StatsHandler());
@@ -163,16 +166,22 @@ class ServerImpl {
         }
     }
 
-    /** log state to assist debugging */
+    /** dump connection/stream state to the response body (and the log) */
     private class DebugHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             logger.log(Level.INFO,"logging debug state, requestor "+exchange.getRemoteAddress());
+            StringBuilder sb = new StringBuilder(4096);
             for(var connection : allConnections) {
                 connection.debug();
+                sb.append(connection.toString()).append('\n');
             }
             Http2ConnectionHandler.debug();
-            exchange.sendResponseHeaders(200,-1);
+            byte[] body = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            try (var os = exchange.getResponseBody()) {
+                os.write(body);
+            }
         }
     }
 

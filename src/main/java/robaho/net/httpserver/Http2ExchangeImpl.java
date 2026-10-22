@@ -84,6 +84,9 @@ public class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.Princ
         // 0: no body, no chunked encoding in h2; -1: no data will be sent,
         // END_STREAM is set via closeStream below
         response.set(":status",Long.toString(rCode));
+        // h1/h2 parity: h1 always sends Date (RFC 9110 6.5.1 SHOULD);
+        // HPACK has 'date' in its static table so encoding is cheap
+        response.set("Date", CachedClock.dateAndTime());
         responseCode = rCode;
         stream.writeResponseHeaders(responseLength==-1);
     }

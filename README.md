@@ -129,10 +129,10 @@ Total Handler Exceptions: 0
 | `robaho.net.httpserver.nodelay` | boolean | `true` | **h1 连接**的 TCP_NODELAY。开启可防止 SSE/小响应的 Nagle+延迟确认 ~40ms 停顿；h1 无实测吞吐损失 |
 | `robaho.net.httpserver.http2Nodelay` | boolean | `false` | **h2 连接**的 TCP_NODELAY。默认关闭（Nagle 合并多路复用小帧写入，实测 NODELAY 开启会使 h2 多路复用吞吐 -8%）。h2 SSE 场景可设 `true` |
 | `robaho.net.httpserver.bufferSize` | int | `16384` | 连接级输入/输出缓冲大小（字节），同时用于 h2 流缓冲池和 multipart 预读。下限 512。影响每连接内存 ~2×bufferSize |
-| `robaho.net.httpserver.maxConnections` | int | `-1`（无限） | 最大并发连接数。超过时新连接直接关闭并计数 |
+| `jdk.httpserver.maxConnections` | int | `-1`（无限） | 最大并发连接数。超过时新连接直接关闭并计数。使用 JDK 兼容属性名（与 com.sun.net.httpserver 一致） |
 | `robaho.net.httpserver.maxIdleConnections` | int | `200` | 最大空闲连接数。超过时清理器关闭最旧的空闲连接 |
 | `robaho.net.httpserver.idleInterval` | long | `30`（秒） | 连接空闲判定间隔。超过此时间无活动且不在请求中的连接被清理器关闭 |
-| `robaho.net.httpserver.clockTick` | long | `100`（毫秒） | 清理器运行周期 |
+| `robaho.net.httpserver.clockTick` | long | `10000`（毫秒，10 秒） | 清理器运行周期 |
 | `robaho.net.httpserver.drainAmount` | long | `65536`（字节） | handler 未读完请求体时，连接复用前最多排空的字节数。超过则关闭连接（防走私）。排空等待上限 1 秒 |
 | `robaho.net.httpserver.maxReqTime` | long | `-1`（无限） | 请求处理最长允许时间（秒）。超时的请求中连接被清理器关闭 |
 | `robaho.net.httpserver.EnableStats` | boolean | `false` | 开启 `/__stats` 统计端点 |
@@ -144,6 +144,8 @@ Total Handler Exceptions: 0
 |---|---|---|---|
 | `robaho.net.httpserver.maxReqLineSize` | int | `65536`（64KB） | 请求行或单个头行的最大字节数。超过返回 400 |
 | `robaho.net.httpserver.maxReqHeaders` | int | `200` | 请求头最大数量。超过返回 400 |
+| `robaho.net.httpserver.maxReqHeaderSize` | int | `389120`（380KB） | 请求头总字节数上限（请求行 + 全部头 + 空行累计）。超过返回 431。`0` 为不限 |
+| `robaho.net.httpserver.maxRequestBodySize` | long | `-1`（无限） | 请求体最大字节数。超过时连接被关闭（防超大 body 占用内存）。`0` 或负数为不限 |
 
 ### SSL
 
@@ -163,6 +165,7 @@ Total Handler Exceptions: 0
 | `robaho.net.httpserver.http2MaxConcurrentStreams` | int | `100` | 每连接最大并发流数。超过时新流收 REFUSED_STREAM（客户端可重试）。`-1` 为无限。100 对齐浏览器行为 |
 | `robaho.net.httpserver.http2MaxHeaderBlockSize` | int | `131072`（128KB） | 单个头块（HEADERS+CONTINUATION 累计）最大字节数。超过返回 ENHANCE_YOUR_CALM（防 CONTINUATION 洪水） |
 | `robaho.net.httpserver.http2DisableFlushDelay` | boolean | `false` | 每帧写后立即 flush（低延迟模式）。默认 false（批量冲刷，吞吐更高）。SSE 场景建议 `true` |
+| `robaho.net.httpserver.http2PingIntervalMillis` | long | `1000`（毫秒） | 空闲 h2 连接的 keepalive PING 间隔（同时是死连接探测：PING 失败即关闭连接）。`<= 0` 禁用（死连接由空闲清理器兜底，行为同 h1） |
 
 ### WebSocket
 

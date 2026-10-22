@@ -1,20 +1,19 @@
-# Use OpenJDK 23
-FROM openjdk:23-slim
+# ---- build stage: compile and package the library on JDK 25 ----
+FROM maven:3.10-eclipse-temurin-25-noble AS build
+WORKDIR /src
+COPY pom.xml .
+COPY src ./src
+# sources/javadoc jars are skipped so the artifact glob below matches exactly
+# one file; tests run in CI (.github/workflows/ci.yml), not in the image build
+RUN mvn -B -ntp -DskipTests -Dmaven.source.skip=true -Dmaven.javadoc.skip=true package
 
-# Set working directory
+# ---- runtime stage: the demo file server on a JRE ----
+FROM eclipse-temurin:25-jre
 WORKDIR /app
-
-# Install curl
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-
-# Copy the application jar (Maven build output)
-COPY target/httpserver-*.jar /app/httpserver.jar
-
+COPY --from=build /src/target/httpserver-*.jar httpserver.jar
+# the demo mains (SimpleFileServer, FileServerHandler, ...) are test sources
+COPY --from=build /src/target/test-classes ./test-classes
 RUN mkdir -p /app/fileserver
-
-# Expose the port your application runs on
 EXPOSE 8080
-
-# Command to run the application
-# Replace "YourApplication.jar" with your actual JAR file name
-CMD ["java", "-cp", "httpserver-test.jar:httpserver.jar", "SimpleFileServer","fileserver","8080","fileserver/logfile.txt" ]
+# demo endpoints: /files (static content), /echo, /devnull, / (hello world)
+CMD ["java", "-cp", "httpserver.jar:test-classes", "SimpleFileServer", "fileserver", "8080", "fileserver/logfile.txt"]

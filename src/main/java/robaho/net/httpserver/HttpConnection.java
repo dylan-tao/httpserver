@@ -220,6 +220,10 @@ public class HttpConnection {
             http2Connection.shrinkBuffers();
         } else if (os instanceof NoSyncBufferedOutputStream nos) {
             nos.shrinkBuffers();
+            // the response-head assembly scratch: only touched by this
+            // connection's single VT during request processing, so it is
+            // safe to release here (same argument as the output buffer)
+            headerScratch = null;
         }
     }
 

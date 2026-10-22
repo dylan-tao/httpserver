@@ -71,6 +71,7 @@ public final class ServerConfig {
     private static final int DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS = 100;
     // maximum total size of a received HTTP/2 header block (HEADERS + CONTINUATIONs)
     private static final int DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE = 128 * 1024;
+    private static final long DEFAULT_HTTP2_PING_INTERVAL_MILLIS = 1000;
     // maximum size of a single HTTP/1.1 request line or header line
     private static final int DEFAULT_MAX_REQ_LINE_SIZE = 64 * 1024;
     // maximum websocket frame / message sizes. 4MB is generous for real
@@ -135,6 +136,8 @@ public final class ServerConfig {
     private static int http2MaxConcurrentStreams;
     private static boolean http2DisableFlushDelay;
     private static int http2MaxHeaderBlockSize;
+    /** keepalive ping interval for idle h2 connections; <= 0 disables the ping */
+    private static long http2PingIntervalMillis;
     private static int maxReqLineSize;
     private static int maxWebSocketFrameSize;
     private static int maxWebSocketMessageSize;
@@ -219,6 +222,13 @@ public final class ServerConfig {
 
                         http2MaxConcurrentStreams = Integer.getInteger(pkg + ".http2MaxConcurrentStreams", DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS);
                         http2DisableFlushDelay = Boolean.getBoolean(pkg + ".http2DisableFlushDelay");
+
+                        // keepalive ping for idle h2 connections. the default 1s
+                        // matches the historical fixed behavior; <= 0 disables
+                        // the ping entirely (dead connections are then caught
+                        // by the idle cleaner, like h1)
+                        http2PingIntervalMillis = Long.getLong(pkg + ".http2PingIntervalMillis",
+                                DEFAULT_HTTP2_PING_INTERVAL_MILLIS);
 
                         http2MaxHeaderBlockSize = Integer.getInteger(pkg + ".http2MaxHeaderBlockSize", DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE);
                         if (http2MaxHeaderBlockSize <= 0) {
@@ -424,6 +434,12 @@ public final class ServerConfig {
     /** @return the maximum total size in bytes of a received HTTP/2 header block */
     public static int http2MaxHeaderBlockSize() {
         return http2MaxHeaderBlockSize;
+    }
+
+    /** @return the keepalive ping interval for idle h2 connections in
+     * millis, or a value &lt;= 0 when the ping is disabled */
+    public static long http2PingIntervalMillis() {
+        return http2PingIntervalMillis;
     }
 
     /** @return the maximum size in bytes of a single HTTP/1.1 request/header line */

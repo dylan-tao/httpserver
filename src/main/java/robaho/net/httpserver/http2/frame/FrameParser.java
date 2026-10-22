@@ -26,7 +26,12 @@ public class FrameParser {
             throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
 
-        byte[] body = new byte[frameHeader.length()];
+        // DATA is the only frame type whose body is consumed and released via
+        // the pool: other bodies may be retained by the header block assembly,
+        // so they get a plain allocation
+        byte[] body = frameHeader.type() == FrameType.DATA
+            ? DataFrameBodyPool.borrow(frameHeader.length())
+            : new byte[frameHeader.length()];
         Http2Connection.readFully(inputStream, body);
 
 		switch (frameHeader.type()) {
