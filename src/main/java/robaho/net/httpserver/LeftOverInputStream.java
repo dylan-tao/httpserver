@@ -232,7 +232,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
                     if (remaining <= 0) {
                         break;
                     }
-                    t.connection.drainingAt = ActivityTimer.now();
+                    t.connection.drainingAt = CachedClock.now();
                     var socket = t.connection.getSocket();
                     int previousTimeout = socket.getSoTimeout();
                     try {
@@ -250,7 +250,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
                     }
                     continue;
                 }
-                t.connection.drainingAt = ActivityTimer.now();
+                t.connection.drainingAt = CachedClock.now();
                 int len = (int) Math.min(Math.min(drainBuffer.length, available), l);
                 len = readImpl(drainBuffer, 0, len);
                 if (len == -1) {

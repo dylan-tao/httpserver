@@ -288,7 +288,7 @@ class ExchangeImpl {
             // keep the reference: writeHeaders compares against it to use the
             // cached pre-encoded Date bytes (identity comparison is safe
             // because BOTH sides go through this single assignment)
-            frameworkDate = ActivityTimer.dateAndTime();
+            frameworkDate = CachedClock.dateAndTime();
             rspHdrs.set("Date", frameworkDate);
         }
 
@@ -421,7 +421,7 @@ class ExchangeImpl {
                 if (Objects.equals(val, frameworkDate)) {
                     // the framework-set Date header: use the cached encoded
                     // bytes instead of re-encoding the string per response
-                    byte[] dateBytes = ActivityTimer.dateAndTimeBytes();
+                    byte[] dateBytes = CachedClock.dateAndTimeBytes();
                     System.arraycopy(dateBytes, 0, head, pos, dateBytes.length);
                     pos += dateBytes.length;
                 } else {

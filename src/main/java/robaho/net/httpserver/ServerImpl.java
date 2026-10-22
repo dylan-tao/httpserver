@@ -135,8 +135,8 @@ class ServerImpl {
         dispatcher = new Dispatcher();
         timer = new Timer("connection-cleaner", true);
         timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
-        // note: the shared ActivityTimer clock runs on its own daemon timer
-        // (see ActivityTimer) so it survives this server instance
+        // note: the shared CachedClock clock runs on its own daemon timer
+        // (see CachedClock) so it survives this server instance
         timer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
@@ -485,7 +485,7 @@ class ServerImpl {
                     Http2ConnectionHandler t = new Http2ConnectionHandler(protocol, c);
                     t.run();
                 } else {
-                    Exchange t = new Exchange(protocol, c);
+                    Http1ConnectionHandler t = new Http1ConnectionHandler(protocol, c);
                     t.run();
                 }
             } catch (Throwable t) {
@@ -730,7 +730,7 @@ class ServerImpl {
     }
 
     /* per exchange task */
-    class Exchange implements Runnable {
+    class Http1ConnectionHandler implements Runnable {
         final HttpConnection connection;
         InputStream rawin;
         OutputStream rawout;
@@ -738,7 +738,7 @@ class ServerImpl {
         ExchangeImpl tx;
         HttpContextImpl ctx;
 
-        Exchange(String protocol, HttpConnection conn) throws IOException {
+        Http1ConnectionHandler(String protocol, HttpConnection conn) throws IOException {
             this.connection = conn;
             this.protocol = protocol;
         }
@@ -839,7 +839,7 @@ class ServerImpl {
             connection.requestCount.incrementAndGet();
             if (ServerStats.ENABLED) stats.requestCount.incrementAndGet();
 
-            logger.log(Level.DEBUG, () -> "Exchange request line: "+ requestLine);
+            logger.log(Level.DEBUG, () -> "Http1 request line: "+ requestLine);
             int space = requestLine.indexOf(" ");
             if (space == -1) {
                 throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request line");
@@ -1081,7 +1081,7 @@ class ServerImpl {
 
         @Override
         public void run() {
-            long now = ActivityTimer.now();
+            long now = CachedClock.now();
 
             for (var c : allConnections) {
                 if (c.drainingAt != 0 && now- c.drainingAt >= IDLE_INTERVAL / 2) {

@@ -85,13 +85,13 @@ public class HttpConnection {
 
     HttpConnection(Socket socket) throws IOException {
         this.socket = socket;
-        this.is = new NoSyncBufferedInputStream(new ActivityTimerInputStream(socket.getInputStream()), ServerConfig.bufferSize());
+        this.is = new NoSyncBufferedInputStream(new ActivityTrackingInputStream(socket.getInputStream()), ServerConfig.bufferSize());
         // configured size + 64: a full 16KB h2 DATA frame plus its 9-byte
         // frame header accumulate and flush as ONE write/packet. with a plain
         // 16KB buffer the payload bypasses the buffer and the header is
         // flushed as a separate 9-byte syscall (and, with TCP_NODELAY on, a
         // separate packet) per frame
-        this.os = new NoSyncBufferedOutputStream(new ActivityTimerOutputStream(socket.getOutputStream()), ServerConfig.bufferSize() + 64);
+        this.os = new NoSyncBufferedOutputStream(new ActivityTrackingOutputStream(socket.getOutputStream()), ServerConfig.bufferSize() + 64);
         // flush deferred response bytes right before a blocking input read:
         // a response deferred because pipelined requests were waiting can
         // never get stuck behind a partially-received request. skipped for
@@ -227,11 +227,11 @@ public class HttpConnection {
         return context;
     }
 
-    private class ActivityTimerInputStream extends FilterInputStream {
+    private class ActivityTrackingInputStream extends FilterInputStream {
 
-        private ActivityTimerInputStream(InputStream inputStream) {
+        private ActivityTrackingInputStream(InputStream inputStream) {
             super(inputStream);
-            lastActivityTime = ActivityTimer.now();
+            lastActivityTime = CachedClock.now();
         }
 
         @Override
@@ -239,7 +239,7 @@ public class HttpConnection {
             try {
                 return super.read();
             } finally {
-                lastActivityTime = ActivityTimer.now();
+                lastActivityTime = CachedClock.now();
             }
         }
 
@@ -248,7 +248,7 @@ public class HttpConnection {
             try {
                 return super.skip(n);
             } finally {
-                lastActivityTime = ActivityTimer.now();
+                lastActivityTime = CachedClock.now();
             }
         }
 
@@ -257,24 +257,24 @@ public class HttpConnection {
             try {
                 return super.read(b, off, len);
             } finally {
-                lastActivityTime = ActivityTimer.now();
+                lastActivityTime = CachedClock.now();
             }
         }
 
     }
 
-    private class ActivityTimerOutputStream extends FilterOutputStream {
+    private class ActivityTrackingOutputStream extends FilterOutputStream {
 
-        private ActivityTimerOutputStream(OutputStream outputStream) {
+        private ActivityTrackingOutputStream(OutputStream outputStream) {
             super(outputStream);
-            lastActivityTime = ActivityTimer.now();
+            lastActivityTime = CachedClock.now();
         }
         @Override
         public void write(int b) throws IOException {
             try {
                 out.write(b);
             } finally {
-                lastActivityTime = ActivityTimer.now();
+                lastActivityTime = CachedClock.now();
             }
         }
 
@@ -283,7 +283,7 @@ public class HttpConnection {
             try {
                 out.write(b, off, len);
             } finally {
-                lastActivityTime = ActivityTimer.now();
+                lastActivityTime = CachedClock.now();
             }
         }
     }
