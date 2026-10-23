@@ -376,9 +376,14 @@ class ExchangeImpl {
      * array indexed by code, not a ConcurrentHashMap: the map boxed the int
      * key on every response (all real codes are above the Integer cache
      * range), and codes are dense in [100, 599]. the racy store is benign:
-     * both racers encode the same immutable value and the reference store is
-     * atomic */
+     * both racers encode the same immutable value. the release store +
+     * acquire load pair is REQUIRED for safe publication: a plain array
+     * store has no happens-before edge, so under a weak memory model a
+     * reader could observe the non-null reference while the array ELEMENTS
+     * still read as zero - a corrupted status line on the wire */
     private static final byte[][] STATUS_LINES = new byte[600][];
+    private static final java.lang.invoke.VarHandle STATUS_LINES_HANDLE =
+        java.lang.invoke.MethodHandles.arrayElementVarHandle(byte[][].class);
 
     private static byte[] statusLineBytes(int code) {
         if (code == 101) {
@@ -389,10 +394,10 @@ class ExchangeImpl {
             // custom exchange could bypass): fall back to per-call encoding
             return ("HTTP/1.1 " + code + HttpStatus.msg(code) + "\r\n").getBytes(ISO_CHARSET);
         }
-        byte[] line = STATUS_LINES[code];
+        byte[] line = (byte[]) STATUS_LINES_HANDLE.getAcquire(STATUS_LINES, code);
         if (line == null) {
             line = ("HTTP/1.1 " + code + HttpStatus.msg(code) + "\r\n").getBytes(ISO_CHARSET);
-            STATUS_LINES[code] = line;
+            STATUS_LINES_HANDLE.setRelease(STATUS_LINES, code, line);
         }
         return line;
     }

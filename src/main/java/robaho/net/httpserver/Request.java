@@ -172,10 +172,15 @@ class Request {
             System.arraycopy(src, off, buffer, count, len);
             count += len;
         }
-        /** clear the content but keep the grown capacity: the per-connection
-         * builders are reused across requests */
+        /** clear the content for reuse; a builder grown by one huge line is
+         * shrunk back instead of pinning that capacity for the connection's
+         * lifetime (the same policy the input stream applies to lineBuf) */
         void reset() {
             count = 0;
+            if (buffer.length > 8192) {
+                buffer = new byte[256];
+                capacity = 256;
+            }
         }
 
         public String trimmed() {
