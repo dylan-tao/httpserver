@@ -1,4 +1,5 @@
-package robaho.net.httpserver;
+package robaho.net.httpserver.internal;
+
 
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -54,14 +55,14 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * output buffer behind a partially-received request */
     private Runnable preReadFlush;
 
-    void setPreReadFlush(Runnable r) {
+    public void setPreReadFlush(Runnable r) {
         this.preReadFlush = r;
     }
 
     /** true when pipelined request bytes are already buffered and waiting:
      * response completion can defer its flush (the whole batch flushes
      * once, when the input drains or right before the next blocking read) */
-    boolean hasBufferedInput() {
+    public boolean hasBufferedInput() {
         return pos < count;
     }
 
@@ -156,7 +157,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * this is the safe point: no fill() is in progress, so there is no race.
      * the next fill() grows the buffer back to the full size on demand.
      */
-    void shrinkForNextRequest() {
+    public void shrinkForNextRequest() {
         if (pos >= count && buf.length > IDLE_READ_BUFFER_SIZE) {
             // drop the BIG buffer without allocating: the next fill
             // allocates the small buffer on demand. the small buffer is
@@ -173,7 +174,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * detected (a line spanning the small buffer, a declared large body, or
      * an h2 upgrade) so bulk reads are not stuck at the small idle size.
      * preserves any unconsumed buffered bytes */
-    void growBuffer() {
+    public void growBuffer() {
         byte[] b = buf;
         if (b == null || b.length >= bufferSize) {
             return;
@@ -203,7 +204,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * and header parsers apply different CR rules. Throws IOException when
      * the line exceeds {@code maxLen}.
      */
-    int readLine(int maxLen) throws IOException {
+    public int readLine(int maxLen) throws IOException {
         if (lineBuf == null) {
             lineBuf = new byte[256];
         } else if (lineBuf.length > 8192) {
@@ -254,7 +255,7 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
 
     /** the buffer holding the last readLine result; valid until the next
      * readLine call on this stream */
-    byte[] lineBuffer() {
+    public byte[] lineBuffer() {
         return lineBuf;
     }
 

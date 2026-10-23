@@ -1,5 +1,8 @@
 package robaho.net.httpserver.http2;
 
+/**
+ * HTTP/2 error codes (RFC 7540 7) carried in RST_STREAM and GOAWAY frames.
+ */
 public enum Http2ErrorCode {
 	
 	NO_ERROR (0x0),

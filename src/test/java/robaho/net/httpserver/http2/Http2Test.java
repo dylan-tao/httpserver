@@ -1,4 +1,5 @@
 package robaho.net.httpserver.http2;
+import robaho.net.httpserver.Http2ExchangeImpl;
 
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
@@ -8,7 +9,6 @@ import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import robaho.net.httpserver.Http2ExchangeImpl;
 import robaho.net.httpserver.LoggingFilter;
 
 import java.io.IOException;

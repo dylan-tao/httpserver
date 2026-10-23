@@ -1,4 +1,4 @@
-package robaho.net.httpserver;
+package robaho.net.httpserver.internal;
 
 import java.util.Arrays;
 import java.util.function.BiConsumer;

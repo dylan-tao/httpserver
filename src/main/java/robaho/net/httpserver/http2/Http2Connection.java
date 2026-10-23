@@ -1,8 +1,9 @@
 package robaho.net.httpserver.http2;
+import robaho.net.httpserver.HttpConnection;
+import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
-import robaho.net.httpserver.HttpConnection;
-import robaho.net.httpserver.OptimizedHeaders;
 import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.ContinuationFrame;
@@ -144,7 +145,7 @@ public class Http2Connection {
     public void shrinkConnectionOutputBuffer() {
         lock();
         try {
-            if (outputStream instanceof robaho.net.httpserver.NoSyncBufferedOutputStream nos) {
+            if (outputStream instanceof robaho.net.httpserver.internal.NoSyncBufferedOutputStream nos) {
                 nos.shrinkBuffers();
             }
         } finally {

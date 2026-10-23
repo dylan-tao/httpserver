@@ -23,6 +23,7 @@
  * questions.
  */
 package robaho.net.httpserver;
+import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
 
 import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.Headers;

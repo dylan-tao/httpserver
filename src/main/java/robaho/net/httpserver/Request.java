@@ -24,6 +24,8 @@
  */
 
 package robaho.net.httpserver;
+import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
 
@@ -92,7 +94,8 @@ class Request {
      * then terminated the line bare); interior CRs are content.
      */
     private String readRequestLine() throws IOException {
-        final BufferedBuilder bb = new BufferedBuilder(64);
+        final BufferedBuilder bb = PARSE_BUILDERS.get()[0];
+        bb.reset();
         int emptyLines = 0;
         while (true) {
             int len;
@@ -134,6 +137,15 @@ class Request {
 
     Headers hdrs = null;
 
+    /** per-connection parse builders (request line, header key, header
+     * value), reused across the connection's requests: the h1 model is one
+     * virtual thread per connection, so a ThreadLocal hands each connection
+     * its own set with no sharing, and the buffers die with the connection.
+     * each use resets the content; the grown capacity is retained */
+    private static final ThreadLocal<BufferedBuilder[]> PARSE_BUILDERS =
+        ThreadLocal.withInitial(() -> new BufferedBuilder[] {
+            new BufferedBuilder(64), new BufferedBuilder(32), new BufferedBuilder(128) });
+
     private static final class BufferedBuilder {
         private byte[] buffer;
         private int capacity;
@@ -160,6 +172,12 @@ class Request {
             System.arraycopy(src, off, buffer, count, len);
             count += len;
         }
+        /** clear the content but keep the grown capacity: the per-connection
+         * builders are reused across requests */
+        void reset() {
+            count = 0;
+        }
+
         public String trimmed() {
             int start=0;
             while(start<count && buffer[start]==' ') start++;
@@ -182,8 +200,11 @@ class Request {
         }
         hdrs = new OptimizedHeaders(16);
 
-        BufferedBuilder key = new BufferedBuilder(32);
-        BufferedBuilder value = new BufferedBuilder(128);
+        BufferedBuilder[] builders = PARSE_BUILDERS.get();
+        BufferedBuilder key = builders[1];
+        BufferedBuilder value = builders[2];
+        key.reset();
+        value.reset();
         int headerCount = 0;
         int limit = ServerConfig.getMaxReqLineSize();
         // the raw line cap: key(limit) + ':' + value(limit) is the largest

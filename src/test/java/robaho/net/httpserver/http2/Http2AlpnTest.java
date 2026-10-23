@@ -1,4 +1,5 @@
 package robaho.net.httpserver.http2;
+import robaho.net.httpserver.HttpConnection;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpsConfigurator;

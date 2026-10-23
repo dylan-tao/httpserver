@@ -45,6 +45,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * A single WebSocket frame (RFC 6455 5): opcode, FIN bit, optional masking
+ * key and payload. Frames are read from and written to the raw stream;
+ * fragmented messages are reassembled via the
+ * {@link #WebSocketFrame(OpCode, List)} constructor.
+ */
 public class WebSocketFrame {
 
     public static final Charset TEXT_CHARSET = StandardCharsets.UTF_8;
@@ -57,6 +63,8 @@ public class WebSocketFrame {
                     .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
                     .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT));
 
+    /** decode a text payload strictly: malformed UTF-8 throws (and maps to
+     * close code 1007) instead of being silently replaced with U+FFFD */
     public static String binary2Text(byte[] payload) throws CharacterCodingException {
         return binary2Text(payload, 0, payload.length);
     }
@@ -77,6 +85,10 @@ public class WebSocketFrame {
         return read;
     }
 
+    /** read and validate one frame from the stream: reserved bits, unknown
+     * opcodes, fragmented control frames, non-minimal length encodings,
+     * control payload caps and the configured max frame size are all
+     * rejected here. a Close frame is returned as a {@link CloseFrame} */
     public static WebSocketFrame read(InputStream in) throws IOException {
         byte head = (byte) checkedRead(in.read());
         boolean fin = (head & 0x80) != 0;
@@ -102,6 +114,7 @@ public class WebSocketFrame {
         }
     }
 
+    /** encode a text payload as UTF-8 bytes */
     public static byte[] text2Binary(String payload) throws CharacterCodingException {
         return payload.getBytes(WebSocketFrame.TEXT_CHARSET);
     }
@@ -125,6 +138,8 @@ public class WebSocketFrame {
         setFin(fin);
     }
 
+    /** a frame with a binary payload; control frame payloads above the
+     * 125-byte protocol cap are rejected up front */
     public WebSocketFrame(OpCode opCode, boolean fin, byte[] payload) {
         this(opCode, fin);
         if ((opCode == OpCode.Close || opCode == OpCode.Ping || opCode == OpCode.Pong)
@@ -137,12 +152,15 @@ public class WebSocketFrame {
         setBinaryPayload(payload);
     }
 
+    /** a frame with a UTF-8 text payload */
     public WebSocketFrame(OpCode opCode, boolean fin, String payload)
             throws CharacterCodingException {
         this(opCode, fin);
         setTextPayload(payload);
     }
 
+    /** reassemble a fragmented message from its continuation frames; the
+     * aggregate size is bounded by the int payload length */
     public WebSocketFrame(OpCode opCode, List<WebSocketFrame> fragments) throws WebSocketException {
         setOpCode(opCode);
         setFin(true);
@@ -171,6 +189,7 @@ public class WebSocketFrame {
         setMaskingKey(clone.getMaskingKey());
     }
 
+    /** the (unmasked) payload bytes; null for a frame without payload */
     public byte[] getBinaryPayload() {
         return this.payload;
     }
@@ -185,6 +204,8 @@ public class WebSocketFrame {
 
     // --------------------------------SERIALIZATION---------------------------
 
+    /** the payload decoded as strict UTF-8; only meaningful for text
+     * frames (other opcodes decode their bytes verbatim) */
     public String getTextPayload() {
         if (this._payloadString == null) {
             try {
@@ -196,6 +217,7 @@ public class WebSocketFrame {
         return this._payloadString;
     }
 
+    /** true when this frame terminates a message (not a continuation) */
     public boolean isFin() {
         return this.fin;
     }
@@ -346,6 +368,8 @@ public class WebSocketFrame {
 
     // ------------------------------------------------------------------------
 
+    /** serialize this frame (header, length, optional mask, payload) and
+     * flush the stream */
     public void write(OutputStream out) throws IOException {
         byte header = 0;
         if (this.fin) {

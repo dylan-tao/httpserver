@@ -1,7 +1,7 @@
 package robaho.net.httpserver.extras;
+import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
+import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
 
-import robaho.net.httpserver.NoSyncBufferedInputStream;
-import robaho.net.httpserver.NoSyncBufferedOutputStream;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;

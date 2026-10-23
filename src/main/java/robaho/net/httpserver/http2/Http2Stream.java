@@ -1,8 +1,8 @@
 package robaho.net.httpserver.http2;
+import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
-import robaho.net.httpserver.NoSyncBufferedOutputStream;
-import robaho.net.httpserver.OptimizedHeaders;
 import robaho.net.httpserver.ServerConfig;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.DataFrame;
@@ -42,7 +42,7 @@ public class Http2Stream {
 
     private final Http2Connection connection;
     private final Logger logger;
-    private final robaho.net.httpserver.NoSyncBufferedOutputStream outputStream;
+    private final robaho.net.httpserver.internal.NoSyncBufferedOutputStream outputStream;
     private final DataIn dataIn;
     private final Http2Connection.StreamHandler handler;
     private final Headers requestHeaders;

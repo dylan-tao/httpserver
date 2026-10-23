@@ -33,6 +33,10 @@ package robaho.net.httpserver.websockets;
  * #L%
  */
 
+/**
+ * WebSocket frame opcodes (RFC 6455 5.2): Continuation, Text, Binary and
+ * the control frames Close, Ping, Pong.
+ */
 public enum OpCode {
     Continuation(0),
     Text(1),
@@ -44,6 +48,7 @@ public enum OpCode {
     // cached: values() clones the array, and find() runs per received frame
     private static final OpCode[] _values = OpCode.values();
 
+    /** the opcode for a wire value, or null for reserved/unknown values */
     public static OpCode find(byte value) {
         for (OpCode opcode : _values) {
             if (opcode.getValue() == value) {

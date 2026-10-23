@@ -1,4 +1,5 @@
-package robaho.net.httpserver;
+package robaho.net.httpserver.internal;
+
 
 import java.io.FilterOutputStream;
 import java.io.IOException;

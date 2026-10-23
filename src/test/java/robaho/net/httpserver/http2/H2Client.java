@@ -231,6 +231,22 @@ class H2Client implements AutoCloseable {
         return sendRequest(streamId, method, path, endStream);
     }
 
+    /** open a new stream with extra header pairs appended to the pseudo
+     * headers (e.g. content-length for the request-body-cap tests) */
+    int sendRequest(String method, String path, boolean endStream, String... extraNameValues) throws IOException {
+        int streamId = nextStreamId;
+        nextStreamId += 2;
+        String[] all = new String[8 + extraNameValues.length];
+        all[0] = ":method"; all[1] = method;
+        all[2] = ":scheme"; all[3] = "http";
+        all[4] = ":path"; all[5] = path;
+        all[6] = ":authority"; all[7] = "127.0.0.1";
+        System.arraycopy(extraNameValues, 0, all, 8, extraNameValues.length);
+        byte[] block = encodeHeaders(all);
+        writeFrame(TYPE_HEADERS, FLAG_END_HEADERS | (endStream ? FLAG_END_STREAM : 0), streamId, block);
+        return streamId;
+    }
+
     /** send a request on an explicitly chosen stream id (multi-lane
      * benchmarks: ids must be odd and strictly increasing per connection) */
     int sendRequest(int streamId, String method, String path, boolean endStream) throws IOException {

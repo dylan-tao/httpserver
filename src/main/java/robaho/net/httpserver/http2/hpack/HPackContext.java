@@ -1,7 +1,8 @@
 package robaho.net.httpserver.http2.hpack;
+import robaho.net.httpserver.internal.OpenAddressMap;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
-import robaho.net.httpserver.OpenAddressMap;
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.frame.FrameFlag;
@@ -281,7 +282,7 @@ public class HPackContext {
         // raw iteration when possible: forEach() wraps every single-valued
         // header in a mutable ArrayList (its contract), which is pure
         // allocation on the encoder's read-only path
-        if (headers instanceof robaho.net.httpserver.OptimizedHeaders optimized) {
+        if (headers instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
             optimized.forEachRaw((name, v) -> {
                 if (name.charAt(0) == ':') {
                     return;

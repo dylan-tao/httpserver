@@ -38,6 +38,8 @@
 
     <scm>
         <url>https://github.com/robaho/httpserver.git</url>
+        <connection>scm:git:https://github.com/robaho/httpserver.git</connection>
+        <developerConnection>scm:git:git@github.com:robaho/httpserver.git</developerConnection>
     </scm>
 
     <properties>
@@ -76,6 +78,15 @@
                                  module) instead of patching them into the named
                                  module, where those reads are illegal -->
                             <useModulePath>false</useModulePath>
+                    <!-- surefire >= 3.5 applies its default *Test include
+                         filter to suite-listed classes too, silently dropping
+                         the JDK-derived default-package tests that do not
+                         carry the Test suffix (InputNotRead, ZeroLength...);
+                         widen the filter so the testng.xml class list is
+                         authoritative -->
+                    <includes>
+                        <include>**/*.java</include>
+                    </includes>
                         </configuration>
                     </execution>
                 </executions>
@@ -110,11 +121,27 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
+                <version>3.6.0</version>
                 <configuration>
                     <suiteXmlFiles>
                         <suiteXmlFile>src/test/resources/testng.xml</suiteXmlFile>
                     </suiteXmlFiles>
+                    <!-- the test sources (incl. the vendored jdk.test.lib)
+                         compile onto the CLASSPATH (see the compiler config);
+                         keep surefire running them there too. without this,
+                         surefire >= 3.6 puts target/classes on the module
+                         path and the vendored test lib becomes unexported
+                         module content (IllegalAccessError) -->
+                    <useModulePath>false</useModulePath>
+                    <!-- surefire >= 3.5 applies its default *Test include
+                         filter to suite-listed classes too, silently dropping
+                         the JDK-derived default-package tests that do not
+                         carry the Test suffix (InputNotRead, ZeroLength...);
+                         widen the filter so the testng.xml class list is
+                         authoritative -->
+                    <includes>
+                        <include>**/*.java</include>
+                    </includes>
                     <!-- compact object headers (JEP 450, JDK 24+): the test JVM
                          runs with them so the code is exercised in that mode -->
                     <argLine>--add-opens=jdk.httpserver/com.sun.net.httpserver=ALL-UNNAMED -XX:+UseCompactObjectHeaders</argLine>
@@ -123,8 +150,37 @@
                         <com.sun.net.httpserver.HttpServerProvider>robaho.net.httpserver.DefaultHttpServerProvider</com.sun.net.httpserver.HttpServerProvider>
                         <robaho.net.httpserver.http2OverSSL>true</robaho.net.httpserver.http2OverSSL>
                         <robaho.net.httpserver.http2OverNonSSL>true</robaho.net.httpserver.http2OverNonSSL>
+                        <!-- opt-in request body cap, exercised by
+                             RequestBodyCapTest's four 413/kill paths. 1MB is
+                             above every other test's request body (largest
+                             is the 256KB h2 upload) so only the cap tests
+                             hit it -->
+                        <robaho.net.httpserver.maxRequestBodySize>1048576</robaho.net.httpserver.maxRequestBodySize>
                     </systemPropertyVariables>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-java</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <!-- fail fast with a clear message on an older
+                                 JDK instead of a compiler release error -->
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[25,)</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <plugin>

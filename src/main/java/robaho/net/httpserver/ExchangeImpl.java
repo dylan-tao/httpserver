@@ -24,6 +24,7 @@
  */
 
 package robaho.net.httpserver;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpPrincipal;
@@ -371,14 +372,29 @@ class ExchangeImpl {
     static final Charset ISO_CHARSET = StandardCharsets.ISO_8859_1;
     private static final byte[] STATUS_101 = "HTTP/1.1 101 Switching Protocols\r\n".getBytes(ISO_CHARSET);
     /** status lines are immutable per code: cache the encoded bytes instead of
-     * rebuilding the String (and re-encoding it) on every response */
-    private static final java.util.concurrent.ConcurrentHashMap<Integer, byte[]> STATUS_LINES = new java.util.concurrent.ConcurrentHashMap<>();
+     * rebuilding the String (and re-encoding it) on every response. a plain
+     * array indexed by code, not a ConcurrentHashMap: the map boxed the int
+     * key on every response (all real codes are above the Integer cache
+     * range), and codes are dense in [100, 599]. the racy store is benign:
+     * both racers encode the same immutable value and the reference store is
+     * atomic */
+    private static final byte[][] STATUS_LINES = new byte[600][];
 
     private static byte[] statusLineBytes(int code) {
         if (code == 101) {
             return STATUS_101;
         }
-        return STATUS_LINES.computeIfAbsent(code, c -> ("HTTP/1.1 " + c + HttpStatus.msg(c) + "\r\n").getBytes(ISO_CHARSET));
+        if (code < 100 || code >= STATUS_LINES.length) {
+            // out of range (sendResponseHeaders validates >= 100, but a
+            // custom exchange could bypass): fall back to per-call encoding
+            return ("HTTP/1.1 " + code + HttpStatus.msg(code) + "\r\n").getBytes(ISO_CHARSET);
+        }
+        byte[] line = STATUS_LINES[code];
+        if (line == null) {
+            line = ("HTTP/1.1 " + code + HttpStatus.msg(code) + "\r\n").getBytes(ISO_CHARSET);
+            STATUS_LINES[code] = line;
+        }
+        return line;
     }
 
     /** encode a String as ISO-8859-1 directly into the target buffer (zero

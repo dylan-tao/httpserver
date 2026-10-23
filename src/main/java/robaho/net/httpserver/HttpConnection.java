@@ -24,6 +24,9 @@
  */
 
 package robaho.net.httpserver;
+import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
+import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
+
 
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;

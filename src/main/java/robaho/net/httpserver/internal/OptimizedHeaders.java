@@ -1,4 +1,6 @@
-package robaho.net.httpserver;
+package robaho.net.httpserver.internal;
+import robaho.net.httpserver.internal.OpenAddressMap;
+
 
 import com.sun.net.httpserver.Headers;
 

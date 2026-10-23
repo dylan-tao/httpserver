@@ -35,6 +35,10 @@ package robaho.net.httpserver.websockets;
 
 import java.io.IOException;
 
+/**
+ * A WebSocket protocol violation carrying the close code and reason that
+ * the connection should be closed with (RFC 6455 7.4).
+ */
 public class WebSocketException extends IOException {
 
     private static final long serialVersionUID = 1L;

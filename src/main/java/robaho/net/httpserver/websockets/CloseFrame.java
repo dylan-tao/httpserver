@@ -36,6 +36,11 @@ package robaho.net.httpserver.websockets;
 import java.nio.charset.CharacterCodingException;
 import java.util.Arrays;
 
+/**
+ * A Close control frame (RFC 6455 5.5.1): the payload carries a 2-byte
+ * close code and an optional UTF-8 reason, truncated to the 125-byte
+ * control frame cap without splitting a UTF-8 sequence.
+ */
 public class CloseFrame extends WebSocketFrame {
 
     private static byte[] generatePayload(CloseCode code, String closeReason) throws CharacterCodingException {
@@ -74,10 +79,13 @@ public class CloseFrame extends WebSocketFrame {
 
     private String _closeReason;
 
+    /** build a Close frame to send: code and reason are encoded into the
+     * payload, the reason truncated to 123 bytes at a UTF-8 boundary */
     public CloseFrame(CloseCode code, String closeReason) throws CharacterCodingException {
         super(OpCode.Close, true, generatePayload(code, closeReason));
     }
 
+    /** parse a received Close frame: extracts the close code and reason */
     public CloseFrame(WebSocketFrame wrap) throws CharacterCodingException {
         super(wrap);
         assert wrap.getOpCode() == OpCode.Close;
@@ -88,11 +96,13 @@ public class CloseFrame extends WebSocketFrame {
         }
     }
 
+    /** the received close code, or null when the payload carried none */
     public CloseCode getCloseCode() {
         return this._closeCode;
     }
 
 
+    /** the received close reason, or null */
     public String getCloseReason() {
         return this._closeReason;
     }
