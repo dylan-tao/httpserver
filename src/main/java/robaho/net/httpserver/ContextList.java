@@ -82,7 +82,21 @@ class ContextList {
         // only cache exact matches, otherwise path parameters will
         // explode memory
         if(ctx!=null && ctx.getPath().equals(path)) {
-            cache.put(key,ctx);
+            // put under the remove lock: a removeContext landing between the
+            // miss-scan and this put would otherwise permanently cache the
+            // removed handler (the identity-based invalidation can never
+            // match a later re-registered context, so the stale entry is
+            // unfixable). under the lock, a concurrent remove either waits
+            // and invalidates our entry, or has already removed the context
+            // and the contains() check suppresses the put
+            lock.lock();
+            try {
+                if (list.contains(ctx)) {
+                    cache.put(key, ctx);
+                }
+            } finally {
+                lock.unlock();
+            }
         }
         return ctx;
     }

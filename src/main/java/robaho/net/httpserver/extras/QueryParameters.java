@@ -25,9 +25,17 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
             if (parts.length == 0 || parts[0].length() == 0) {
                 continue;
             }
-            // decode the key as well as the value, so "%61=1" and "a=1" group together
-            String key = URLDecoder.decode(parts[0], encoding);
-            qp.computeIfAbsent(key, k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
+            // decode the key as well as the value, so "%61=1" and "a=1" group together.
+            // URLDecoder throws an UNCHECKED IllegalArgumentException on
+            // malformed escapes ("a=%zz") - declared only the checked
+            // UnsupportedEncodingException, so callers of the declared type
+            // got an uncaught runtime exception
+            try {
+                String key = URLDecoder.decode(parts[0], encoding);
+                qp.computeIfAbsent(key, k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
+            } catch (IllegalArgumentException e) {
+                throw new UnsupportedEncodingException("malformed percent escape in query: " + e.getMessage());
+            }
         }
         return qp;
     }

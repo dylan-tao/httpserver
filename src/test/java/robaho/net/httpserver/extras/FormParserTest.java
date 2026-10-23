@@ -51,16 +51,16 @@ public class FormParserTest {
         Assert.assertTrue(params.isEmpty());
     }
 
-    /** a key without '=' carries no value and is absent from the decoded
-     *  result (the original split-based parser dropped it in the decode phase
-     *  as well: its value list is empty); the trailing '&' must NOT create an
-     *  empty-key entry (split() drops trailing empty segments) */
+    /** a key without '=' is kept with an empty value (servlet semantics,
+     *  matching QueryParameters: the old parser dropped it in the decode
+     *  phase); the trailing '&' must NOT create an empty-key entry (split()
+     *  drops trailing empty segments) */
     @Test
     public void testValuelessKeyAndTrailingAmpersand() throws IOException {
         Map<String, List<String>> params = FormParser.parse("UTF-8",
             new ByteArrayInputStream("flag&x=1&".getBytes(StandardCharsets.UTF_8)));
-        Assert.assertEquals(params.size(), 1);
-        Assert.assertNull(params.get("flag"), "valueless keys are absent from the result");
+        Assert.assertEquals(params.size(), 2);
+        Assert.assertEquals(params.get("flag"), List.of(""), "valueless keys are kept with an empty value");
         Assert.assertEquals(params.get("x"), List.of("1"));
     }
 

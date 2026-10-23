@@ -45,7 +45,9 @@ public class CloseFrame extends WebSocketFrame {
 
     private static byte[] generatePayload(CloseCode code, String closeReason) throws CharacterCodingException {
         if (code != null) {
-            byte[] reasonBytes = text2Binary(closeReason);
+            // a null reason is a legal close(code, null) call: the old code
+            // NPE'd in text2Binary
+            byte[] reasonBytes = text2Binary(closeReason == null ? "" : closeReason);
             // a control frame payload is limited to 125 bytes (2 code + 123 reason)
             reasonBytes = truncateToValidUtf8(reasonBytes, 123);
             byte[] payload = new byte[reasonBytes.length + 2];

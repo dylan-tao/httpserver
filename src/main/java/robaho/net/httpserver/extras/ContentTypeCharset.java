@@ -30,6 +30,11 @@ public class ContentTypeCharset {
                 String parameter = part.trim();
                 if (parameter.regionMatches(true, 0, "charset=", 0, "charset=".length())) {
                     String charset = parameter.substring("charset=".length()).trim();
+                    // a quoted value (RFC 2045 legal) was returned WITH the
+                    // quotes: Charset.forName("\"utf-8\"") throws
+                    if (charset.length() >= 2 && charset.startsWith("\"") && charset.endsWith("\"")) {
+                        charset = charset.substring(1, charset.length() - 1);
+                    }
                     if (!charset.isEmpty()) {
                         return charset;
                     }

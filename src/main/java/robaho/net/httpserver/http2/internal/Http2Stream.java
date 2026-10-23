@@ -177,6 +177,12 @@ public class Http2Stream {
             } catch (IOException e) {
                 logger.log(Level.DEBUG, () -> "error closing dataIn on reset stream " + streamId);
             }
+            // release the in-progress counts here: the peer's RST cut the
+            // stream off before the handler reached the output close path,
+            // and the handler's own close() will no-op on the lost remove
+            // race - without this the counts leak and the connection's
+            // final flush never fires again
+            releaseCounters();
             if (thread != null) {
                 thread.interrupt();
             }
@@ -236,6 +242,26 @@ public class Http2Stream {
         rstReceived = true;
         halfClosed = true;
         close();
+    }
+
+    /** one-shot guard releasing this stream's requestsInProgress and
+     * activeStreams counts: the release must happen exactly once, whether it
+     * goes through the output-stream close path (handler thread) or the RST
+     * early-return path (reader thread) - the RST path previously never
+     * released, so requestsInProgress never reached 0 again and the
+     * connection-level final flush was disabled for the connection's
+     * remaining lifetime */
+    private final java.util.concurrent.atomic.AtomicBoolean counted = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** release this stream's in-progress accounting; true when this call was
+     * the one that released it */
+    boolean releaseCounters() {
+        if (!counted.compareAndSet(false, true)) {
+            return false;
+        }
+        connection.requestsInProgress.decrementAndGet();
+        if (Http2Stats.ENABLED) connection.stats.activeStreams.decrementAndGet();
+        return true;
     }
 
     public void processFrame(BaseFrame frame) throws Http2Exception, IOException {
@@ -310,8 +336,15 @@ public class Http2Stream {
         case WINDOW_UPDATE:
             int windowSizeIncrement = ((WindowUpdateFrame)frame).getWindowSizeIncrement();
             if(sendWindow.addAndGet(windowSizeIncrement)> Integer.MAX_VALUE) {
-                connection.sendResetStream(Http2ErrorCode.FLOW_CONTROL_ERROR, streamId);
-                close();
+                // resetAndClose (not sendResetStream+close): rstReceived must
+                // be set BEFORE close() so the reader-thread close neither
+                // emits frames after the RST (RFC 7540 5.1 closed state),
+                // parks in the flow-control wait (the reader is the only
+                // thread that can process the WINDOW_UPDATE that would
+                // unpark it - a permanent connection wedge), nor detaches a
+                // buffer a handler thread may still be writing into
+                resetAndClose(Http2ErrorCode.FLOW_CONTROL_ERROR);
+                break;
             }
             // wake a writer blocked on the send window immediately
             wakeupWriter();
@@ -588,18 +621,30 @@ public class Http2Stream {
                     }
                     // still release the in-progress count: a leaked increment
                     // would stop the final flush from ever firing
-                    connection.requestsInProgress.decrementAndGet();
+                    releaseCounters();
                     return;
                 }
                 if(rstReceived) {
                     // the peer reset this stream: no further frames may be
                     // sent for it (RFC 7540 5.1, closed state)
-                    connection.requestsInProgress.decrementAndGet();
+                    releaseCounters();
+                    return;
+                }
+                if (!headersSent.get()) {
+                    // the handler never sent response headers (it died, or
+                    // forgot): HEADERS cannot be synthesized without :status,
+                    // so reset the stream instead of attempting the encode.
+                    // the old path let the encode IOException propagate into
+                    // Http2Stream.close's catch, which escalated it to a
+                    // whole-connection teardown - killing every concurrent
+                    // stream for one broken handler
+                    connection.sendResetStream(Http2ErrorCode.INTERNAL_ERROR, streamId);
+                    releaseCounters();
                     return;
                 }
                 writeResponseHeaders(false);
                 connection.lock();
-                boolean lastRequest = connection.requestsInProgress.decrementAndGet() == 0;
+                boolean lastRequest = releaseCounters() && connection.requestsInProgress.get() == 0;
                 try {
                     if(!streamOutputClosed) {
                         FrameHeader.encodeInto(connection.frameHeaderScratch, 0, FrameType.DATA, END_STREAM, streamId);
@@ -615,7 +660,8 @@ public class Http2Stream {
                 }
                 dataIn.close();
             } finally {
-                if (Http2Stats.ENABLED) connection.stats.activeStreams.decrementAndGet();
+                // activeStreams is released by releaseCounters() (shared with
+                // the RST path); this finally only chains the stream close
                 Http2Stream.this.close();
             }
         }

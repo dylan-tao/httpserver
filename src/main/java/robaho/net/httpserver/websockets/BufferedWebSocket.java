@@ -98,7 +98,13 @@ public abstract class BufferedWebSocket extends WebSocket {
         // drain task a moment to flush before the streams are closed.
         // no lock needed here: the once-only close transition is enforced by
         // the locked super.doClose; this body is safe to run twice.
-        queue.offer(POISON_PILL);
+        // if the queue is full the exit signal would be dropped and the
+        // drain task only exits via the future timeout + interrupt, losing
+        // the queued frames: make room by dropping the OLDEST frame
+        if (!queue.offer(POISON_PILL)) {
+            queue.poll();
+            queue.offer(POISON_PILL);
+        }
         if (Thread.currentThread() != drainThread) {
             // called from the read/user thread: wait for the drain task.
             // from the drain task itself this would deadlock on our own
@@ -143,18 +149,31 @@ public abstract class BufferedWebSocket extends WebSocket {
      *  before the streams are closed */
     @Override
     public void sendFrame(WebSocketFrame frame) throws IOException {
+        if (state == WebSocketLifecycle.CLOSED) {
+            // after the drain task exited there is no consumer: frames would
+            // be silently lost, and once the queue fills, put() blocks the
+            // producer virtual thread forever (nobody holds the future to
+            // interrupt it). fail fast like the unbuffered sendFrame does
+            throw new IOException("websocket is closed");
+        }
         var payload = frame.getBinaryPayload();
         int frameBytes = payload == null ? 0 : payload.length;
         int cap = robaho.net.httpserver.ServerConfig.maxBufferedWebSocketBytes();
         if (cap != 0) {
             // bound the retained bytes, not just the frame count: a stalled
             // consumer with 1024 queued frames could otherwise pin
-            // 1024 x frame-size of memory
-            long total = queuedBytes.addAndGet(frameBytes);
-            if (total > cap) {
-                queuedBytes.addAndGet(-frameBytes);
-                throw new WebSocketException(CloseCode.MessageTooBig,
-                    "buffered frames exceed the " + cap + " byte queue cap");
+            // 1024 x frame-size of memory. CAS loop, not add-then-rollback:
+            // a concurrent in-cap producer observing an over-cap producer's
+            // transient inflated total was wrongly rejected
+            while (true) {
+                long current = queuedBytes.get();
+                if (current + frameBytes > cap) {
+                    throw new WebSocketException(CloseCode.MessageTooBig,
+                        "buffered frames exceed the " + cap + " byte queue cap");
+                }
+                if (queuedBytes.compareAndSet(current, current + frameBytes)) {
+                    break;
+                }
             }
         }
         pending.incrementAndGet();

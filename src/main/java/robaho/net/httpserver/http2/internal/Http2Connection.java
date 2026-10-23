@@ -173,7 +173,9 @@ public class Http2Connection {
 
     final AtomicLong sendWindow = new AtomicLong(SettingParameter.INITIAL_WINDOW_SIZE);
     final AtomicInteger receiveWindow = new AtomicInteger((int) SettingParameter.INITIAL_WINDOW_SIZE);
-    final AtomicInteger requestsInProgress = new AtomicInteger();
+    /** accessed from the server core (cleaner/stop busy checks) across
+     * packages: public within the non-exported internal package */
+    public final AtomicInteger requestsInProgress = new AtomicInteger();
 
     final Http2Stats stats;
 
@@ -345,6 +347,9 @@ public class Http2Connection {
         // caller, so the 9-byte buffer is reused across frames
         byte[] headerScratch = new byte[FrameHeader.LENGTH];
         while (!httpConnection.isClosed()) {
+            // the activity timestamp as of BEFORE this frame's bytes were
+            // read: a PING ACK must not count as activity (see the PING case)
+            long preFrameActivity = httpConnection.lastActivityTime();
             BaseFrame frame = FrameParser.deserialize(inputStream, headerScratch);
 
             int streamId = frame.getHeader().streamIdentifier();
@@ -386,7 +391,17 @@ public class Http2Connection {
                     }
                     throw new IOException("received GOAWAY from remote " + goaway.errorCode);
                 case PING:
-                    if (!frame.getHeader().flags().contains(FrameFlag.ACK)) {
+                    if (frame.getHeader().flags().contains(FrameFlag.ACK)) {
+                        // our own keepalive ping's ACK: it must NOT count as
+                        // connection activity, or an idle h2 connection that
+                        // faithfully ACKs pings never appears idle to the
+                        // cleaner - never shrunk, never idle-closed, never
+                        // counted toward maxIdleConnections, while h1
+                        // keep-alive connections ARE reaped. restore the
+                        // pre-read timestamp, mirroring what the ping task
+                        // does around its own write
+                        httpConnection.setLastActivityTime(preFrameActivity);
+                    } else {
                         sendPingAck((PingFrame) frame);
                     }
                     continue;

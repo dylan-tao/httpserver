@@ -87,6 +87,11 @@ public class FormParser {
             List<String> values = params.computeIfAbsent(key, k -> new ArrayList<>());
             if (value != null) {
                 values.add(value);
+            } else {
+                // a parameter without '=' ("agree&name=x"): servlet
+                // semantics (and QueryParameters) keep it with an empty
+                // value instead of dropping it
+                values.add("");
             }
             paramCount++;
             if (MAX_PARAMS != 0 && paramCount > MAX_PARAMS) {

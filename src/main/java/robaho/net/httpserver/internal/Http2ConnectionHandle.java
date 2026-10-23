@@ -25,6 +25,14 @@ public interface Http2ConnectionHandle {
     /** record that another request has started on this connection */
     void incrementRequestCount();
 
+    /** the last socket activity timestamp (for idle accounting); the h2
+     * reader restores it around PING ACK processing so keepalive ACKs do
+     * not keep an idle connection alive */
+    long lastActivityTime();
+
+    /** overwrite the last activity timestamp */
+    void setLastActivityTime(long t);
+
     /** the local socket address of this connection */
     java.net.InetSocketAddress getLocalAddress();
 

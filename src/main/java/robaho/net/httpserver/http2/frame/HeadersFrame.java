@@ -86,10 +86,25 @@ public class HeadersFrame extends BaseFrame {
 
         HeadersFrame headersFrame = new HeadersFrame(header);
 
+        // validate the declared flag fields fit the frame BEFORE reading
+        // them: PADDED needs >=1 byte, PRIORITY >=5, both >=6. the old code
+        // indexed straight into frameBody, so a truncated frame escaped as
+        // an uncaught ArrayIndexOutOfBoundsException that tore the
+        // connection down without a GOAWAY (RFC 7540 6.2 requires
+        // FRAME_SIZE_ERROR)
+        boolean padded = header.flags().contains(FrameFlag.PADDED);
+        boolean priority = header.flags().contains(FrameFlag.PRIORITY);
+        int min = (padded ? 1 : 0) + (priority ? 5 : 0);
+        if (frameBody.length < min) {
+            throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
+        }
+
         //check for PADDED flag and if set then store padding length
-        if (header.flags().contains(FrameFlag.PADDED)) {
+        if (padded) {
             int padLength = BinaryCodec.readInt(frameBody, paramIndex, 1);
-            if(padLength >= header.length()) {
+            // the padding must fit AFTER the pad-length octet and the
+            // priority fields, not merely inside the whole frame
+            if (padLength + min >= header.length()) {
                 throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
             }
             headersFrame.setPadLength(padLength);

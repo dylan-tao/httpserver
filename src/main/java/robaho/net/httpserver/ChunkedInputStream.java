@@ -94,12 +94,13 @@ class ChunkedInputStream extends LeftOverInputStream {
             if (gotCR) {
                 if (ch == LF) {
                     return numeric(lenArr, lenSize);
-                } else {
-                    gotCR = false;
                 }
-                if (!endOfLen) {
-                    lenArr[lenSize++] = ch;
-                }
+                // a bare CR inside the chunk-size field: RFC 9112 4.1 allows
+                // only hex digits, extensions and CRLF. the old lenient
+                // parse (inherited from the JDK) glued the bytes around the
+                // CR into one size ("1\r2" parsed as 0x12), desyncing from
+                // strict intermediaries
+                throw new IOException("bare CR in chunk header");
             } else {
                 if (ch == CR) {
                     gotCR = true;
@@ -161,11 +162,19 @@ class ChunkedInputStream extends LeftOverInputStream {
      */
     private void consumeTrailer() throws IOException {
         int maxTrailerLines = 100;
+        // per-line length cap: the line COUNT was bounded but each line's
+        // length was not, so a client streaming an endless trailer line
+        // (no LF) pinned the connection VT on an already-completed response
+        int maxLineLength = ServerConfig.getMaxReqLineSize();
         while (maxTrailerLines-- > 0) {
             boolean sawCR = false;
             boolean emptyLine = true;
+            int lineLength = 0;
             int c;
             while ((c = in.read()) != -1) {
+                if (++lineLength > maxLineLength) {
+                    throw new IOException("chunk trailer line too long (limit " + maxLineLength + " bytes)");
+                }
                 if (sawCR) {
                     if (c == LF) {
                         break; /* end of line */

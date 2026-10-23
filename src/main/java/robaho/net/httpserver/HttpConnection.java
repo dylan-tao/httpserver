@@ -77,7 +77,11 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     /** the h2 protocol handler for h2c/h2 connections, set when the
      * connection is upgraded; null for plain h1. lets the idle cleaner
      * reach the h2 stream buffer pool for shrinking */
-    robaho.net.httpserver.http2.internal.Http2Connection http2Connection;
+    // volatile: written by the connection's VT after registration into
+    // allConnections; the cleaner (Timer thread) reads it to pick the h2
+    // shrink path - a stale null would route it through the UNSYNCHRONIZED
+    // h1 buffer shrink against concurrent h2 frame writes
+    volatile robaho.net.httpserver.http2.internal.Http2Connection http2Connection;
 
     final AtomicLong requestCount = new AtomicLong();
 
@@ -136,6 +140,16 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
 
     public SSLSession getSSLSession() {
         return (socket instanceof SSLSocket ssl) ? ssl.getSession() : null;
+    }
+
+    @Override
+    public long lastActivityTime() {
+        return lastActivityTime;
+    }
+
+    @Override
+    public void setLastActivityTime(long t) {
+        lastActivityTime = t;
     }
 
     public boolean isSSL() {

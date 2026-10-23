@@ -258,6 +258,12 @@ class Request {
             // obs-fold: a line starting with whitespace continues the pending
             // value (RFC 9112 5.2: replace obs-fold with SP)
             if (raw[0] == ' ' || raw[0] == '\t') {
+                if (key.isEmpty() && value.isEmpty()) {
+                    // a continuation line before any header field: RFC 9112
+                    // 5.2 makes the whole message malformed. the old code
+                    // flushed it as a header with an EMPTY NAME
+                    throw new IOException("obs-fold line before any header field");
+                }
                 int start = 0;
                 while (start < end && (raw[start] == ' ' || raw[start] == '\t')) {
                     start++;

@@ -179,6 +179,13 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 if (len == -1) {
                     break;
                 }
+                // the same incremental body cap the read paths enforce:
+                // skip() used to bypass it, so a handler discarding the body
+                // via skip() consumed an unbounded chunked stream
+                long cap = ServerConfig.getMaxRequestBodySize();
+                if (cap >= 0 && (totalRead += len) > cap) {
+                    throw new IOException("request body exceeds the configured maximum of " + cap + " bytes");
+                }
                 remaining -= len;
             }
             return n - remaining;
@@ -251,8 +258,25 @@ abstract class LeftOverInputStream extends FilterInputStream {
                     continue;
                 }
                 t.connection.drainingAt = CachedClock.now();
-                int len = (int) Math.min(Math.min(drainBuffer.length, available), l);
-                len = readImpl(drainBuffer, 0, len);
+                // the buffered bytes may not complete the chunk framing
+                // (a withheld CRLF makes readImpl block in a socket read):
+                // bound it with the same SoTimeout the empty branch uses,
+                // or the documented 1s drain bound is bypassed and the
+                // connection VT is pinned until the cleaner's 15s sweep
+                var socket = t.connection.getSocket();
+                int previousTimeout = socket.getSoTimeout();
+                int len;
+                try {
+                    socket.setSoTimeout((int) Math.min(
+                        deadline - System.currentTimeMillis() + MAX_DRAIN_WAIT_MILLIS,
+                        MAX_DRAIN_WAIT_MILLIS));
+                    len = (int) Math.min(Math.min(drainBuffer.length, available), l);
+                    len = readImpl(drainBuffer, 0, len);
+                } catch (java.net.SocketTimeoutException e) {
+                    break;
+                } finally {
+                    socket.setSoTimeout(previousTimeout);
+                }
                 if (len == -1) {
                     eof = true;
                     return true;

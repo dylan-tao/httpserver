@@ -108,6 +108,9 @@ class ServerImpl {
     // some request in the past
     static final long IDLE_INTERVAL = ServerConfig.getIdleIntervalMillis();
     private final Timer timer;
+    /** separate from the cleaner timer: ping writes can block on a stalled
+     * peer's connection lock and must not freeze connection management */
+    private Timer pingTimer;
     private final Logger logger;
     private Thread dispatcherThread;
 
@@ -140,7 +143,13 @@ class ServerImpl {
         // note: the shared CachedClock clock runs on its own daemon timer
         // (see CachedClock) so it survives this server instance
         if (H2_PING_INTERVAL_MILLIS > 0) {
-            timer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
+            // a SEPARATE timer: the ping write takes the connection lock,
+            // which a stalled h2 download can hold in a blocking socket
+            // write for the TCP retransmission timeout. sharing the
+            // cleaner's single-threaded timer let that freeze idle-close,
+            // maxReqTime and maxIdleConnections enforcement server-wide
+            pingTimer = new Timer("h2-keepalive-ping", true);
+            pingTimer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
         }
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
@@ -283,10 +292,14 @@ class ServerImpl {
         }
         long latest = System.currentTimeMillis() + delay * 1000L;
         while (System.currentTimeMillis() < latest) {
-            if (activeExchanges.get() == 0) {
-                // all in-flight exchanges completed and no new ones can
-                // start (finished is already set): return early instead of
-                // sleeping out the full delay (JDK parity)
+            if (activeExchanges.get() == 0 && noConnectionBusy()) {
+                // all in-flight exchanges completed, no connection is
+                // parsing or handling a request, and no new ones can start
+                // (finished is already set): return early instead of
+                // sleeping out the full delay. the busy check is required:
+                // activeExchanges only increments at doFilter entry, so a
+                // request mid-parse (or an h2 stream mid-flight) was
+                // invisible to the old check and was abandoned by the sweep
                 break;
             }
             // sleep the remaining interval (in coarse steps) instead of a
@@ -305,6 +318,9 @@ class ServerImpl {
         allConnections.clear();
         connectionCount.set(0);
         timer.cancel();
+        if (pingTimer != null) {
+            pingTimer.cancel();
+        }
 
         if (dispatcherThread != null && dispatcherThread != Thread.currentThread()) {
             try {
@@ -375,7 +391,7 @@ class ServerImpl {
                         executor.execute(() -> {
                         try {
                             acceptConnection(s);
-                        } catch (IOException t) {
+                        } catch (IOException | RuntimeException t) {
                             // socket-level failures during connection setup are
                             // client-side noise, not server faults: an RST'd
                             // connection fails setTcpNoDelay with EINVAL on
@@ -391,7 +407,12 @@ class ServerImpl {
                             }
                         }
                     });
-                    } catch (RejectedExecutionException e) {
+                    } catch (RuntimeException e) {
+                        // REE is the standard overload signal; any other
+                        // RuntimeException from a user-supplied executor
+                        // (custom bounded pools throw ISE) used to escape and
+                        // kill the accept loop permanently - the server kept
+                        // "started" while accepting nothing
                         s.close();
                     }
                 } catch (IOException e) {
@@ -487,6 +508,15 @@ class ServerImpl {
             try {
                 allConnections.add(c);
                 connectionCount.incrementAndGet();
+                if (isFinishing()) {
+                    // stop()'s sweep may have completed between the entry
+                    // check and this registration (the SSL handshake can
+                    // stretch the window by seconds): nothing would ever
+                    // close this connection - the sweep is done and the
+                    // cleaner timer is cancelled. close it here
+                    closeConnection(c);
+                    return;
+                }
 
                 if (http2) {
                     if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
@@ -508,6 +538,18 @@ class ServerImpl {
 
     Logger getLogger() {
         return logger;
+    }
+
+    /** true when no connection is parsing or handling a request (h1
+     * inRequest, or h2 streams in progress) - used by stop(delay)'s
+     * early-exit so mid-flight requests are not abandoned */
+    private boolean noConnectionBusy() {
+        for (var c : allConnections) {
+            if (c.inRequest || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void closeConnection(HttpConnection conn) {
@@ -1094,18 +1136,24 @@ class ServerImpl {
             long now = CachedClock.now();
 
             for (var c : allConnections) {
+                // h2 connections never set inRequest (their streams run on
+                // their own threads): treat an h2 connection with streams in
+                // progress as in-request, or the idle close would kill
+                // ACTIVE h2 streams at the idle timeout
+                boolean busy = c.inRequest
+                    || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
                 if (c.drainingAt != 0 && now- c.drainingAt >= IDLE_INTERVAL / 2) {
                     closeConnection(c);
                     continue;
                 }
-                if (now- c.lastActivityTime >= IDLE_INTERVAL && !c.inRequest) {
+                if (now- c.lastActivityTime >= IDLE_INTERVAL && !busy) {
                     logger.log(Level.DEBUG, "closing idle connection");
                     stats.idleCloseCount.incrementAndGet();
                     closeConnection(c);
-                } else if (MAX_REQ_TIME != -1 && c.inRequest && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
+                } else if (MAX_REQ_TIME != -1 && busy && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
                     logger.log(Level.WARNING, "closing connection due to request processing time");
                     closeConnection(c);
-                } else if (!c.inRequest && now - c.lastActivityTime >= IDLE_INTERVAL / 4) {
+                } else if (!busy && now - c.lastActivityTime >= IDLE_INTERVAL / 4) {
                     // idle but not yet closeable: release the 16KB input/output
                     // buffers and the line buffer. the connection stays alive
                     // (keep-alive) and the buffers re-allocate on the next

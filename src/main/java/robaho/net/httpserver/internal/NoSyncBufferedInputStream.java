@@ -307,6 +307,15 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
             // compare against the configured size, not buf.length: the buffer
             // is allocated lazily and may still be empty here
             if (len >= bufferSize) {
+                // this direct read can block exactly like fill()'s: run the
+                // pre-read flush hook here too. without it, a handler body
+                // read with a large buffer (readAllBytes) bypassed the hook,
+                // so a deferred pipelined response could sit in the output
+                // buffer behind a partially-received body forever
+                Runnable flushHook = preReadFlush;
+                if (flushHook != null) {
+                    flushHook.run();
+                }
                 return getInIfOpen().read(b, off, len);
             }
             fill();
