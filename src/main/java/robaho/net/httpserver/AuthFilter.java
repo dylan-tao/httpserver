@@ -34,18 +34,31 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.Principal;
 
+/**
+ * A {@link Filter} that authenticates every request through a JDK
+ * {@link Authenticator} before the handler runs: on success the
+ * authenticated {@link HttpPrincipal} is exposed via
+ * {@code HttpExchange.getPrincipal()}; on failure the filter answers with
+ * the authenticator's 401/403 result and the handler is never invoked.
+ * Register it as a context filter:
+ * {@code context.getFilters().add(new AuthFilter(authenticator))}.
+ */
 public class AuthFilter extends Filter {
 
     private Authenticator authenticator;
 
+    /** create the filter around the given authenticator; it may be
+     *  replaced later via {@link #setAuthenticator} */
     public AuthFilter(Authenticator authenticator) {
         this.authenticator = authenticator;
     }
 
+    /** the filter description shown in diagnostics */
     public String description() {
         return "Authentication filter";
     }
 
+    /** replace the authenticator (takes effect for subsequent requests) */
     public void setAuthenticator(Authenticator a) {
         authenticator = a;
     }

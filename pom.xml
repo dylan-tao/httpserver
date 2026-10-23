@@ -215,7 +215,10 @@
                 <artifactId>maven-javadoc-plugin</artifactId>
                 <version>3.11.1</version>
                 <configuration>
-                    <doclint>none</doclint>
+                    <!-- strict: the exported API surface is fully documented,
+                         so missing/syntax/reference problems fail the build
+                         instead of silently regressing -->
+                    <doclint>missing,syntax,reference</doclint>
                 </configuration>
                 <executions>
                     <execution>

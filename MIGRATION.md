@@ -52,10 +52,25 @@ package):
 | `robaho.net.httpserver.OptimizedHeaders` | `robaho.net.httpserver.internal.OptimizedHeaders` |
 | `robaho.net.httpserver.OpenAddressMap` | `robaho.net.httpserver.internal.OpenAddressMap` |
 | `robaho.net.httpserver.BloomSet` | `robaho.net.httpserver.internal.BloomSet` |
+| `robaho.net.httpserver.http2.Http2Connection` | `robaho.net.httpserver.http2.internal.Http2Connection` |
+| `robaho.net.httpserver.http2.Http2Stream` | `robaho.net.httpserver.http2.internal.Http2Stream` |
+| `robaho.net.httpserver.http2.Utils` (1.x) / `BinaryCodec` | `robaho.net.httpserver.http2.internal.BinaryCodec` |
 
-`HttpConnection` and `Http2ExchangeImpl` remain in
-`robaho.net.httpserver` for coupling reasons; treat them as internal -
-they are not covered by the compatibility promise.
+The HTTP/2 engine (connection, stream, codec) is not API: the exported
+`robaho.net.httpserver.http2` package now contains only `Http2Stats`,
+`Http2ErrorCode` and `Http2Exception`.
+
+## Visibility narrowed to package-private
+
+These 1.x classes were public in an exported package but are
+implementation detail; they are now package-private and invisible to
+module users:
+
+- `robaho.net.httpserver.Http2ExchangeImpl` (the h1 exchange impls were
+  already package-private)
+- `robaho.net.httpserver.HttpConnection`
+- `robaho.net.httpserver.HttpServerImpl` / `HttpsServerImpl` (obtained via
+  the provider as the JDK `HttpServer`/`HttpsServer` types)
 
 ## Behavior changes
 

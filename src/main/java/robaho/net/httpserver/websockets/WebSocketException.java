@@ -61,10 +61,12 @@ public class WebSocketException extends IOException {
         this(CloseCode.InternalServerError, cause.toString(), cause);
     }
 
+    /** the close code the connection should be closed with */
     public CloseCode getCode() {
         return this.code;
     }
 
+    /** the human-readable close reason */
     public String getReason() {
         return this.reason;
     }

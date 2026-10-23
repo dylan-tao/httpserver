@@ -32,11 +32,11 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
-import robaho.net.httpserver.http2.Http2Connection;
+import robaho.net.httpserver.http2.internal.Http2Connection;
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.Http2Stats;
-import robaho.net.httpserver.http2.Http2Stream;
+import robaho.net.httpserver.http2.internal.Http2Stream;
 
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
@@ -1157,7 +1157,7 @@ class ServerImpl {
 
     /** reject an h2 stream with a bare status response: the h2 counterpart of
      * the h1 reject() helper (h1/h2 error paths must not drift apart) */
-    private static void rejectStream(robaho.net.httpserver.http2.Http2Stream stream,
+    private static void rejectStream(robaho.net.httpserver.http2.internal.Http2Stream stream,
             java.io.OutputStream out, String status) throws IOException {
         stream.getResponseHeaders().set(":status", status);
         stream.writeResponseHeaders(true);

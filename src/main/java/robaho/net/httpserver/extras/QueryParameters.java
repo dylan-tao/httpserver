@@ -32,6 +32,7 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
         return qp;
     }
 
+    /** the first value of a query parameter, or null when absent */
     public String getFirst(String key) {
         List<String> values = get(key);
         return values == null || values.size() == 0 ? null : values.get(0);

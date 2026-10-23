@@ -2,13 +2,13 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
-import robaho.net.httpserver.http2.BinaryCodec;
+import robaho.net.httpserver.http2.internal.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 
-import static robaho.net.httpserver.http2.BinaryCodec.readInt;
+import static robaho.net.httpserver.http2.internal.BinaryCodec.readInt;
 
 public class ResetStreamFrame extends BaseFrame {
     final public Http2ErrorCode errorCode;

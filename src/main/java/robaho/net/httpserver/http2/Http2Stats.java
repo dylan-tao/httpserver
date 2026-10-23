@@ -2,6 +2,12 @@ package robaho.net.httpserver.http2;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Live HTTP/2 counters for one server instance (exposed via the
+ * {@code /__stats} endpoint when {@code robaho.net.httpserver.EnableStats}
+ * is set). all counters are lock-free and only maintained when
+ * {@link #ENABLED} is true, so the hot paths pay nothing by default.
+ */
 public class Http2Stats {
     /** hot-path counters are gated behind this compile-time constant: they
      * cost ~8 volatile RMWs per request otherwise, but are only read via
@@ -20,6 +26,7 @@ public class Http2Stats {
 
     private volatile long lastStatsTime = System.currentTimeMillis();
 
+    /** a one-line snapshot of every counter, for logging or the stats endpoint */
     public String stats() {
         long now = System.currentTimeMillis();
         // clamp like ServerStats: two reads in the same millisecond must not

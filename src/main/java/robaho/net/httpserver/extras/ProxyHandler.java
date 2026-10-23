@@ -74,6 +74,7 @@ public class ProxyHandler implements HttpHandler {
             }
 
             @Override
+            /** {@inheritDoc} - a failed tunnel connect is logged and given up on */
             public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
                 ProxyHandler.this.connectFailed(uri, sa, ioe);
             }
@@ -85,6 +86,9 @@ public class ProxyHandler implements HttpHandler {
         return authority != null ? authority : uri.toString();
     }
 
+    /** forward the exchange to the target selected by the ProxySelector:
+     *  streams request and response bodies through, hop-by-hop headers are
+     *  not forwarded */
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         if(exchange.getRequestMethod().equals("CONNECT")) {

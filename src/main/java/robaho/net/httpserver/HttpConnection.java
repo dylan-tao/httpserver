@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * one of these is hung from the selector attachment and is used to locate
  * everything from that.
  */
-public class HttpConnection {
+class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHandle {
     private static final Logger logger = System.getLogger("robaho.net.httpserver");
 
     HttpContextImpl context;
@@ -77,9 +77,19 @@ public class HttpConnection {
     /** the h2 protocol handler for h2c/h2 connections, set when the
      * connection is upgraded; null for plain h1. lets the idle cleaner
      * reach the h2 stream buffer pool for shrinking */
-    robaho.net.httpserver.http2.Http2Connection http2Connection;
+    robaho.net.httpserver.http2.internal.Http2Connection http2Connection;
 
-    public AtomicLong requestCount = new AtomicLong();
+    final AtomicLong requestCount = new AtomicLong();
+
+    @Override
+    public long requestCount() {
+        return requestCount.get();
+    }
+
+    @Override
+    public void incrementRequestCount() {
+        requestCount.incrementAndGet();
+    }
     private final String connectionId;
 
     public boolean isClosed() {

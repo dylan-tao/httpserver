@@ -1,5 +1,4 @@
 package robaho.net.httpserver.http2;
-import robaho.net.httpserver.Http2ExchangeImpl;
 
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
@@ -73,7 +72,7 @@ public class Http2Test {
 
         @Override
         public void handle(HttpExchange he) throws IOException {
-            if(he instanceof Http2ExchangeImpl) {
+            if("HTTP/2".equals(he.getProtocol())) {
                 foundHttp2 = true;
             }
             he.sendResponseHeaders(200,0);

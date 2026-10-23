@@ -34,7 +34,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.Executor;
 
-public class HttpsServerImpl extends HttpsServer {
+class HttpsServerImpl extends HttpsServer {
 
     final ServerImpl server;
 

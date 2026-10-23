@@ -5,7 +5,7 @@ import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpPrincipal;
 import com.sun.net.httpserver.HttpsExchange;
-import robaho.net.httpserver.http2.Http2Stream;
+import robaho.net.httpserver.http2.internal.Http2Stream;
 
 import javax.net.ssl.SSLSession;
 import java.io.IOException;
@@ -14,7 +14,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 
-public class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.PrincipalExchange {
+class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.PrincipalExchange {
     private final Headers request;
     private final Headers response;
     private final InputStream in;

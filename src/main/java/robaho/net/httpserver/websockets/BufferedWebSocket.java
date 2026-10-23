@@ -135,6 +135,12 @@ public abstract class BufferedWebSocket extends WebSocket {
         }
     }
 
+    /** enqueue a frame for asynchronous delivery by the drain task instead
+     *  of writing it synchronously: producers never block on a slow
+     *  consumer. the queue is bounded by both frame count (1024, put()
+     *  blocks for backpressure) and total bytes (maxBufferedWebSocketBytes,
+     *  exceeding it throws MessageTooBig). close() flushes queued frames
+     *  before the streams are closed */
     @Override
     public void sendFrame(WebSocketFrame frame) throws IOException {
         var payload = frame.getBinaryPayload();
@@ -164,6 +170,8 @@ public abstract class BufferedWebSocket extends WebSocket {
         }
     }
 
+    /** the number of frames queued but not yet written to the connection:
+     *  a stalled consumer shows up as a persistently growing value */
     public int pending() {
         return pending.get();
     }

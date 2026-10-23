@@ -194,10 +194,12 @@ public class WebSocketFrame {
         return this.payload;
     }
 
+    /** the 4-byte masking key, or null for an unmasked frame */
     public byte[] getMaskingKey() {
         return this.maskingKey;
     }
 
+    /** this frame's opcode */
     public OpCode getOpCode() {
         return this.opCode;
     }
@@ -222,6 +224,7 @@ public class WebSocketFrame {
         return this.fin;
     }
 
+    /** true when the frame carries a 4-byte masking key */
     public boolean isMasked() {
         return this.maskingKey != null && this.maskingKey.length == 4;
     }
@@ -327,16 +330,19 @@ public class WebSocketFrame {
         }
     }
 
+    /** replace the payload bytes (invalidates the cached text form) */
     public void setBinaryPayload(byte[] payload) {
         this.payload = payload;
         this._payloadLength = payload.length;
         this._payloadString = null;
     }
 
+    /** set whether this frame terminates a message */
     public void setFin(boolean fin) {
         this.fin = fin;
     }
 
+    /** set the masking key (exactly 4 bytes, or null to unmask) */
     public void setMaskingKey(byte[] maskingKey) {
         if (maskingKey != null && maskingKey.length != 4) {
             throw new IllegalArgumentException("MaskingKey " + Arrays.toString(maskingKey) + " hasn't length 4");
@@ -344,10 +350,12 @@ public class WebSocketFrame {
         this.maskingKey = maskingKey;
     }
 
+    /** change this frame's opcode */
     public void setOpCode(OpCode opcode) {
         this.opCode = opcode;
     }
 
+    /** replace the payload with the UTF-8 encoding of the given text */
     public void setTextPayload(String payload) throws CharacterCodingException {
         this.payload = text2Binary(payload);
         this._payloadLength = payload.length();

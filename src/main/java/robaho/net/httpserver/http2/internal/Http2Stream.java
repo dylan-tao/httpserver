@@ -1,4 +1,7 @@
-package robaho.net.httpserver.http2;
+package robaho.net.httpserver.http2.internal;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.http2.Http2Stats;
 import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
 import robaho.net.httpserver.internal.OptimizedHeaders;
 
@@ -190,7 +193,7 @@ public class Http2Stream {
         } catch (IOException e) {
             if(!connection.isClosed()) {
                 connection.close();
-                logger.log(connection.httpConnection.requestCount.get()>0 ? Level.WARNING : Level.DEBUG, "IOException closing http2 stream",e);
+                logger.log(connection.httpConnection.requestCount()>0 ? Level.WARNING : Level.DEBUG, "IOException closing http2 stream",e);
             }
         } finally {
             // return the stream buffer to the connection pool: sequential
@@ -335,7 +338,7 @@ public class Http2Stream {
         if(!handlingRequest.compareAndSet(false, true)) {
             throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,"already received headers for stream "+streamId);
         }
-        connection.httpConnection.requestCount.incrementAndGet();
+        connection.httpConnection.incrementRequestCount();
         connection.requestsInProgress.incrementAndGet();
         if (Http2Stats.ENABLED) connection.stats.activeStreams.incrementAndGet();
 

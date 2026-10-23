@@ -96,6 +96,7 @@ public abstract class WebSocket {
         this.out = exchange.getResponseBody();
     }
 
+    /** true until the close handshake completes */
     public boolean isOpen() {
         return state == WebSocketLifecycle.OPEN;
     }
@@ -136,6 +137,9 @@ public abstract class WebSocket {
     /** close this websocket with a normal closure. the 3-arg variant is
      * internal: initiatedByRemote is a fact the framework tracks, not a
      * parameter for the caller to guess */
+    /** initiate (or acknowledge) the close handshake: sends a Close frame
+     *  with the given code and reason and closes the connection. safe to
+     *  call more than once - only the first call has an effect */
     public void close(CloseCode code, String reason) throws IOException {
         close(code, reason, false);
     }
@@ -296,6 +300,8 @@ public abstract class WebSocket {
 
     // --------------------------------Close-----------------------------------
 
+    /** send a Ping control frame; the peer is expected to answer with a
+     *  Pong carrying the same payload (delivered to onPong) */
     public void ping(byte[] payload) throws IOException {
         sendFrame(new WebSocketFrame(OpCode.Ping, true, payload));
     }
@@ -340,14 +346,19 @@ public abstract class WebSocket {
         }
     }
 
+    /** send a complete binary message (one unfragmented frame) */
     public void send(byte[] payload) throws IOException {
         sendFrame(new WebSocketFrame(OpCode.Binary, true, payload));
     }
 
+    /** send a complete UTF-8 text message (one unfragmented frame) */
     public void send(String payload) throws IOException {
         sendFrame(new WebSocketFrame(OpCode.Text, true, payload));
     }
 
+    /** write one frame under the connection lock: the only thread-safe
+     *  send primitive - concurrent senders are serialized here. subclasses
+     *  overriding sendFrame must preserve the locking */
     public void sendFrame(WebSocketFrame frame) throws IOException {
         lock.lock();
         try {

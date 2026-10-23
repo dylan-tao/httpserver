@@ -1,5 +1,8 @@
-package robaho.net.httpserver.http2;
-import robaho.net.httpserver.HttpConnection;
+package robaho.net.httpserver.http2.internal;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.http2.Http2Stats;
+import robaho.net.httpserver.internal.Http2ConnectionHandle;
 import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
 import robaho.net.httpserver.internal.OptimizedHeaders;
 
@@ -163,7 +166,7 @@ public class Http2Connection {
 
     private final StreamHandler handler;
 
-    final HttpConnection httpConnection;
+    final Http2ConnectionHandle httpConnection;
 
     final Logger logger;
     final HPackContext hpack = new HPackContext();
@@ -188,7 +191,7 @@ public class Http2Connection {
      * @param input HTTP2Client passes the ExBufferedInputStream
      * @param output
      */
-    public Http2Connection(HttpConnection httpConnection, Http2Stats stats, InputStream input, OutputStream output, StreamHandler handler) {
+    public Http2Connection(Http2ConnectionHandle httpConnection, Http2Stats stats, InputStream input, OutputStream output, StreamHandler handler) {
         this.httpConnection = httpConnection;
         this.inputStream = input;
         this.outputStream = output;

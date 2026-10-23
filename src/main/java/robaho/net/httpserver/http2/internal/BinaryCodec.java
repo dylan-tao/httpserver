@@ -1,4 +1,4 @@
-package robaho.net.httpserver.http2;
+package robaho.net.httpserver.http2.internal;
 
 import java.io.IOException;
 import java.io.OutputStream;

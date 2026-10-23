@@ -64,10 +64,13 @@ public enum OpCode {
         this.code = (byte) code;
     }
 
+    /** the 4-bit wire value of this opcode */
     public byte getValue() {
         return this.code;
     }
 
+    /** true for Close/Ping/Pong: control frames must not be fragmented and
+     *  their payload is capped at 125 bytes (RFC 6455 5.5) */
     public boolean isControlFrame() {
         return this == Close || this == Ping || this == Pong;
     }

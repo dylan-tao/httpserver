@@ -34,6 +34,16 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   (JEP 450, exercised in the test JVM) are available.
 - 17 classes renamed for intent-revealing names, dead public API removed
   (see MIGRATION.md for the complete mapping).
+- API surface narrowed: buffer/data-structure internals moved to the
+  non-exported `internal` packages, the HTTP/2 engine moved to
+  `http2.internal` (the exported http2 package keeps only
+  Http2Stats/Http2ErrorCode/Http2Exception), and the implementation
+  classes HttpConnection/Http2ExchangeImpl/HttpServerImpl/HttpsServerImpl
+  became package-private. every exported package now carries a
+  package-info declaring what is API.
+- javadoc completed for the exported API surface (ServerConfig getters
+  document their -D property, default and semantics); doclint tightened
+  to missing,syntax,reference to keep it that way.
 - h2 responses now carry a `Date` header (h1/h2 parity, RFC 9110 6.5.1).
 - `jdk.httpserver.maxConnections` is the connection-limit property (JDK
   compatible name); `clockTick` default is 10000ms.

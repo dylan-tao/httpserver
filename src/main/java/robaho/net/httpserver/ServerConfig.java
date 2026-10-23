@@ -263,100 +263,173 @@ public final class ServerConfig {
 
 
     /**
-     * {@return Returns the maximum duration, in milli seconds, a connection can be
-     * idle}
+     * @return the maximum duration in milliseconds a connection can be idle
+     *         before the cleaner closes it. configured via
+     *         {@code robaho.net.httpserver.idleInterval} (seconds, default 30);
+     *         connections with a request in flight are never idle-closed
      */
     static long getIdleIntervalMillis() {
         return idleIntervalMillis;
     }
 
     /**
-     * {@return Returns the schedule, in milli seconds, for the timer task that is
-     * responsible
-     * for managing the idle connections}
+     * @return the run period in milliseconds of the connection cleaner timer.
+     *         configured via {@code robaho.net.httpserver.clockTick}
+     *         (milliseconds, default 10000)
      */
     static long getIdleTimerScheduleMillis() {
         return idleTimerScheduleMillis;
     }
 
     /**
-     * @return Returns the maximum number of connections that can be open at any
-     *         given time.
-     *         This method can return a value of 0 or negative to represent that the
-     *         limit hasn't
-     *         been configured.
+     * @return the maximum number of simultaneously open connections; 0 or
+     *         negative means unlimited. configured via
+     *         {@code jdk.httpserver.maxConnections} (default -1) - the JDK
+     *         compatible property name. new connections beyond the limit are
+     *         closed immediately
      */
     static int getMaxConnections() {
         return maxConnections;
     }
 
     /**
-     * @return Returns the maximum number of connections that can be idle. This
-     *         method
-     *         can return a value of 0 or negative.
+     * @return the maximum number of idle connections kept before the cleaner
+     *         closes the oldest ones. configured via
+     *         {@code robaho.net.httpserver.maxIdleConnections} (default 200)
      */
     static int getMaxIdleConnections() {
         return maxIdleConnections;
     }
 
+    /**
+     * @return the maximum number of request-body bytes drained before the
+     *         connection may be reused when a handler did not consume the
+     *         body; beyond this the connection is closed (request-smuggling
+     *         guard). configured via {@code robaho.net.httpserver.drainAmount}
+     *         (bytes, default 65536)
+     */
     static long getDrainAmount() {
         return drainAmount;
     }
 
+    /**
+     * @return the maximum number of header fields per request; more gets a
+     *         400. configured via {@code robaho.net.httpserver.maxReqHeaders}
+     *         (default 200)
+     */
     static int getMaxReqHeaders() {
         return maxReqHeaders;
     }
 
-    /** total received HTTP/1.1 header block budget in bytes; <= 0 means
-     * unlimited (mirrors sun.net.httpserver.maxReqHeaderSize) */
+    /**
+     * @return the total HTTP/1.1 header block budget in bytes (request line +
+     *         all header lines); exceeding it gets a 431. configured via
+     *         {@code robaho.net.httpserver.maxReqHeaderSize} (default 380KB);
+     *         {@code <=} 0 means unlimited
+     */
     static int getMaxReqHeaderSize() {
         return maxReqHeaderSize;
     }
 
-    /** total request body budget in bytes (declared Content-Length or bytes
-     * actually received); <= 0 means unlimited. opt-in: the default is
-     * unlimited so legitimate large uploads are not broken */
+    /**
+     * @return the total request body budget in bytes, enforced on four paths
+     *         (h1/h2, declared Content-Length or incremental). a declared
+     *         over-cap length gets a 413; an over-cap chunked/h2-DATA body
+     *         fails the exchange (h1) or RSTs the stream with
+     *         ENHANCE_YOUR_CALM (h2). configured via
+     *         {@code robaho.net.httpserver.maxRequestBodySize} (default -1 =
+     *         unlimited, so legitimate large uploads are not broken)
+     */
     public static long getMaxRequestBodySize() {
         return maxRequestBodySize;
     }
 
     /**
-     * @return Returns the maximum amount of time the server will wait for the
-     *         request to be read
-     *         completely. This method can return a value of 0 or negative to imply
-     *         no maximum limit has
-     *         been configured.
+     * @return the maximum time in seconds a single request may take; the
+     *         connection of an over-time request is closed by the cleaner. 0
+     *         or negative means unlimited. configured via
+     *         {@code robaho.net.httpserver.maxReqTime} (default -1)
      */
     static long getMaxReqTime() {
         return maxReqTime;
     }
 
+    /**
+     * @return whether TCP_NODELAY is set on HTTP/1.1 connections. on by
+     *         default: Nagle plus delayed ACK can add ~40ms stalls to SSE and
+     *         small responses with no measured h1 throughput cost. configured
+     *         via {@code robaho.net.httpserver.nodelay} (default true)
+     */
     static boolean noDelay() {
         return noDelay;
     }
+
+    /**
+     * @return whether TCP_NODELAY is set on HTTP/2 connections. off by
+     *         default: Nagle coalesces multiplexed small-frame writes, and
+     *         NODELAY measured -8% on h2 multiplexed throughput. configure
+     *         {@code robaho.net.httpserver.http2Nodelay=true} for h2 SSE.
+     *         default false
+     */
     static boolean http2NoDelay() {
         return http2NoDelay;
     }
 
+    /**
+     * @return whether HTTP/2 may be negotiated over TLS via ALPN. configured
+     *         via {@code robaho.net.httpserver.http2OverSSL} (default false)
+     */
     public static boolean http2OverSSL() {
         return http2OverSSL;
     }
+
+    /**
+     * @return whether HTTP/2 is accepted on plain connections (h2c
+     *         prior-knowledge: the client sends the preface directly; RFC
+     *         9113 deprecates the upgrade mechanism so it is not supported).
+     *         configured via {@code robaho.net.httpserver.http2OverNonSSL}
+     *         (default false)
+     */
     public static boolean http2OverNonSSL() {
         return http2OverNonSSL;
     }
-    /** true (default) when connection handling runs on virtual threads */
+    /**
+     * @return whether connection handling runs on virtual threads (one per
+     *         connection). the blocking-IO-heavy handling scales far better
+     *         on virtual threads; {@code false} falls back to a platform
+     *         thread pool. configured via
+     *         {@code robaho.net.httpserver.virtualThreads} (default true)
+     */
     public static boolean virtualThreads() {
         return virtualThreads;
     }
-    /** hot-path stats counters are maintained only when this is true */
+    /**
+     * @return whether the hot-path stats counters are maintained and the
+     *         {@code /__stats} endpoint is registered. configured via
+     *         {@code robaho.net.httpserver.EnableStats} (default false)
+     */
     public static boolean statsEnabled() {
         return statsEnabled;
     }
-    /** connection-level stream buffer size (configurable, default 16KB) */
+    /**
+     * @return the connection-level input/output buffer size in bytes; also
+     *         sizes the h2 stream buffer pool and the multipart preread.
+     *         values below 512 are clamped up (syscall overhead dominates).
+     *         configured via {@code robaho.net.httpserver.bufferSize}
+     *         (default 16384); per-connection memory is roughly
+     *         {@code 2 x bufferSize}
+     */
     public static int bufferSize() {
         return bufferSize;
     }
-    /** byte cap on a BufferedWebSocket's pending queue (default 16MB, 0 = unlimited) */
+    /**
+     * @return the byte cap on a BufferedWebSocket's not-yet-written frame
+     *         queue; a producer exceeding it gets a MessageTooBig exception
+     *         (backpressure is otherwise provided by the bounded frame
+     *         count). configured via
+     *         {@code robaho.net.httpserver.maxBufferedWebSocketBytes}
+     *         (default 16MB, 0 = unlimited)
+     */
     public static int maxBufferedWebSocketBytes() {
         return maxBufferedWebSocketBytes;
     }
@@ -408,56 +481,113 @@ public final class ServerConfig {
                 "tip: -XX:+UseCompactObjectHeaders (JDK 24+) shrinks per-object overhead by 20-30%");
         }
     }
+    /**
+     * @return SETTINGS_MAX_FRAME_SIZE advertised to the peer in bytes;
+     *         inbound frames above it are a connection error, outbound DATA
+     *         is split to the peer's value. configured via
+     *         {@code robaho.net.httpserver.http2MaxFrameSize} (default 16384)
+     */
     public static int http2MaxFrameSize() {
         return http2MaxFrameSize;
     }
+    /**
+     * @return the initial per-stream flow-control window in bytes (affects
+     *         single-stream upload throughput). configured via
+     *         {@code robaho.net.httpserver.http2InitialWindowSize} (default
+     *         65535)
+     */
     public static int http2InitialWindowSize() {
         return http2InitialWindowSize;
     }
+    /**
+     * @return the connection-level flow-control window in bytes (shared by
+     *         all streams of a connection). configured via
+     *         {@code robaho.net.httpserver.http2ConnectionWindowSize}
+     *         (default 65535)
+     */
     public static int http2ConnectionWindowSize() {
         return http2ConnectionWindowSize;
     }
     /**
-     * @return the maximum number of concurrent streams per connection, or -1 for no limit
+     * @return the maximum number of concurrent streams per connection
+     *         (SETTINGS_MAX_CONCURRENT_STREAMS); new streams beyond it get
+     *         REFUSED_STREAM, which a client may retry. configured via
+     *         {@code robaho.net.httpserver.http2MaxConcurrentStreams}
+     *         (default 100, aligned with browser behavior; -1 = unlimited)
      */
     public static int http2MaxConcurrentStreams() {
         return http2MaxConcurrentStreams;
     }
     /**
-     * @return true if delaying flush is enabled. disabling the flush delay can improve
-     * latency at the expense of throughput
+     * @return whether each h2 frame write is flushed immediately (low-latency
+     *         mode) instead of batching flushes for throughput. configure
+     *         {@code robaho.net.httpserver.http2DisableFlushDelay=true} for
+     *         h2 SSE. default false
      */
     public static boolean http2DisableFlushDelay() {
         return http2DisableFlushDelay;
     }
 
-    /** @return the maximum total size in bytes of a received HTTP/2 header block */
+    /**
+     * @return the maximum total size in bytes of a received HTTP/2 header
+     *         block (HEADERS + CONTINUATION accumulated); exceeding it gets
+     *         ENHANCE_YOUR_CALM (CONTINUATION flood guard). configured via
+     *         {@code robaho.net.httpserver.http2MaxHeaderBlockSize} (default
+     *         128KB)
+     */
     public static int http2MaxHeaderBlockSize() {
         return http2MaxHeaderBlockSize;
     }
 
-    /** @return the keepalive ping interval for idle h2 connections in
-     * millis, or a value &lt;= 0 when the ping is disabled */
+    /**
+     * @return the keepalive ping interval for idle h2 connections in
+     *         milliseconds; the ping also doubles as liveness detection (a
+     *         failed ping closes the connection). configured via
+     *         {@code robaho.net.httpserver.http2PingIntervalMillis} (default
+     *         1000); {@code <=} 0 disables the ping, leaving dead-connection
+     *         detection to the idle cleaner (h1 behavior)
+     */
     public static long http2PingIntervalMillis() {
         return http2PingIntervalMillis;
     }
 
-    /** @return the maximum size in bytes of a single HTTP/1.1 request/header line */
+    /**
+     * @return the maximum size in bytes of a single HTTP/1.1 request-line or
+     *         header line; exceeding it gets a 400. configured via
+     *         {@code robaho.net.httpserver.maxReqLineSize} (default 64KB)
+     */
     static int getMaxReqLineSize() {
         return maxReqLineSize;
     }
 
-    /** @return the maximum size in bytes of a single websocket frame */
+    /**
+     * @return the maximum size in bytes of a single received websocket frame;
+     *         exceeding it closes the connection with 1009 (MessageTooBig).
+     *         configured via
+     *         {@code robaho.net.httpserver.maxWebSocketFrameSize} (default
+     *         4MB)
+     */
     public static int getMaxWebSocketFrameSize() {
         return maxWebSocketFrameSize;
     }
 
-    /** @return the maximum size in bytes of an aggregated websocket message */
+    /**
+     * @return the maximum size in bytes of a websocket message after fragment
+     *         reassembly; exceeding it closes with 1009. configured via
+     *         {@code robaho.net.httpserver.maxWebSocketMessageSize} (default
+     *         4MB)
+     */
     public static int getMaxWebSocketMessageSize() {
         return maxWebSocketMessageSize;
     }
 
-    /** @return the maximum duration in milliseconds for the TLS handshake to complete */
+    /**
+     * @return the maximum duration in milliseconds for the TLS handshake to
+     *         complete; a stalled client is closed so it cannot pin a
+     *         connection thread. configured via
+     *         {@code robaho.net.httpserver.sslHandshakeTimeout} (seconds,
+     *         default 30)
+     */
     static long getSslHandshakeTimeoutMillis() {
         return sslHandshakeTimeoutMillis;
     }

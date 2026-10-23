@@ -50,6 +50,7 @@ public enum CloseCode {
     // cached: values() clones the array on every call
     private static final CloseCode[] _values = CloseCode.values();
 
+    /** the close code for a wire value, or null for unknown values */
     public static CloseCode find(int value) {
         for (CloseCode code : _values) {
             if (code.getValue() == value) {
@@ -65,6 +66,7 @@ public enum CloseCode {
         this.code = code;
     }
 
+    /** the 2-byte wire value of this close code */
     public int getValue() {
         return this.code;
     }
