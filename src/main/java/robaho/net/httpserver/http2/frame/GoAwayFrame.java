@@ -36,7 +36,11 @@ public class GoAwayFrame extends BaseFrame {
             throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
         }
         try {
-            var lastSeenStream = BinaryCodec.readInt(body, 0, 4);
+            // mask the reserved bit (RFC 7540 6.8: it MUST be ignored):
+            // unmasked, a set bit made the id negative, so the GOAWAY drain
+            // guard (streamId > clientGoawayStreamId) never fired and the
+            // server kept dispatching streams the peer promised not to open
+            var lastSeenStream = BinaryCodec.readInt(body, 0, 4) & 0x7FFFFFFF;
             var errorCode = BinaryCodec.readInt(body, 4, 4);
             var code = Http2ErrorCode.getEnum(errorCode);
             if (code.getValue() != errorCode) {

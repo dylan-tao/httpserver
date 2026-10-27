@@ -79,17 +79,46 @@ class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.PrincipalExc
 
     @Override
     public void sendResponseHeaders(int rCode, long responseLength) throws IOException {
-        if (responseLength > 0) {
+        if (rCode == 101) {
+            // RFC 7540 8.1.1: HTTP/2 does not support 101. the old code sent
+            // an interim :status 101 HEADERS frame and the websocket read
+            // loop then consumed h2 framing as websocket frames - protocol
+            // garbage on a wedged connection. reset the stream instead
+            throw new java.io.IOException("HTTP/2 does not support 101 Switching Protocols (use RFC 8441 extended CONNECT)");
+        }
+        // RFC 9110 8.6: a server MUST NOT send Content-Length with 1xx or
+        // 204 (h1 suppresses it for the same codes; the body suppression
+        // alone was only half the parity)
+        if (responseLength > 0 && rCode != 204 && rCode != 304 && (rCode < 100 || rCode >= 200)) {
             response.set("Content-length", Long.toString(responseLength));
         }
         // 0: no body, no chunked encoding in h2; -1: no data will be sent,
         // END_STREAM is set via closeStream below
         response.set(":status",Long.toString(rCode));
-        // h1/h2 parity: h1 always sends Date (RFC 9110 6.5.1 SHOULD);
+        // h1/h2 parity: h1 sends Date for every non-1xx response (RFC 9110
+        // 6.5.1 SHOULD) and skips informational ones - match that here.
         // HPACK has 'date' in its static table so encoding is cheap
-        response.set("Date", CachedClock.dateAndTime());
+        if (rCode < 100 || rCode >= 200) {
+            response.set("Date", CachedClock.dateAndTime());
+        }
         responseCode = rCode;
-        stream.writeResponseHeaders(responseLength==-1);
+        if (rCode >= 100 && rCode < 200) {
+            // interim response (100/102/103...): h1 supports the documented
+            // 1xx-then-final pattern (sentHeaders stays false), h2 must too.
+            // the old path consumed the one-shot headersSent latch here, so
+            // the FINAL response was silently swallowed - the client got a
+            // 1xx with the body attached. interim frames never END_STREAM
+            // (RFC 7540 8.1) and carry no body
+            stream.writeInterimResponseHeaders();
+            return;
+        }
+        // HEAD/204/304 parity: h1 discards the body and forces no
+        // content-length for these; h2 sent raw DATA on a HEAD stream
+        boolean noBody = rCode == 204 || rCode == 304 || stream.isHeadRequest();
+        if (noBody) {
+            responseLength = -1;
+        }
+        stream.writeResponseHeaders(responseLength==-1 || noBody);
     }
 
     @Override
@@ -119,7 +148,13 @@ class Http2ExchangeImpl extends HttpsExchange implements AuthFilter.PrincipalExc
 
     @Override
     public void setAttribute(String name, Object value) {
-        ctx.getAttributes().put(name, value);
+        // h1 parity: a null value REMOVES the attribute; the attributes map
+        // is a ConcurrentHashMap, whose put(name, null) throws NPE
+        if (value == null) {
+            ctx.getAttributes().remove(name);
+        } else {
+            ctx.getAttributes().put(name, value);
+        }
     }
 
     @Override

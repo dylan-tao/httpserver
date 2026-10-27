@@ -172,17 +172,26 @@ class Request {
             System.arraycopy(src, off, buffer, count, len);
             count += len;
         }
-        /** clear the content but keep the grown capacity: the per-connection
-         * builders are reused across requests */
+        /** clear the content for reuse; a builder grown by one huge line is
+         * shrunk back instead of pinning that capacity for the connection's
+         * lifetime (the same policy the input stream applies to lineBuf) */
         void reset() {
             count = 0;
+            if (buffer.length > 8192) {
+                buffer = new byte[256];
+                capacity = 256;
+            }
         }
 
         public String trimmed() {
             int start=0;
             while(start<count && buffer[start]==' ') start++;
             int end=count;
-            while(end>0 && buffer[end-1]==' ') end--;
+            // RFC 9110 5.5: a field value excludes leading AND trailing
+            // whitespace, and OWS is SP or HTAB - stripping only SP let a
+            // trailing tab leak into every consumer ("Content-Length: 5\t"
+            // was rejected as non-digits, "Connection: close\t" ignored)
+            while(end>0 && (buffer[end-1]==' ' || buffer[end-1]=='\t')) end--;
             count=0;
             // an all-spaces line is reachable on the REQUEST line (the
             // skip-empty-lines loop checks raw emptiness): without the clamp
@@ -253,6 +262,12 @@ class Request {
             // obs-fold: a line starting with whitespace continues the pending
             // value (RFC 9112 5.2: replace obs-fold with SP)
             if (raw[0] == ' ' || raw[0] == '\t') {
+                if (key.isEmpty() && value.isEmpty()) {
+                    // a continuation line before any header field: RFC 9112
+                    // 5.2 makes the whole message malformed. the old code
+                    // flushed it as a header with an EMPTY NAME
+                    throw new IOException("obs-fold line before any header field");
+                }
                 int start = 0;
                 while (start < end && (raw[start] == ' ' || raw[start] == '\t')) {
                     start++;
@@ -283,12 +298,16 @@ class Request {
                 // field-lines (RFC 9112 5) and rejected with 400 by the JDK
                 throw new IOException(colon == 0 ? "empty header name" : "header line without colon");
             }
-            // validate the field-name: RFC 7230 tchar only. trailing
-            // whitespace before the colon is tolerated (it is trimmed by
-            // the builder, preserving the historical "KEY : VAL" behavior)
+            // RFC 9112 5.1: "No whitespace is allowed between the field
+            // name and colon... A server MUST reject, with a response status
+            // code of 400, any received request message that contains
+            // whitespace between a header field name and colon." the old
+            // lenient trim (historical "KEY : VAL" behavior) is a request-
+            // smuggling differential against RFC-compliant front proxies
+            // (the JDK 400s it; the differential harness caught the gap)
             int nameEnd = colon;
-            while (nameEnd > 0 && (raw[nameEnd - 1] == ' ' || raw[nameEnd - 1] == '\t')) {
-                nameEnd--;
+            if (nameEnd > 0 && (raw[nameEnd - 1] == ' ' || raw[nameEnd - 1] == '\t')) {
+                throw new IOException("whitespace between header field name and colon");
             }
             for (int j = 0; j < nameEnd; j++) {
                 char c = (char) (raw[j] & 0xFF);

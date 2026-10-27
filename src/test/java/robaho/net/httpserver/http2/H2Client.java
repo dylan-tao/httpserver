@@ -366,11 +366,20 @@ class H2Client implements AutoCloseable {
                 || ((b & 0xF0) == 0x00 && idx4 >= 8 && idx4 <= 14)
                 || ((b & 0xF0) == 0x10 && idx4 >= 8 && idx4 <= 14);
         if (literalStatus && block.length > 1) {
-            int valueLen = block[1] & 0xFF;
+            // mask the huffman bit before reading the length: the server
+            // huffman-codes any value whose coding is shorter (e.g. "103"),
+            // and the old blind length read turned a 0x85 huffman length into
+            // a bogus raw length - statuses like 100/103/202/301 decoded as -1
+            int first = block[1] & 0xFF;
+            boolean huffman = (first & 0x80) != 0;
+            int valueLen = first & 0x7F;
             if (valueLen > 0 && 2 + valueLen <= block.length) {
                 try {
-                    return Integer.parseInt(new String(block, 2, valueLen, StandardCharsets.US_ASCII).trim());
-                } catch (NumberFormatException e) {
+                    String value = huffman
+                        ? robaho.net.httpserver.http2.hpack.Huffman.decode(block, 2, valueLen)
+                        : new String(block, 2, valueLen, StandardCharsets.US_ASCII);
+                    return Integer.parseInt(value.trim());
+                } catch (NumberFormatException | robaho.net.httpserver.http2.Http2Exception e) {
                     return -1;
                 }
             }

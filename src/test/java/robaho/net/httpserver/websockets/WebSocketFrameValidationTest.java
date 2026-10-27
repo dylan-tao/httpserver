@@ -107,7 +107,7 @@ public class WebSocketFrameValidationTest {
     @Test(expectedExceptions = IllegalArgumentException.class)
     public void testPingPayloadOver125Rejected() throws Exception {
         try (RawWsClient client = new RawWsClient(server.getAddress().getPort())) {
-            WebSocket ws = serverWebSocket.get();
+            WebSocket ws = awaitServerWebSocket();
             Assert.assertNotNull(ws, "websocket must be open after the handshake");
             ws.ping(new byte[200]);
         }
@@ -124,6 +124,21 @@ public class WebSocketFrameValidationTest {
         Assert.assertEquals(closeInfo.get(), "code=null, reason=session expired, remote=true",
             "the real reason and initiator must be reported (code is null for unmapped 3xxx/4xxx codes)");
         // the codeless close reply lets the JDK client complete its handshake
+    }
+
+    /** the 101 response does not synchronize with the server-side
+     * openWebSocket callback: under parallel suite load the handler may not
+     * have published the WebSocket yet when the client finishes its
+     * handshake, so poll briefly instead of asserting immediately (this
+     * flaked ~1 run in 10 before) */
+    private WebSocket awaitServerWebSocket() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5000;
+        WebSocket ws = serverWebSocket.get();
+        while (ws == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+            ws = serverWebSocket.get();
+        }
+        return ws;
     }
 
     /** a minimal raw websocket client speaking masked frames over a socket */

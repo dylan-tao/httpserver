@@ -186,6 +186,9 @@ public final class ServerConfig {
                                         DEFAULT_MAX_REQ_HEADER_SIZE),
                                 0);
 
+                        // 0 or negative means unlimited (README: "0 或负
+                        // 数为不限"); the enforcement checks use > 0 so a
+                        // literal 0 disables rather than rejects everything
                         maxRequestBodySize = Long.getLong(pkg + ".maxRequestBodySize",
                                 DEFAULT_MAX_REQUEST_BODY_SIZE);
 
@@ -219,8 +222,17 @@ public final class ServerConfig {
                         http2MaxFrameSize = Integer.getInteger(pkg + ".http2MaxFrameSize", DEFAULT_HTTP2_MAX_FRAME_SIZE);
                         http2InitialWindowSize = Integer.getInteger(pkg + ".http2InitialWindowSize", DEFAULT_HTTP2_INITIAL_WINDOW_SIZE);
                         http2ConnectionWindowSize = Integer.getInteger(pkg + ".http2ConnectionWindowSize", DEFAULT_HTTP2_CONNECTION_WINDOW_SIZE);
-
+                        // clamp to RFC 9113 ranges BEFORE the values are
+                        // advertised in SETTINGS: a configured
+                        // maxFrameSize < 16384 or a negative window killed
+                        // every h2 connection at the peer with no warning
+                        // (the inbound validation exists, the outbound
+                        // advertisement did not)
+                        http2MaxFrameSize = (int) Math.min(Math.max(http2MaxFrameSize, 16384), 16_777_215);
+                        http2InitialWindowSize = (int) Math.min(Math.max(http2InitialWindowSize, 0), Integer.MAX_VALUE);
+                        http2ConnectionWindowSize = Math.max(http2ConnectionWindowSize, 65535);
                         http2MaxConcurrentStreams = Integer.getInteger(pkg + ".http2MaxConcurrentStreams", DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS);
+                        http2MaxConcurrentStreams = Math.max(http2MaxConcurrentStreams, -1);
                         http2DisableFlushDelay = Boolean.getBoolean(pkg + ".http2DisableFlushDelay");
 
                         // keepalive ping for idle h2 connections. the default 1s

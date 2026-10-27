@@ -87,6 +87,11 @@ public class FormParser {
             List<String> values = params.computeIfAbsent(key, k -> new ArrayList<>());
             if (value != null) {
                 values.add(value);
+            } else {
+                // a parameter without '=' ("agree&name=x"): servlet
+                // semantics (and QueryParameters) keep it with an empty
+                // value instead of dropping it
+                values.add("");
             }
             paramCount++;
             if (MAX_PARAMS != 0 && paramCount > MAX_PARAMS) {
@@ -97,8 +102,14 @@ public class FormParser {
 
         // Second phase - look for _charset_ param and do the encoding
         List<String> charsetParam = params.get("_charset_");
+        // the empty-string guard: a valueless "_charset_" token (the
+        // valueless-key fix keeps it as "") used to poison encoding with ""
+        // and fail the whole parse with UnsupportedEncodingException
         if (charsetParam != null && !charsetParam.isEmpty()) {
-            encoding = charsetParam.get(0);
+            String declared = charsetParam.get(0);
+            if (!declared.isEmpty()) {
+                encoding = declared;
+            }
         }
 
         // We're ready to decode the params. Keys are decoded BEFORE grouping so

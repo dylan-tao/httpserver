@@ -58,19 +58,26 @@ public class RequestHeadersTest {
     }
     @Test
     public void TestWhitespace() throws IOException {
+        // RFC 9112 5.1: whitespace between the field name and colon MUST be
+        // rejected with 400 (a request-smuggling differential against
+        // RFC-compliant proxies; the JDK 400s it). the old lenient trim
+        // ("KEY : VAL" accepted) was removed
         String request = "GET blah\r\nKEY : VAL\r\nKEY2:VAL2 \r\n\r\nSome Body Data";
         var is = new ByteArrayInputStream(request.getBytes());
         var os = new ByteArrayOutputStream();
 
-        Request r = new Request(is,os);
+        var r = new Request(is,os);
         assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertEquals(r.headers().getFirst("KEY"),"VAL");
-        assertEquals(r.headers().getFirst("KEY2"),"VAL2");
+        assertThrows(IOException.class, () -> r.headers());
+        // the legal whitespace cases still work: trailing space in the VALUE
+        String ok = "GET blah\r\nKEY2:VAL2 \r\n\r\n";
+        var r2 = new Request(new ByteArrayInputStream(ok.getBytes()), new ByteArrayOutputStream());
+        assertEquals("VAL2", r2.headers().getFirst("KEY2"));
     }
 
     @Test
     public void TestDuplicateHeaders() throws IOException {
-        String request = "GET blah\r\nKEY : VAL\r\nKEY:VAL2\r\nKEY:VAL3 \r\n\r\nSome Body Data";
+        String request = "GET blah\r\nKEY:VAL\r\nKEY:VAL2\r\nKEY:VAL3 \r\n\r\nSome Body Data";
         var is = new ByteArrayInputStream(request.getBytes());
         var os = new ByteArrayOutputStream();
 

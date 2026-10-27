@@ -84,7 +84,17 @@ public class OptimizedHeaders extends Headers {
             }
         }
         if(i==len) return key;
-        return Character.toUpperCase(key.charAt(0))+key.substring(1).toLowerCase();
+        // the fix path never re-checks the tail for CR/LF (the scan loop
+        // broke at the first fix point): a lowercase-first name carrying
+        // "\r\n..." passed where the JDK Headers throws
+        String fixed = Character.toUpperCase(key.charAt(0))+key.substring(1).toLowerCase();
+        for (int j = 0; j < fixed.length(); j++) {
+            char c = fixed.charAt(j);
+            if (c == '\r' || c == '\n') {
+                throw new IllegalArgumentException("illegal character in key");
+            }
+        }
+        return fixed;
     }
 
     @Override

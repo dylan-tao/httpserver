@@ -100,6 +100,12 @@ public class MultipartFormParser {
         is = new NoSyncBufferedInputStream(is, robaho.net.httpserver.ServerConfig.bufferSize());
 
         Map<String, List<Part>> results = new HashMap<>();
+        // part count and total data caps: the per-field cap was bypassable
+        // by splitting into many parts (100 x 1MB fields OOM'd a 64MB heap)
+        int maxParts = MAX_PARTS;
+        long maxTotal = MAX_TOTAL_BYTES;
+        long totalBytes = 0;
+        int partCount = 0;
 
         // the CRLF is considered part of the boundary
         byte[] boundaryCheck = ("\r\n--" + boundary).getBytes(charset);
@@ -114,7 +120,9 @@ public class MultipartFormParser {
         while (true) {
             int c = is.read();
             if (c == -1) {
-                return results;
+                // EOF before the first boundary: the body is truncated (a
+                // multipart body MUST contain the first boundary)
+                throw new IOException("truncated multipart body: no boundary found");
             }
             if (c == boundaryCheck[matchCount]) {
                 matchCount++;
@@ -136,16 +144,31 @@ public class MultipartFormParser {
         }
 
         while (true) {
+            if (maxParts != 0 && partCount >= maxParts) {
+                // checked BEFORE the FileOutputStream below: the old
+                // placement threw after opening it, leaking one fd and an
+                // orphan file per abusive request
+                throw new IOException("multipart part count exceeds the maximum of " + maxParts);
+            }
+
             // read part headers until blank line
             headers.clear();
 
+            int headerLineCount = 0;
             while (true) {
                 s = readLine(charset, is);
                 if (s == null) {
-                    return results;
+                    // EOF mid-part: returning the partial map silently
+                    // mispresented a cut-off upload as a valid smaller one
+                    throw new IOException("truncated multipart body: EOF in part headers");
                 }
                 if ("".equals(s)) {
                     break;
+                }
+                // line COUNT cap: the per-line length cap alone left an OOM
+                // via millions of small header lines for one part
+                if (++headerLineCount > 100) {
+                    throw new IOException("multipart part header count exceeds 100");
                 }
                 headers.add(s);
             }
@@ -163,18 +186,23 @@ public class MultipartFormParser {
                 os = bos;
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, null, bos.toString(charset), null));
             } else {
-                File file = Path.of(storage.toString(), sanitizeFilename(meta.filename)).toFile();
+                File file = uniqueTarget(storage, meta.filename);
                 trackForExitCleanup(file);
                 os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
                 addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, meta.filename, null, file));
             }
+
+            partCount++;
 
             try (os) {
                 matchCount = 0;
                 while (true) {
                     int c = is.read();
                     if (c == -1) {
-                        return results;
+                        throw new IOException("truncated multipart body: EOF in part data");
+                    }
+                    if (maxTotal != 0 && ++totalBytes > maxTotal) {
+                        throw new IOException("multipart body exceeds the configured maximum of " + maxTotal + " bytes");
                     }
                     if (c == boundaryCheck[matchCount]) {
                         matchCount++;
@@ -205,7 +233,57 @@ public class MultipartFormParser {
         }
     }
 
-    private static final Pattern optionPattern = Pattern.compile("\\s(?<key>.*)=\"(?<value>.*)\"");
+    // leading \s* (not \s): "form-data;name=\"f\"" (no space after the
+    // semicolon, legal per RFC 6266) must still match
+    /** part header line cap: unbounded lines OOM'd the JVM (64MB heap died
+     * to one 64MB header line). mirrors the h1 header line cap */
+    private static final int MAX_PART_HEADER_LINE = 64 * 1024;
+
+    /** part count / total data caps: the same properties FormParser uses,
+     * closing the split-into-many-parts bypass of the per-field cap */
+    private static final int MAX_PARTS = Integer.getInteger("robaho.net.httpserver.max_form_params", 1000); // 0 == no limit
+    private static final long MAX_TOTAL_BYTES = Long.getLong("robaho.net.httpserver.max_form_bytes", 10L * 1024 * 1024); // 0 == no limit
+
+    private static final Pattern optionPattern = Pattern.compile("\\s*(?<key>[^=\\s\"]+)\\s*=\\s*\"(?<value>.*)\"");
+
+    /** split Content-Disposition options on ';', respecting quoted values */
+    private static String[] splitOptions(String s) {
+        List<String> out = new LinkedList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"') {
+                quoted = !quoted;
+                cur.append(c);
+            } else if (c == ';' && !quoted) {
+                out.add(cur.toString());
+                cur.setLength(0);
+            } else {
+                cur.append(c);
+            }
+        }
+        out.add(cur.toString());
+        return out.toArray(new String[0]);
+    }
+
+    /** a storage target that does not clobber an earlier part's file with
+     * the same (sanitized) filename: browsers send duplicate names whenever
+     * two file inputs hold same-named files */
+    private static File uniqueTarget(Path storage, String filename) {
+        String safe = sanitizeFilename(filename);
+        File file = Path.of(storage.toString(), safe).toFile();
+        if (!file.exists()) {
+            return file;
+        }
+        int dot = safe.lastIndexOf('.');
+        String base = dot < 0 ? safe : safe.substring(0, dot);
+        String ext = dot < 0 ? "" : safe.substring(dot);
+        for (int i = 1; file.exists(); i++) {
+            file = Path.of(storage.toString(), base + "-" + i + ext).toFile();
+        }
+        return file;
+    }
 
     /**
      * extract the boundary parameter from a Content-Type header value,
@@ -213,7 +291,15 @@ public class MultipartFormParser {
      * (RFC 2046 section 5.1.1)
      */
     private static String parseBoundary(String contentType) {
-        int idx = contentType.indexOf("boundary=");
+        // case-insensitive parameter name with a word boundary: the old
+        // indexOf matched "xboundary=" (grabbing the wrong value) and missed
+        // "BOUNDARY=" (RFC 2045 parameter names are case-insensitive)
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("(?i)(?:^|[;\\s])boundary=").matcher(contentType);
+        if (!m.find()) {
+            throw new IllegalStateException("content type does not contain boundary");
+        }
+        int idx = m.end() - "boundary=".length();
         if (idx < 0) {
             throw new IllegalStateException("content type does not contain boundary");
         }
@@ -276,7 +362,10 @@ public class MultipartFormParser {
                 continue;
             }
             if ("content-disposition".equalsIgnoreCase(parts[0])) {
-                String[] options = parts[1].split(";");
+                // quote-aware split: a plain split(";") cut values containing
+                // ';' (filename="a;b.txt") mid-value, so the filename was
+                // never extracted and the part was misclassified
+                String[] options = splitOptions(parts[1]);
                 for (var option : options) {
                     Matcher m = optionPattern.matcher(option);
                     if (m.matches()) {
@@ -335,9 +424,16 @@ public class MultipartFormParser {
     }
 
     private static String readLine(Charset charset, InputStream is) throws IOException {
+        // per-line cap: part header lines were unbounded, so a client
+        // streaming an endless line (no LF) OOM'd the JVM (the per-field
+        // byte cap only guards part DATA)
+        int maxLine = MAX_PART_HEADER_LINE;
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         boolean prevCR = false;
         while (true) {
+            if (bos.size() > maxLine) {
+                throw new IOException("multipart part header line too long (limit " + maxLine + " bytes)");
+            }
             int c = is.read();
             if (c == -1) {
                 if (bos.size() > 0) {

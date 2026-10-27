@@ -61,6 +61,12 @@ public class OpenAddressMap<K,V> {
                 entry.value = value;
                 if (value == null && oldValue != null) {
                     size--;
+                } else if (value != null && oldValue == null) {
+                    // reviving a tombstone (remove-then-re-add): the entry
+                    // is live again, so the count must go back up - without
+                    // this, remove+re-add left size() and isEmpty() lying
+                    // (size 0 while containsKey is true)
+                    size++;
                 }
                 return (V)oldValue;
             } else if (entry.value == null) {
@@ -156,6 +162,13 @@ public class OpenAddressMap<K,V> {
 
             @Override
             public java.util.Map.Entry<K,V> next() {
+                // honor the Iterator contract: next() without a preceding
+                // hasNext() (or after exhaustion) must throw
+                // NoSuchElementException - the old blind read returned
+                // tombstones as null-valued entries or threw NPE/AIOOBE
+                if (!hasNext()) {
+                    throw new java.util.NoSuchElementException();
+                }
                 Entry entry = entries[index++];
                 return new java.util.AbstractMap.SimpleEntry<>((K) entry.key, (V) entry.value);
             }
@@ -178,6 +191,9 @@ public class OpenAddressMap<K,V> {
 
         @Override
         public K next() {
+            if (!hasNext()) {
+                throw new java.util.NoSuchElementException();
+            }
             return (K) entries[index++].key;
         }
     }

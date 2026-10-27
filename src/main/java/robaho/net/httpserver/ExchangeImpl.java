@@ -62,6 +62,9 @@ class ExchangeImpl {
     boolean close;
     /** the Date header value this exchange set (see sendResponseHeaders) */
     private String frameworkDate;
+    /** the clock snapshot captured with the framework Date header: keeps
+     * the string and the encoded bytes in the same generation */
+    private CachedClock.ClockValue frameworkClock;
     boolean closed;
     boolean http10 = false;
 
@@ -136,7 +139,23 @@ class ExchangeImpl {
         return CONNECT.equals(getRequestMethod());
     }
     private boolean isUpgradeRequest() {
-        return HEADER_CONNECTION_UPGRADE.equalsIgnoreCase(reqHdrs.getFirst(HEADER_CONNECTION));
+        // token-list per RFC 7230 7: "Connection: keep-alive, Upgrade" (the
+        // exact form Firefox sends) must count as an upgrade request. the
+        // old whole-value equalsIgnoreCase let the 101 handshake succeed
+        // but handed the websocket a 0-length fixed stream - instant EOF
+        // after the handshake for every token-list client
+        var connectionValues = reqHdrs.get(HEADER_CONNECTION);
+        if (connectionValues == null) {
+            return false;
+        }
+        for (String value : connectionValues) {
+            for (String token : value.split(",")) {
+                if (HEADER_CONNECTION_UPGRADE.equalsIgnoreCase(token.trim())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void close() {
@@ -170,10 +189,24 @@ class ExchangeImpl {
     }
 
     public InputStream getRequestBody() {
+        if (connectionUpgraded && uis != null && uis != ris) {
+            // the 101 just switched the connection to a tunnel: the framed
+            // stream cached before the upgrade (ServerImpl pre-reads the
+            // body) must not be handed to the upgraded protocol. deciding
+            // the handoff from the request headers ALONE was wrong: the JDK
+            // HttpClient sends "Connection: Upgrade, HTTP2-Settings" +
+            // "Upgrade: h2c" on EVERY h1 request (an h2c upgrade attempt
+            // this server never completes - prior-knowledge only), so those
+            // ordinary requests got the raw unframed socket stream (an auth
+            // 401 hung reading it). the handoff now keys on the ACTUAL
+            // upgrade having happened
+            uis = ris;
+            uisOrig = null;
+        }
         if (uis != null) {
             return uis;
         }
-        if (connectionUpgraded || isConnectRequest() || isUpgradeRequest()) {
+        if (connectionUpgraded || isConnectRequest()) {
             // connection cannot be re-used
             uis = ris;
         } else if (reqContentLen == -1L) {
@@ -289,7 +322,11 @@ class ExchangeImpl {
             // keep the reference: writeHeaders compares against it to use the
             // cached pre-encoded Date bytes (identity comparison is safe
             // because BOTH sides go through this single assignment)
-            frameworkDate = CachedClock.dateAndTime();
+            // ONE snapshot: the old code read the string here and the
+            // bytes again in writeHeaders - two volatile reads that could
+            // straddle the 750ms tick and pair different generations
+            frameworkClock = CachedClock.snapshot();
+            frameworkDate = frameworkClock.dateAndTime();
             rspHdrs.set("Date", frameworkDate);
         }
 
@@ -376,9 +413,14 @@ class ExchangeImpl {
      * array indexed by code, not a ConcurrentHashMap: the map boxed the int
      * key on every response (all real codes are above the Integer cache
      * range), and codes are dense in [100, 599]. the racy store is benign:
-     * both racers encode the same immutable value and the reference store is
-     * atomic */
+     * both racers encode the same immutable value. the release store +
+     * acquire load pair is REQUIRED for safe publication: a plain array
+     * store has no happens-before edge, so under a weak memory model a
+     * reader could observe the non-null reference while the array ELEMENTS
+     * still read as zero - a corrupted status line on the wire */
     private static final byte[][] STATUS_LINES = new byte[600][];
+    private static final java.lang.invoke.VarHandle STATUS_LINES_HANDLE =
+        java.lang.invoke.MethodHandles.arrayElementVarHandle(byte[][].class);
 
     private static byte[] statusLineBytes(int code) {
         if (code == 101) {
@@ -389,10 +431,10 @@ class ExchangeImpl {
             // custom exchange could bypass): fall back to per-call encoding
             return ("HTTP/1.1 " + code + HttpStatus.msg(code) + "\r\n").getBytes(ISO_CHARSET);
         }
-        byte[] line = STATUS_LINES[code];
+        byte[] line = (byte[]) STATUS_LINES_HANDLE.getAcquire(STATUS_LINES, code);
         if (line == null) {
             line = ("HTTP/1.1 " + code + HttpStatus.msg(code) + "\r\n").getBytes(ISO_CHARSET);
-            STATUS_LINES[code] = line;
+            STATUS_LINES_HANDLE.setRelease(STATUS_LINES, code, line);
         }
         return line;
     }
@@ -434,10 +476,10 @@ class ExchangeImpl {
                 pos = writeAscii(key, head, pos);
                 head[pos++] = ':';
                 head[pos++] = ' ';
-                if (Objects.equals(val, frameworkDate)) {
-                    // the framework-set Date header: use the cached encoded
-                    // bytes instead of re-encoding the string per response
-                    byte[] dateBytes = CachedClock.dateAndTimeBytes();
+                if (Objects.equals(val, frameworkDate) && frameworkClock != null) {
+                    // the framework-set Date header: use the SNAPSHOT's
+                    // encoded bytes (same generation as the string above)
+                    byte[] dateBytes = frameworkClock.dateAndTimeBytes();
                     System.arraycopy(dateBytes, 0, head, pos, dateBytes.length);
                     pos += dateBytes.length;
                 } else {

@@ -146,7 +146,14 @@ public class Http2Connection {
      * idle cleaner races a concurrent write's buf swap
      * (IndexOutOfBoundsException / lost bytes) */
     public void shrinkConnectionOutputBuffer() {
-        lock();
+        // tryLock, NOT lock: this runs on the single connection-cleaner
+        // Timer thread. a handler blocked in a socket write while holding
+        // the connection lock (stalled peer, full TCP window) would freeze
+        // the cleaner server-wide - exactly what the separate ping timer
+        // was introduced to prevent. skipping one shrink cycle is free
+        if (!lock.tryLock()) {
+            return;
+        }
         try {
             if (outputStream instanceof robaho.net.httpserver.internal.NoSyncBufferedOutputStream nos) {
                 nos.shrinkBuffers();
@@ -173,7 +180,9 @@ public class Http2Connection {
 
     final AtomicLong sendWindow = new AtomicLong(SettingParameter.INITIAL_WINDOW_SIZE);
     final AtomicInteger receiveWindow = new AtomicInteger((int) SettingParameter.INITIAL_WINDOW_SIZE);
-    final AtomicInteger requestsInProgress = new AtomicInteger();
+    /** accessed from the server core (cleaner/stop busy checks) across
+     * packages: public within the non-exported internal package */
+    public final AtomicInteger requestsInProgress = new AtomicInteger();
 
     final Http2Stats stats;
 
@@ -182,7 +191,7 @@ public class Http2Connection {
     private int maxConcurrentStreams = -1;
     private int peakConcurrentStreams = 0;
 
-    private final Lock lock = new ReentrantLock();
+    private final ReentrantLock lock = new ReentrantLock();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
@@ -221,11 +230,15 @@ public class Http2Connection {
         }
     }
 
+    public boolean tryLock() {
+        return lock.tryLock();
+    }
+
     void lock() {
         lock.lock();
     }
 
-    void unlock() {
+    public void unlock() {
         lock.unlock();
     }
 
@@ -344,7 +357,14 @@ public class Http2Connection {
         // per-frame header scratch: the reader thread is the sole deserialize
         // caller, so the 9-byte buffer is reused across frames
         byte[] headerScratch = new byte[FrameHeader.LENGTH];
-        while (!httpConnection.isClosed()) {
+        // check the h2 closed flag TOO: close() (e.g. the stream-close
+        // IOException escalation) only sets the h2 flag - keyed on the
+        // socket alone, the reader kept accepting new streams whose
+        // responses were all truncated (no END_STREAM) until the idle close
+        while (!httpConnection.isClosed() && !closed.get()) {
+            // the activity timestamp as of BEFORE this frame's bytes were
+            // read: a PING ACK must not count as activity (see the PING case)
+            long preFrameActivity = httpConnection.lastActivityTime();
             BaseFrame frame = FrameParser.deserialize(inputStream, headerScratch);
 
             int streamId = frame.getHeader().streamIdentifier();
@@ -360,6 +380,12 @@ public class Http2Connection {
             // connection, never a single stream.
             switch (frame.getHeader().type()) {
                 case SETTINGS:
+                    // RFC 7540 6.2: any frame other than CONTINUATION during
+                    // an incomplete header block is a connection error (the
+                    // DATA/HEADERS/PRIORITY/UNKNOWN cases already guard)
+                    if (inHeaders) {
+                        throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS frame during incomplete header block");
+                    }
                     if (frame.getHeader().flags().contains(FrameFlag.ACK)) {
                         // the limit is already enforced from construction; the ack
                         // needs no further action
@@ -370,6 +396,9 @@ public class Http2Connection {
                     }
                     continue;
                 case GOAWAY:
+                    if (inHeaders) {
+                        throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "GOAWAY frame during incomplete header block");
+                    }
                     GoAwayFrame goaway = (GoAwayFrame) frame;
                     if (goaway.errorCode == Http2ErrorCode.NO_ERROR) {
                         // graceful shutdown (RFC 7540 6.8): the peer will not
@@ -386,7 +415,20 @@ public class Http2Connection {
                     }
                     throw new IOException("received GOAWAY from remote " + goaway.errorCode);
                 case PING:
-                    if (!frame.getHeader().flags().contains(FrameFlag.ACK)) {
+                    if (inHeaders) {
+                        throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "PING frame during incomplete header block");
+                    }
+                    if (frame.getHeader().flags().contains(FrameFlag.ACK)) {
+                        // our own keepalive ping's ACK: it must NOT count as
+                        // connection activity, or an idle h2 connection that
+                        // faithfully ACKs pings never appears idle to the
+                        // cleaner - never shrunk, never idle-closed, never
+                        // counted toward maxIdleConnections, while h1
+                        // keep-alive connections ARE reaped. restore the
+                        // pre-read timestamp, mirroring what the ping task
+                        // does around its own write
+                        httpConnection.setLastActivityTime(preFrameActivity);
+                    } else {
                         sendPingAck((PingFrame) frame);
                     }
                     continue;
@@ -698,7 +740,14 @@ public class Http2Connection {
     public void updateRemoteSettings(SettingsFrame remoteSettingFrame) throws Http2Exception {
         logger.log(Level.TRACE, () -> "updating remote settings");
 
+        // RFC 7540 6.5: duplicate identifiers in one SETTINGS frame MUST be
+        // treated as a connection error (the old code applied them blindly -
+        // last-wins, no error)
+        java.util.Set<SettingIdentifier> seen = new java.util.HashSet<>();
         for (SettingParameter parameter : remoteSettingFrame.getSettingParameters()) {
+            if (!seen.add(parameter.identifier)) {
+                throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "duplicate SETTINGS identifier " + parameter.identifier);
+            }
             if (parameter.identifier == SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE) {
                 if (parameter.value > Integer.MAX_VALUE) {
                     throw new Http2Exception(Http2ErrorCode.FLOW_CONTROL_ERROR, "Invalid value for SETTINGS_INITIAL_WINDOW_SIZE " + parameter.value);
@@ -707,7 +756,13 @@ public class Http2Connection {
                 long oldInitialWindowSize = remoteSettings.getOrDefault(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE, SettingParameter.DEFAULT_INITIAL_WINDOWSIZE).value;
                 long delta = parameter.value - oldInitialWindowSize;
                 for (var stream : http2Streams.values()) {
-                    stream.sendWindow.addAndGet(delta);
+                    long updated = stream.sendWindow.addAndGet(delta);
+                    // RFC 7540 6.9.1: a stream window exceeding 2^31-1 after
+                    // the delta MUST be a connection error (the sibling
+                    // WINDOW_UPDATE paths already check; this path did not)
+                    if (updated > Integer.MAX_VALUE) {
+                        throw new Http2Exception(Http2ErrorCode.FLOW_CONTROL_ERROR, "stream send window overflow after SETTINGS_INITIAL_WINDOW_SIZE delta");
+                    }
                     if (delta > 0) {
                         // wake writers parked on their stream window: the grown
                         // window may let them proceed now (the same wake gap
@@ -762,6 +817,20 @@ public class Http2Connection {
             if(logger.isLoggable(Level.DEBUG)) {
                 logger.log(Level.DEBUG, () -> "sent connection window update, previous "+current+", now "+ receiveWindow.get());
             }
+        }
+    }
+
+    /** GOAWAY under tryLock: for callers on user/Timer threads (stop(),
+     * the cleaner) that must not block behind a stalled frame write. a
+     * skipped GOAWAY only loses the graceful-drain hint */
+    public void sendGoAwayIfIdle(Http2ErrorCode errorCode) throws IOException {
+        if (!tryLock()) {
+            return;
+        }
+        try {
+            sendGoAway(errorCode);
+        } finally {
+            unlock();
         }
     }
 

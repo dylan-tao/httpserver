@@ -31,7 +31,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpPrincipal;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.security.Principal;
 
 /**
@@ -45,7 +44,11 @@ import java.security.Principal;
  */
 public class AuthFilter extends Filter {
 
-    private Authenticator authenticator;
+    // volatile: setAuthenticator runs on admin threads while request threads
+    // read the field - without the happens-before edge an in-flight
+    // connection could serve unauthenticated on a stale null forever, and a
+    // concurrent null-set could NPE between the check and the call
+    private volatile Authenticator authenticator;
 
     /** create the filter around the given authenticator; it may be
      *  replaced later via {@link #setAuthenticator} */
@@ -63,14 +66,6 @@ public class AuthFilter extends Filter {
         authenticator = a;
     }
 
-    private void consumeInput(HttpExchange t) throws IOException {
-        InputStream i = t.getRequestBody();
-        byte[] b = new byte[4096];
-        while (i.read(b) != -1)
-            ;
-        i.close();
-    }
-
     /**
      * The filter's implementation, which is invoked by the server
      */
@@ -82,10 +77,17 @@ public class AuthFilter extends Filter {
                 e.setPrincipal(s.getPrincipal());
                 chain.doFilter(t);
             } else if (r instanceof Authenticator.Retry ry) {
-                consumeInput(t);
+                // the reply goes out IMMEDIATELY: consuming the request body
+                // first (the JDK-inherited behavior) read the RAW socket
+                // stream forever on upgrade/CONNECT requests (getRequestBody
+                // hands those out unframed - an unauthenticated client pinned
+                // the connection thread and the 401 never went out), and let
+                // a drip-fed body pin the thread even on normal requests.
+                // the framework's own bounded drain (64KB/1s) after the
+                // response handles the leftover bytes, exactly as it does
+                // for any handler that ignores the body
                 t.sendResponseHeaders(ry.getResponseCode(), -1);
             } else if (r instanceof Authenticator.Failure f) {
-                consumeInput(t);
                 t.sendResponseHeaders(f.getResponseCode(), -1);
             }
         } else {

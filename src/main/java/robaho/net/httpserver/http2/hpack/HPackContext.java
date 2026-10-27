@@ -221,23 +221,41 @@ public class HPackContext {
     /** decode an HPACK varint, returning (value << 32) | nextIndex packed in a
      * long: the previous record-per-varint allocated 1-3 objects per header
      * field (field index, name length, value length) */
-    private static long decodeUnsignedInteger(byte[] buffer, int index, int prefixBits) {
+    private static long decodeUnsignedInteger(byte[] buffer, int index, int prefixBits) throws Http2Exception {
         int value = buffer[index] & ((1 << prefixBits) - 1);
         index++;
         if (value < ((1 << prefixBits) - 1)) {
             return ((long) value << 32) | index;
         }
 
+        // accumulate in a long with an explicit bound: an unbounded int
+        // accumulator wraps on >=6 continuation bytes (at m=28 the shift
+        // sets the sign bit, at m>=35 the shift count silently wraps mod
+        // 32). a wrapped NEGATIVE value used to pass the dynamic-table
+        // size-update check (> 4096) and silently wipe the table, permanently
+        // desyncing the connection's HPACK state from the peer's. RFC 7541
+        // 5.1: overlong or out-of-range integer encodings MUST be treated
+        // as decoding errors
+        long acc = value;
         int m = 0;
         int b;
         do {
             b = buffer[index] & 0xFF;
-            value += (b & 0x7F) << m;
+            acc += (b & 0x7FL) << m;
+            // reject BOTH overflow directions AND overlong encodings: at
+            // m=63 the long sign bit wraps acc negative (passes a plain
+            // > MAX_VALUE check), and from m=70 the shift count wraps mod 64
+            // landing bytes in wrong positions. a 31-bit value needs at most
+            // 5 continuation bytes; more is either overlong or overflowing
+            if (acc > Integer.MAX_VALUE || acc < 0 || m >= 35) {
+                throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR,
+                    "integer encoding overflows 31 bits or is overlong");
+            }
             m += 7;
             index++;
         } while ((b & 0x80) != 0);
 
-        return ((long) value << 32) | index;
+        return (acc << 32) | index;
     }
 
     private static int packedValue(long packed) {

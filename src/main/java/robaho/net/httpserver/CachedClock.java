@@ -11,11 +11,31 @@ class CachedClock {
     private static final DateTimeFormatter HTTP_DATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US);
 
-    private static volatile long now = System.currentTimeMillis();
-    private static volatile String dateAndTime = formatDate();
+    /** immutable snapshot of (now, date string, encoded bytes): ONE
+     * volatile publish per tick, so a reader can never pair the string of
+     * one generation with the bytes of another (the wire Date header and
+     * getResponseHeaders().getFirst("Date") could differ by a tick) */
+    public record ClockValue(long now, String dateAndTime, byte[] dateAndTimeBytes) {}
+
+    /** the current snapshot: readers that need BOTH the string and the bytes
+     * (the response Date fast path) must take ONE snapshot - two separate
+     * accessor calls can straddle a tick and re-introduce the cross-
+     * generation pairing the snapshot exists to prevent */
+    public static ClockValue snapshot() {
+        return current;
+    }
+
+    private static volatile ClockValue current = initialClockValue();
+
+    /** format once: the old initializer called formatDate() twice, so the
+     * very first snapshot could itself pair two different seconds */
+    private static ClockValue initialClockValue() {
+        String s = formatDate();
+        return new ClockValue(System.currentTimeMillis(), s,
+            s.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+    }
     /** the Date header value pre-encoded: written on every response, encoding
      * the string each time is pure waste */
-    private static volatile byte[] dateAndTimeBytes = dateAndTime.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
 
     private static final java.util.Timer TIMER = new java.util.Timer("httpserver-activity-timer", true);
 
@@ -35,25 +55,26 @@ class CachedClock {
     }
 
     public static long now() {
-        return now;
+        return current.now();
     }
     /**
      * return the formatted current date and time suitable for use with the Date http header. this
      * is OK to cache since the resolution is only seconds, and we will update more often than that
      */
     public static String dateAndTime() {
-        return dateAndTime;
+        return current.dateAndTime();
     }
 
     /** the cached Date header value, pre-encoded as ISO-8859-1 */
     static byte[] dateAndTimeBytes() {
-        return dateAndTimeBytes;
+        return current.dateAndTimeBytes();
     }
 
     static void updateNow() {
-        now = System.currentTimeMillis();
-        dateAndTime = formatDate();
-        dateAndTimeBytes = dateAndTime.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        long t = System.currentTimeMillis();
+        String fresh = formatDate();
+        current = new ClockValue(t, fresh,
+            fresh.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
     }
 
     static TimerTask createTask() {

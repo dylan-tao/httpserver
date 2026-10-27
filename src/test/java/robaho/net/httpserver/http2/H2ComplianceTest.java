@@ -355,9 +355,14 @@ public class H2ComplianceTest {
                 var response = client.awaitResponse(1);
                 Assert.assertTrue(response.goaway(),
                     "WINDOW_UPDATE during an incomplete header block must terminate the connection");
-            } catch (IOException expected) {
-                // connection closed without a GOAWAY is also an acceptable
-                // rejection; serving the partial request is not
+            } catch (IOException e) {
+                // only a CLOSED connection is an acceptable rejection: a
+                // wall-clock timeout means the server WEDGED its reader on
+                // the violation (the exact bug class this test guards) and
+                // must fail, not pass
+                if (!e.getMessage().contains("connection closed")) {
+                    throw e;
+                }
             }
         }
     }

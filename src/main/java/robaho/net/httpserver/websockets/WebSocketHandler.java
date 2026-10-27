@@ -37,6 +37,14 @@ public abstract class WebSocketHandler implements HttpHandler {
             WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "Missing Websocket-Key");
             return;
         }
+        // RFC 6455 4.2.1: the key MUST be base64 of 16 random bytes (24
+        // chars). the old code accepted any non-empty value, so a
+        // non-conformant client got a 101 computed over garbage
+        String wsKey = headers.getFirst(WebSocketHandshake.HEADER_WEBSOCKET_KEY);
+        if (wsKey == null || wsKey.length() != 24 || !wsKey.matches("[A-Za-z0-9+/]{22}==")) {
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_BAD_REQUEST, "Invalid Websocket-Key");
+            return;
+        }
 
         try {
             exchange.getResponseHeaders().add(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT,
@@ -69,6 +77,13 @@ public abstract class WebSocketHandler implements HttpHandler {
         // result (accepted subprotocol etc.) is known at this point, and a
         // handshake failure above never creates a half-initialized socket
         WebSocket webSocket = openWebSocket(exchange);
+        if (webSocket == null) {
+            // a user handler returning null: the 101 already went out, so
+            // the best available outcome is a clean connection close - the
+            // old NPE logged a stack trace as "unexpected exception"
+            WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_INTERNAL_ERROR, "openWebSocket returned null");
+            return;
+        }
 
         // this won't return until websocket is closed
         webSocket.readWebsocket();

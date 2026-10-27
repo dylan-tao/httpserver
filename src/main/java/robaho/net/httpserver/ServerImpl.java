@@ -79,6 +79,12 @@ class ServerImpl {
     private final ServerSocket socket;
 
     private final Set<HttpConnection> allConnections = Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    // per-instance (was static): a JVM-global registry made every server's
+    // ping task ping every OTHER server's connections (N x amplification),
+    // let one server's ping failure close another server's live connection,
+    // and bled /__debug output across instances
+    private final Set<Http2ConnectionHandler> allHttp2Connections = Collections.newSetFromMap(new ConcurrentHashMap<>());
     /** O(1) live connection count: deriving it from allConnections.size()
      * walks the whole backing map on every accept */
     private final java.util.concurrent.atomic.AtomicInteger connectionCount = new java.util.concurrent.atomic.AtomicInteger();
@@ -108,6 +114,9 @@ class ServerImpl {
     // some request in the past
     static final long IDLE_INTERVAL = ServerConfig.getIdleIntervalMillis();
     private final Timer timer;
+    /** separate from the cleaner timer: ping writes can block on a stalled
+     * peer's connection lock and must not freeze connection management */
+    private Timer pingTimer;
     private final Logger logger;
     private Thread dispatcherThread;
 
@@ -140,7 +149,13 @@ class ServerImpl {
         // note: the shared CachedClock clock runs on its own daemon timer
         // (see CachedClock) so it survives this server instance
         if (H2_PING_INTERVAL_MILLIS > 0) {
-            timer.schedule(Http2ConnectionHandler.createTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
+            // a SEPARATE timer: the ping write takes the connection lock,
+            // which a stalled h2 download can hold in a blocking socket
+            // write for the TCP retransmission timeout. sharing the
+            // cleaner's single-threaded timer let that freeze idle-close,
+            // maxReqTime and maxIdleConnections enforcement server-wide
+            pingTimer = new Timer("h2-keepalive-ping", true);
+            pingTimer.schedule(createH2PingTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
         }
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
@@ -177,7 +192,11 @@ class ServerImpl {
                 connection.debug();
                 sb.append(connection.toString()).append('\n');
             }
-            Http2ConnectionHandler.debug();
+            // per-instance registry (was static): dump only THIS server's
+            // h2 connections
+            for (var handler : allHttp2Connections) {
+                handler.debug();
+            }
             byte[] body = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             try (var os = exchange.getResponseBody()) {
@@ -283,10 +302,14 @@ class ServerImpl {
         }
         long latest = System.currentTimeMillis() + delay * 1000L;
         while (System.currentTimeMillis() < latest) {
-            if (activeExchanges.get() == 0) {
-                // all in-flight exchanges completed and no new ones can
-                // start (finished is already set): return early instead of
-                // sleeping out the full delay (JDK parity)
+            if (activeExchanges.get() == 0 && noConnectionBusy()) {
+                // all in-flight exchanges completed, no connection is
+                // parsing or handling a request, and no new ones can start
+                // (finished is already set): return early instead of
+                // sleeping out the full delay. the busy check is required:
+                // activeExchanges only increments at doFilter entry, so a
+                // request mid-parse (or an h2 stream mid-flight) was
+                // invisible to the old check and was abandoned by the sweep
                 break;
             }
             // sleep the remaining interval (in coarse steps) instead of a
@@ -299,12 +322,46 @@ class ServerImpl {
                 break;
             }
         }
+        // graceful h2 shutdown (RFC 7540 6.8 SHOULD): tell live h2 peers
+        // which streams were processed so they can retry safely on a new
+        // connection instead of guessing at a bare TCP close
+        // best-effort GOAWAY on a helper thread with a HARD bound: the
+        // GOAWAY write itself can block on a stalled peer's full kernel
+        // send buffer (verified: stop(0) hung until the peer's socket was
+        // force-closed) - the operator's stop() must never be hostage to a
+        // remote client. a skipped GOAWAY only loses the graceful-drain hint
+        var goawayExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            var t = new Thread(r, "h2-goaway");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            for (HttpConnection c : allConnections) {
+                if (c.http2Connection != null) {
+                    goawayExecutor.execute(() -> {
+                        try {
+                            c.http2Connection.sendGoAwayIfIdle(Http2ErrorCode.NO_ERROR);
+                        } catch (IOException ignored) {
+                        }
+                    });
+                }
+            }
+            goawayExecutor.shutdown();
+            goawayExecutor.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            goawayExecutor.shutdownNow();
+        }
         for (HttpConnection c : allConnections) {
-            c.close();
+            c.close(false);
         }
         allConnections.clear();
         connectionCount.set(0);
         timer.cancel();
+        if (pingTimer != null) {
+            pingTimer.cancel();
+        }
 
         if (dispatcherThread != null && dispatcherThread != Thread.currentThread()) {
             try {
@@ -375,7 +432,7 @@ class ServerImpl {
                         executor.execute(() -> {
                         try {
                             acceptConnection(s);
-                        } catch (IOException t) {
+                        } catch (IOException | RuntimeException t) {
                             // socket-level failures during connection setup are
                             // client-side noise, not server faults: an RST'd
                             // connection fails setTcpNoDelay with EINVAL on
@@ -391,7 +448,12 @@ class ServerImpl {
                             }
                         }
                     });
-                    } catch (RejectedExecutionException e) {
+                    } catch (RuntimeException e) {
+                        // REE is the standard overload signal; any other
+                        // RuntimeException from a user-supplied executor
+                        // (custom bounded pools throw ISE) used to escape and
+                        // kill the accept loop permanently - the server kept
+                        // "started" while accepting nothing
                         s.close();
                     }
                 } catch (IOException e) {
@@ -454,23 +516,54 @@ class ServerImpl {
                 // for some reason, creating an SSLServerSocket and setting the default parameters would
                 // not work, so upgrade to a SSLSocket after connection
                 SSLSocketFactory ssf = httpsConfig.getSSLContext().getSocketFactory();
-                SSLSocket sslSocket = (SSLSocket) ssf.createSocket(s, null, false);
+                // autoClose=true: with false, closing the layered SSLSocket
+                // never closes the underlying accepted socket (JDK
+                // SSLSocketImpl.closeSocket only calls super.close() when
+                // autoClose || !isLayered()) - every HTTPS connection leaked
+                // its raw socket fd (CLOSE_WAIT accumulation until EMFILE)
+                SSLSocket sslSocket = (SSLSocket) ssf.createSocket(s, null, true);
                 SSLConfigurator.configure(sslSocket,httpsConfig);
 
                 sslSocket.setHandshakeApplicationProtocolSelector((_sslSocket, protocols) -> {
                     if (protocols.contains("h2") && ServerConfig.http2OverSSL()) {
                         return "h2";
-                    } else {
+                    }
+                    if (protocols.contains("http/1.1")) {
                         return "http/1.1";
                     }
+                    // RFC 7301: never answer with a protocol the client did
+                    // not offer (a gRPC client offering only "h2" against
+                    // http2OverSSL=false used to get "http/1.1" - strict
+                    // OpenSSL peers abort the handshake on the mismatch).
+                    // "" (NOT null) omits the ALPN extension from the reply:
+                    // the JDK selector contract treats null as "no agreement"
+                    // and answers with a fatal no_application_protocol alert,
+                    // hard-failing the TLS handshake for every h2-only client
+                    return "";
                 });
                 // the following forces the SSL handshake to complete in order to determine the negotiated protocol.
                 // the handshake is bounded so a stalled client cannot hold the connection thread indefinitely
-                sslSocket.setSoTimeout((int) ServerConfig.getSslHandshakeTimeoutMillis());
+                // clamp before the int cast: a huge configured timeout
+                // overflowed to negative and made every https accept throw
+                sslSocket.setSoTimeout((int) Math.min(
+                    Math.max(ServerConfig.getSslHandshakeTimeoutMillis(), 1), Integer.MAX_VALUE));
                 try {
-                    sslSocket.getSession();
+                    // getSession() SWALLOWS IOExceptions and returns a dummy
+                    // invalid session on handshake failure (the JDK closes the
+                    // socket in that case): without the validity check a dead
+                    // socket proceeded into connection registration, and the
+                    // finally's setSoTimeout(0) on the closed socket threw
+                    // SocketException - misclassified as client noise at
+                    // DEBUG, hiding every real handshake failure from the logs
+                    if (!sslSocket.getSession().isValid()) {
+                        throw new java.net.SocketException("SSL handshake failed");
+                    }
                 } finally {
-                    sslSocket.setSoTimeout(0);
+                    try {
+                        sslSocket.setSoTimeout(0);
+                    } catch (java.net.SocketException closedDuringHandshake) {
+                        // socket already closed by the failed handshake
+                    }
                 }
                 if ("h2".equals(sslSocket.getApplicationProtocol())) {
                     logger.log(Level.DEBUG, () -> "http2 connection "+ sslSocket);
@@ -487,6 +580,15 @@ class ServerImpl {
             try {
                 allConnections.add(c);
                 connectionCount.incrementAndGet();
+                if (isFinishing()) {
+                    // stop()'s sweep may have completed between the entry
+                    // check and this registration (the SSL handshake can
+                    // stretch the window by seconds): nothing would ever
+                    // close this connection - the sweep is done and the
+                    // cleaner timer is cancelled. close it here
+                    closeConnection(c);
+                    return;
+                }
 
                 if (http2) {
                     if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
@@ -510,9 +612,66 @@ class ServerImpl {
         return logger;
     }
 
+    /** true when no connection is parsing or handling a request (h1
+     * inRequest, or h2 streams in progress) - used by stop(delay)'s
+     * early-exit so mid-flight requests are not abandoned */
+    private boolean noConnectionBusy() {
+        for (var c : allConnections) {
+            if (c.inRequest || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** the h2 keepalive ping task: iterates THIS server's h2 connections
+     * (the registry is per-instance - a JVM-global one made every server
+     * ping every other server's connections and let one server's ping
+     * failure close another's live connection) */
+    private TimerTask createH2PingTask() {
+        return new TimerTask() {
+            @Override
+            public void run() {
+                long now = System.currentTimeMillis();
+                for (var exchange : allHttp2Connections) {
+                    if (exchange.connection.lastActivityTime + H2_PING_INTERVAL_MILLIS < now) {
+                        try {
+                            // the ping write refreshes lastActivityTime via
+                            // the activity timer stream; restore it afterwards
+                            // so a dead connection still appears idle to the
+                            // cleaner. NOTE: a real activity landing inside the
+                            // microsecond window of the ping write is clobbered
+                            // by the restore; any live request generates
+                            // further socket activity that re-updates the
+                            // timestamp, so this micro-race is accepted
+                            var before = exchange.connection.lastActivityTime;
+                            exchange.http2.sendPing();
+                            exchange.connection.lastActivityTime = before;
+                        } catch (IOException ex) {
+                            // ping failed - the connection is dead. closing
+                            // the socket unblocks the reader thread, whose
+                            // finally block performs the full cleanup
+                            // management thread: no flush (a stalled peer
+                            // must not stall keepalive detection)
+                            exchange.connection.close(false);
+                        }
+                    }
+                }
+            }
+        };
+    }
+
     private void closeConnection(HttpConnection conn) {
+        // the connection's own thread: deliver any pending coalesced response
+        closeConnection(conn, true);
+    }
+
+    /** @param flushResponse false from the cleaner/stop threads: the flush
+     *  can block on a stalled peer's full kernel send buffer, and those
+     *  threads must never be held hostage by a remote client */
+    private void closeConnection(HttpConnection conn, boolean flushResponse) {
         logger.log(Level.TRACE, () -> "closing connection: " + conn.toString());
-        conn.close();
+        conn.close(flushResponse);
         if (allConnections.remove(conn)) {
             connectionCount.decrementAndGet();
         }
@@ -538,11 +697,11 @@ class ServerImpl {
         final Http2Connection http2;
         final String protocol;
 
-        private static final Set<Http2ConnectionHandler> allHttp2Connections = Collections.newSetFromMap(new ConcurrentHashMap<>());
-        static void debug() {
-            for(var exchange : allHttp2Connections) {
-                exchange.http2.debug();
-            }
+        void debug() {
+            // the CALLER already iterates allHttp2Connections: the loop here
+            // made the dump quadratic (N connections x N dumps) after the
+            // static-to-instance registry conversion
+            http2.debug();
         }
 
         Http2ConnectionHandler(String protocol, HttpConnection conn) throws IOException {
@@ -562,37 +721,6 @@ class ServerImpl {
             // let the idle cleaner reach the h2 stream buffer pool for shrinking
             conn.http2Connection = http2;
         }
-
-        static TimerTask createTask() {
-            return new TimerTask() {
-                @Override
-                public void run() {
-                    long now = System.currentTimeMillis();
-                    for(var exchange : allHttp2Connections) {
-                        if(exchange.connection.lastActivityTime + H2_PING_INTERVAL_MILLIS < now) {
-                            try {
-                                // the ping write refreshes lastActivityTime via the
-                                // activity timer stream; restore it afterwards so a
-                                // dead connection still appears idle to the cleaner.
-                                // NOTE: a real activity landing inside the microsecond
-                                // window of the ping write is clobbered by the restore;
-                                // any live request generates further socket activity
-                                // that re-updates the timestamp, so this micro-race is
-                                // accepted (see todo.md 二次排查 item 13)
-                                var before = exchange.connection.lastActivityTime;
-                                exchange.http2.sendPing();
-                                exchange.connection.lastActivityTime = before;
-                            } catch (IOException ex) {
-                                // ping failed - the connection is dead. closing the
-                                // socket unblocks the reader thread, whose finally
-                                // block performs the full cleanup
-                                exchange.connection.close();
-                            }
-                        }
-                    }
-                }
-        };
-    }
 
         @Override
         public void run() {
@@ -687,7 +815,7 @@ class ServerImpl {
             // front (bodies without a declared length are bounded
             // incrementally in the stream's DATA path)
             long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
-            if (bodySizeLimit >= 0) {
+            if (bodySizeLimit > 0) {
                 String contentLength = request.getFirst("content-length");
                 if (contentLength != null) {
                     try {
@@ -707,6 +835,15 @@ class ServerImpl {
             if (ctx == null) {
                 logger.log(Level.DEBUG, "No context found for request "+uriPath+", rejecting as not found");
                 rejectStream(stream, out, "404");
+                return;
+            }
+            if (ctx.getHandler() == null) {
+                // h1 parity: a context without a handler gets a 500 there
+                // (ServerImpl's h1 path checks this); h2 NPE'd inside the
+                // filter chain instead, resetting the stream with
+                // INTERNAL_ERROR and logging a WARNING
+                logger.log(Level.WARNING, "no handler configured for context " + uriPath);
+                rejectStream(stream, out, "500");
                 return;
             }
 
@@ -821,7 +958,12 @@ class ServerImpl {
                 // the idle cleaner may concurrently shrink the output buffer
                 // the reply is written into
                 connection.inRequest = true;
-                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, "-", "Request line too long");
+                // surface the ACTUAL parse error: the old fixed message
+                // reported every header-line failure as "Request line too
+                // long" (the differential harness hit it on the blank-line
+                // cap)
+                throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, "-",
+                    e.getMessage() == null ? "malformed request" : e.getMessage());
             }
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
@@ -894,7 +1036,7 @@ class ServerImpl {
                 nis.growBuffer();
             }
             long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
-            if (bodySizeLimit >= 0 && clen > bodySizeLimit) {
+            if (bodySizeLimit > 0 && clen > bodySizeLimit) {
                 // declared Content-Length over the opt-in body cap. chunked
                 // bodies without a declared length are bounded incrementally
                 // in LeftOverInputStream
@@ -941,7 +1083,10 @@ class ServerImpl {
                 * be involved in this process.
              */
             String exp = headers.getFirst("Expect");
-            if (exp != null && exp.equalsIgnoreCase("100-continue")) {
+            // HTTP/1.0 clients have no 1xx concept (RFC 7231 5.1.1: the
+            // expectation MUST be ignored): the interim 100 was parsed as
+            // the final response and desynced the connection
+            if (exp != null && exp.equalsIgnoreCase("100-continue") && req.protocol().endsWith("1.1")) {
                 logReply(100, requestLine, null);
                 sendReply(
                         HttpStatus.HTTP_CONTINUE, false, null);
@@ -1094,18 +1239,29 @@ class ServerImpl {
             long now = CachedClock.now();
 
             for (var c : allConnections) {
+                // h2 connections never set inRequest (their streams run on
+                // their own threads): treat an h2 connection with streams in
+                // progress as in-request, or the idle close would kill
+                // ACTIVE h2 streams at the idle timeout
+                boolean busy = c.inRequest
+                    || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
                 if (c.drainingAt != 0 && now- c.drainingAt >= IDLE_INTERVAL / 2) {
-                    closeConnection(c);
+                    closeConnection(c, false);
                     continue;
                 }
-                if (now- c.lastActivityTime >= IDLE_INTERVAL && !c.inRequest) {
+                if (now- c.lastActivityTime >= IDLE_INTERVAL && !busy) {
                     logger.log(Level.DEBUG, "closing idle connection");
                     stats.idleCloseCount.incrementAndGet();
-                    closeConnection(c);
-                } else if (MAX_REQ_TIME != -1 && c.inRequest && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
+                    closeConnection(c, false);
+                } else if (MAX_REQ_TIME != -1 && busy && !c.streamsHandedOff
+                        && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
+                    // streamsHandedOff (websocket/CONNECT tunnels) is NOT a
+                    // "request": a quiet websocket session is legal (app-level
+                    // keepalive), but inRequest=true made it look stalled and
+                    // the cleaner killed it at maxReqTime
                     logger.log(Level.WARNING, "closing connection due to request processing time");
-                    closeConnection(c);
-                } else if (!c.inRequest && now - c.lastActivityTime >= IDLE_INTERVAL / 4) {
+                    closeConnection(c, false);
+                } else if (!busy && now - c.lastActivityTime >= IDLE_INTERVAL / 4) {
                     // idle but not yet closeable: release the 16KB input/output
                     // buffers and the line buffer. the connection stays alive
                     // (keep-alive) and the buffers re-allocate on the next
@@ -1126,8 +1282,15 @@ class ServerImpl {
                     // before it is set), so recency of lastActivityTime is the
                     // only signal that an h2 connection is still serving:
                     // without the recency condition the cap would count - and
-                    // eventually close - ACTIVE h2 connections
-                    if (!c.inRequest && now - c.lastActivityTime >= IDLE_INTERVAL / 2) {
+                    // eventually close - ACTIVE h2 connections. the busy
+                    // check matches the main idle-close branch: h2
+                    // connections never set inRequest, so without it the cap
+                    // sweep killed quiet-but-busy h2 streams (a handler
+                    // mid-DB-query sorted as the "oldest idle" and was
+                    // closed preferentially once the cap was exceeded)
+                    boolean busy = c.inRequest
+                        || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
+                    if (!busy && now - c.lastActivityTime >= IDLE_INTERVAL / 2) {
                         idle.add(c);
                     }
                 }
@@ -1136,7 +1299,7 @@ class ServerImpl {
                     for (int i = 0; i < idle.size() - MAX_IDLE_CONNECTIONS; i++) {
                         logger.log(Level.DEBUG, "closing idle connection (over max idle limit)");
                         stats.idleCloseCount.incrementAndGet();
-                        closeConnection(idle.get(i));
+                        closeConnection(idle.get(i), false);
                     }
                 }
             }

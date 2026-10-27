@@ -161,12 +161,28 @@ public class ProxyHandler implements HttpHandler {
         var uri = exchange.getRequestURI();
         if(uri.getScheme()==null) {
             try {
-                uri = new URI(proxy.scheme,uri.getUserInfo(),exchange.getLocalAddress().getHostName(),exchange.getLocalAddress().getPort(),uri.getPath(),uri.getQuery(),uri.getFragment());
+                // rebuild from RAW components: getPath()/getQuery() return
+                // DECODED values and the multi-arg URI constructor does not
+                // re-escape characters that are legal in path/query, so a
+                // proxied "/foo%2Fbar?q=a%26b" reached the origin as
+                // "/foo/bar?q=a&b" - path confusion and query splitting
+                String rawPath = uri.getRawPath() == null ? "" : uri.getRawPath();
+                String rawQuery = uri.getRawQuery();
+                // getHostString(): getHostName() does a REVERSE-DNS lookup
+                // per request (blocking resolver on the hot path)
+                String target = proxy.scheme + "://" + exchange.getLocalAddress().getHostString()
+                    + ":" + exchange.getLocalAddress().getPort() + rawPath
+                    + (rawQuery == null ? "" : "?" + rawQuery);
+                uri = new URI(target);
             } catch (URISyntaxException ex) {
                 throw new IOException("invalid proxy uri ",ex);
             }
         }
-        proxies.put(authorityOf(uri),proxy);
+        // bounded: absolute-form request targets carry client-controlled
+        // authorities, so an unbounded map is attacker-driven memory growth
+        if (proxies.size() < 1024) {
+            proxies.put(authorityOf(uri),proxy);
+        }
         // effectively final for the lambda below (uri may have been rebuilt above)
         final URI target = uri;
         try {
@@ -255,13 +271,30 @@ public class ProxyHandler implements HttpHandler {
 
     private static final Set<String> restrictedHeaders = Set.of(
             "CONNECTION","HOST","UPGRADE","CONTENT-LENGTH","TRANSFER-ENCODING",
-            "TE","TRAILER","KEEP-ALIVE","PROXY-AUTHORIZATION");
+            "TE","TRAILER","KEEP-ALIVE","PROXY-AUTHORIZATION",
+            // java.net.http's builder rejects it with IllegalArgumentException,
+            // which killed the proxy request after the interim 100 response
+            "EXPECT");
 
     private static String[] headers(Headers headers) {
+        // headers NAMED IN the Connection header are hop-by-hop too (RFC
+        // 7230 6.1) and must be stripped alongside the static set
+        Set<String> connectionListed = new java.util.HashSet<>();
+        for (String v : headers.getOrDefault("Connection", List.of())) {
+            for (String token : v.split(",")) {
+                String t = token.trim();
+                if (!t.isEmpty()) {
+                    connectionListed.add(t.toUpperCase(java.util.Locale.ROOT));
+                }
+            }
+        }
         List<String> copy = new ArrayList<>();
         // Locale.ROOT: the default locale maps i -> İ in tr/az, which would
         // break the restricted-header match and fail every proxied request
-        headers.entrySet().stream().filter(e -> !restrictedHeaders.contains(e.getKey().toUpperCase(java.util.Locale.ROOT))).forEach(e -> e.getValue().forEach(v -> { copy.add(e.getKey()); copy.add(v);}));
+        headers.entrySet().stream().filter(e -> {
+            String upper = e.getKey().toUpperCase(java.util.Locale.ROOT);
+            return !restrictedHeaders.contains(upper) && !connectionListed.contains(upper);
+        }).forEach(e -> e.getValue().forEach(v -> { copy.add(e.getKey()); copy.add(v);}));
         return copy.toArray(String[]::new);
     }
 

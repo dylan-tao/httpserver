@@ -27,7 +27,21 @@ public class Http2Stats {
     private volatile long lastStatsTime = System.currentTimeMillis();
 
     /** a one-line snapshot of every counter, for logging or the stats endpoint */
+    private final java.util.concurrent.locks.ReentrantLock statsLock = new java.util.concurrent.locks.ReentrantLock();
+
     public String stats() {
+        // the timestamp write + nine getAndSet(0) resets must not interleave
+        // across concurrent /__stats scrapes (bogus per-sec deltas) - the
+        // same race ServerStats guards against with its own lock
+        statsLock.lock();
+        try {
+            return statsLocked();
+        } finally {
+            statsLock.unlock();
+        }
+    }
+
+    private String statsLocked() {
         long now = System.currentTimeMillis();
         // clamp like ServerStats: two reads in the same millisecond must not
         // divide by ~0 and print Infinity

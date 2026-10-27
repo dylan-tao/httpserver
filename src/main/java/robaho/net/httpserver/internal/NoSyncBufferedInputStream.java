@@ -158,6 +158,11 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * the next fill() grows the buffer back to the full size on demand.
      */
     public void shrinkForNextRequest() {
+        // buf is null once closed: the run loop checks !connection.closed
+        // then calls this, but the cleaner/stop sweep can close in between
+        if (buf == null) {
+            return;
+        }
         if (pos >= count && buf.length > IDLE_READ_BUFFER_SIZE) {
             // drop the BIG buffer without allocating: the next fill
             // allocates the small buffer on demand. the small buffer is
@@ -307,6 +312,15 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
             // compare against the configured size, not buf.length: the buffer
             // is allocated lazily and may still be empty here
             if (len >= bufferSize) {
+                // this direct read can block exactly like fill()'s: run the
+                // pre-read flush hook here too. without it, a handler body
+                // read with a large buffer (readAllBytes) bypassed the hook,
+                // so a deferred pipelined response could sit in the output
+                // buffer behind a partially-received body forever
+                Runnable flushHook = preReadFlush;
+                if (flushHook != null) {
+                    flushHook.run();
+                }
                 return getInIfOpen().read(b, off, len);
             }
             fill();

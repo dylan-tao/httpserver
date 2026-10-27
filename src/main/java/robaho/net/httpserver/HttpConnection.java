@@ -77,7 +77,11 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     /** the h2 protocol handler for h2c/h2 connections, set when the
      * connection is upgraded; null for plain h1. lets the idle cleaner
      * reach the h2 stream buffer pool for shrinking */
-    robaho.net.httpserver.http2.internal.Http2Connection http2Connection;
+    // volatile: written by the connection's VT after registration into
+    // allConnections; the cleaner (Timer thread) reads it to pick the h2
+    // shrink path - a stale null would route it through the UNSYNCHRONIZED
+    // h1 buffer shrink against concurrent h2 frame writes
+    volatile robaho.net.httpserver.http2.internal.Http2Connection http2Connection;
 
     final AtomicLong requestCount = new AtomicLong();
 
@@ -138,6 +142,16 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
         return (socket instanceof SSLSocket ssl) ? ssl.getSession() : null;
     }
 
+    @Override
+    public long lastActivityTime() {
+        return lastActivityTime;
+    }
+
+    @Override
+    public void setLastActivityTime(long t) {
+        lastActivityTime = t;
+    }
+
     public boolean isSSL() {
         return socket instanceof SSLSocket;
     }
@@ -169,6 +183,17 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     private final java.util.concurrent.locks.ReentrantLock closeLock = new java.util.concurrent.locks.ReentrantLock();
 
     void close() {
+        close(true);
+    }
+
+    /** close the connection.
+     * @param flushResponse true from the connection's own thread: deliver a
+     *  pending coalesced response (the pipelining optimization defers its
+     *  flush until here). false from the cleaner/stop threads: a stalled
+     *  peer's full kernel send buffer must not block connection management
+     *  on the shared Timer thread - the response is doomed anyway
+     */
+    void close(boolean flushResponse) {
         closeLock.lock();
         try {
             if (closed) {
@@ -187,18 +212,77 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             if (socket.isClosed()) {
                 return;
             }
+
+            var h2 = http2Connection;
+
+            // 1. FLUSH BEFORE is.close(): is.close() closes the socket, and
+            //    the old order let the flush throw SocketException with the
+            //    response still buffered - silently discarded. the fuzzer
+            //    and the JDK differential both caught this: a pipelined
+            //    request after Connection: close received 0 bytes
+            if (flushResponse) {
+                try {
+                    if (h2 == null) {
+                        os.flush();
+                    } else if (h2.tryLock()) {
+                        try {
+                            os.flush();
+                        } finally {
+                            h2.unlock();
+                        }
+                    } // else: a stalled frame write holds the lock; skip
+                } catch (IOException e) {
+                    logger.log(Level.TRACE, "error flushing output stream", e);
+                }
+            }
+
+            // 2. consume whatever the peer already sent so the kernel
+            //    receive queue is empty at close: closing with unread data
+            //    makes TCP send RST instead of FIN, and the RST purges the
+            //    client's receive queue - erasing a response it was
+            //    entitled to read (RFC 9112 9.6).
+            //    HARD wall-clock deadline (the SoTimeout alone only bounds a
+            //    read when NO data arrives - a peer trickling 1 byte per
+            //    interval kept the loop returning forever, pinning the
+            //    closing thread while it holds closeLock: stop() and the
+            //    cleaner parked behind it). short per-read timeout so a
+            //    quiet peer costs at most one 50ms wait; plain sockets skip
+            //    entirely when nothing is pending, SSL always attempts
+            //    (available() there only reports decrypted plaintext, not
+            //    the kernel-queued ciphertext the RST actually stems from)
             try {
-                /* ensure the socket is closed */
+                boolean ssl = socket instanceof javax.net.ssl.SSLSocket;
+                if (ssl || socket.getInputStream().available() > 0) {
+                    long drainDeadline = System.currentTimeMillis() + 250;
+                    socket.setSoTimeout(50);
+                    var raw = socket.getInputStream();
+                    byte[] scratch = new byte[8192];
+                    while (raw.read(scratch) != -1) {
+                        if (System.currentTimeMillis() >= drainDeadline) {
+                            break;
+                        }
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+
+            // 3. close everything
+            try {
                 is.close();
             } catch (IOException e) {
                 logger.log(Level.TRACE, "error closing input stream", e);
             }
-            try {
-                // see issue #19, flush before closing, in case of pending data
-                os.flush();
-                os.close();
-            } catch (IOException e) {
-                logger.log(Level.TRACE, "error closing output stream", e);
+            if (h2 == null && flushResponse) {
+                // h1 only, and only from the owning thread: os.close()
+                // flushes any residue, which can block on a stalled peer -
+                // acceptable on the connection's own thread, never on the
+                // cleaner Timer. h2 skips os.close() entirely: its
+                // flushBuffer without the connection lock tears frames
+                try {
+                    os.close();
+                } catch (IOException e) {
+                    logger.log(Level.TRACE, "error closing output stream", e);
+                }
             }
             try {
                 socket.close();

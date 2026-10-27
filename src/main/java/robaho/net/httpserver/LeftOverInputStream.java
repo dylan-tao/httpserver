@@ -127,7 +127,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 return c;
             }
             long cap = ServerConfig.getMaxRequestBodySize();
-            if (cap >= 0 && ++totalRead > cap) {
+            if (cap > 0 && ++totalRead > cap) {
                 throw new IOException("request body exceeds the configured maximum of " + cap + " bytes");
             }
             return one[0] & 0xFF;
@@ -151,7 +151,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
             int n = readImpl(b, off, len);
             if (n > 0) {
                 long cap = ServerConfig.getMaxRequestBodySize();
-                if (cap >= 0 && (totalRead += n) > cap) {
+                if (cap > 0 && (totalRead += n) > cap) {
                     throw new IOException("request body exceeds the configured maximum of " + cap + " bytes");
                 }
             }
@@ -178,6 +178,13 @@ abstract class LeftOverInputStream extends FilterInputStream {
                 len = readImpl(drainBuffer, 0, len);
                 if (len == -1) {
                     break;
+                }
+                // the same incremental body cap the read paths enforce:
+                // skip() used to bypass it, so a handler discarding the body
+                // via skip() consumed an unbounded chunked stream
+                long cap = ServerConfig.getMaxRequestBodySize();
+                if (cap > 0 && (totalRead += len) > cap) {
+                    throw new IOException("request body exceeds the configured maximum of " + cap + " bytes");
                 }
                 remaining -= len;
             }
@@ -251,8 +258,29 @@ abstract class LeftOverInputStream extends FilterInputStream {
                     continue;
                 }
                 t.connection.drainingAt = CachedClock.now();
-                int len = (int) Math.min(Math.min(drainBuffer.length, available), l);
-                len = readImpl(drainBuffer, 0, len);
+                // the buffered bytes may not complete the chunk framing
+                // (a withheld CRLF makes readImpl block in a socket read):
+                // bound it with the same SoTimeout the empty branch uses,
+                // or the documented 1s drain bound is bypassed and the
+                // connection VT is pinned until the cleaner's 15s sweep
+                var socket = t.connection.getSocket();
+                int previousTimeout = socket.getSoTimeout();
+                int len;
+                try {
+                    // the REMAINING budget (deadline already includes the
+                    // wait): the old formula (remaining + MAX) went NEGATIVE
+                    // once elapsed exceeded 2s (a drip-fed chunked body
+                    // reaches that), and setSoTimeout(<0) throws
+                    // IllegalArgumentException; clamp to >=1ms
+                    socket.setSoTimeout((int) Math.max(
+                        deadline - System.currentTimeMillis(), 1));
+                    len = (int) Math.min(Math.min(drainBuffer.length, available), l);
+                    len = readImpl(drainBuffer, 0, len);
+                } catch (java.net.SocketTimeoutException e) {
+                    break;
+                } finally {
+                    socket.setSoTimeout(previousTimeout);
+                }
                 if (len == -1) {
                     eof = true;
                     return true;
