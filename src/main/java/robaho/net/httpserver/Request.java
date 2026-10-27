@@ -137,6 +137,23 @@ class Request {
 
     Headers hdrs = null;
 
+    /** per-connection header table, reused across the connection's requests
+     * (same ThreadLocal model as PARSE_BUILDERS below: one VT per h1
+     * connection, so no sharing, and the table dies with the connection).
+     * reuse is invisible to handlers: ExchangeImpl's constructor copies the
+     * parsed entries into a fresh JDK Headers (reqHdrs) before any handler
+     * sees them, so this table never escapes the parse path and clearing it
+     * for the next request cannot corrupt a retained view. keys and values
+     * are non-null parse products, so the OpenAddressMap null-tombstone
+     * convention is never hit here */
+    private static final ThreadLocal<OptimizedHeaders> HEADER_TABLE =
+        ThreadLocal.withInitial(() -> new OptimizedHeaders(16));
+
+    /** a request with an extraordinary header count grows the table well
+     * past the common size; do not pin that capacity for the connection's
+     * lifetime (the same policy the parse builders apply) */
+    private static final int HEADER_TABLE_RETAIN_LIMIT = 64;
+
     /** per-connection parse builders (request line, header key, header
      * value), reused across the connection's requests: the h1 model is one
      * virtual thread per connection, so a ThreadLocal hands each connection
@@ -207,7 +224,14 @@ class Request {
         if (hdrs != null) {
             return hdrs;
         }
-        hdrs = new OptimizedHeaders(16);
+        OptimizedHeaders table = HEADER_TABLE.get();
+        if (table.size() > HEADER_TABLE_RETAIN_LIMIT) {
+            table = new OptimizedHeaders(16);
+            HEADER_TABLE.set(table);
+        } else {
+            table.clear();
+        }
+        hdrs = table;
 
         BufferedBuilder[] builders = PARSE_BUILDERS.get();
         BufferedBuilder key = builders[1];
