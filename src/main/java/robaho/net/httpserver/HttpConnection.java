@@ -73,6 +73,11 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
      * unsynchronized flush would race the external writer on this buffer */
     volatile boolean streamsHandedOff;
     volatile long drainingAt;
+    /** set when the peer declared it will send nothing more (h1
+     * "Connection: close" exchange, fatal parse error): the RST-prevention
+     * drain in close() only exists to empty bytes the peer may STILL send,
+     * so for these connections it is pure latency on a doomed exchange */
+    volatile boolean peerDoneSending;
 
     /** the h2 protocol handler for h2c/h2 connections, set when the
      * connection is upgraded; null for plain h1. lets the idle cleaner
@@ -258,7 +263,14 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             try {
                 boolean ssl = socket instanceof javax.net.ssl.SSLSocket;
                 boolean owningThread = flushResponse;
-                if (owningThread && (ssl || socket.getInputStream().available() > 0)) {
+                // peerDoneSending: the peer's request carried h1
+                // "Connection: close" (or was fatally malformed and answered
+                // with 400+close) - it promised to send nothing further, so
+                // there is nothing the drain protects. skipping avoids the
+                // up-to-250ms wait on every close-mode connection (bench and
+                // health-check churn), including the SSL always-drain branch
+                if (owningThread && !peerDoneSending
+                        && (ssl || socket.getInputStream().available() > 0)) {
                     long drainDeadline = System.currentTimeMillis() + 250;
                     socket.setSoTimeout(50);
                     var raw = socket.getInputStream();

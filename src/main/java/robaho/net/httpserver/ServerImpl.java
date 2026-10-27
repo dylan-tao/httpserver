@@ -1219,6 +1219,10 @@ class ServerImpl {
                 rawout.write(builder.toString().getBytes(ISO_8859_1));
                 rawout.flush();
                 if (closeNow) {
+                    // a rejected request never has a tx: mark the connection
+                    // directly - the peer's malformed request is the last
+                    // thing it sent, so the close drain has nothing to do
+                    connection.peerDoneSending = true;
                     closeConnection(connection);
                 }
             } catch (IOException e) {

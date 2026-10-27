@@ -390,6 +390,14 @@ class ExchangeImpl {
                 }
             }
         }
+        if (close) {
+            // every path that lands here (client "Connection: close",
+            // HTTP/1.0 semantics, handler-requested close, upgrade/CONNECT)
+            // means the peer will send nothing after its request: tell the
+            // connection so its close() skips the RST-prevention input
+            // drain - for these exchanges the drain is pure latency
+            connection.peerDoneSending = true;
+        }
 
         writeHeaders(statusLineBytes(rCode), rspHdrs, ros);
         this.rspContentLen = contentLen;
