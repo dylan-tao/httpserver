@@ -11,6 +11,7 @@ class UnknownFrame extends BaseFrame {
     }
 
     @Override
+    /** dead code, kept to satisfy the abstract base: unknown frames are ignored per RFC 7540 4.1; this stub drops the body it parsed */
     public void writeTo(OutputStream os) throws IOException {
         getHeader().writeTo(os);
     }

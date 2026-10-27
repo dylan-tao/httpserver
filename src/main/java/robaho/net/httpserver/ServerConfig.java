@@ -186,8 +186,8 @@ public final class ServerConfig {
                                         DEFAULT_MAX_REQ_HEADER_SIZE),
                                 0);
 
-                        // 0 or negative means unlimited (README: "0 或负
-                        // 数为不限"); the enforcement checks use > 0 so a
+                        // 0 or negative means unlimited; the enforcement
+                        // checks use > 0 so a
                         // literal 0 disables rather than rejects everything
                         maxRequestBodySize = Long.getLong(pkg + ".maxRequestBodySize",
                                 DEFAULT_MAX_REQUEST_BODY_SIZE);

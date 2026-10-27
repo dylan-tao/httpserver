@@ -71,4 +71,16 @@ public class FormParserTest {
             new ByteArrayInputStream("expr=a%3Db".getBytes(StandardCharsets.UTF_8)));
         Assert.assertEquals(params.get("expr"), List.of("a=b"));
     }
+
+    /** the max_form_bytes cap (10MB default): a body over the cap throws -
+     *  the cap had zero test coverage. the cap is read at class-init, so
+     *  this exercises the real default (a 10MB+1 body), not a runtime
+     *  property override */
+    @Test
+    public void testMaxFormBytesCap() throws Exception {
+        int cap = 10 * 1024 * 1024;
+        var over = new byte[cap + 1];
+        Assert.assertThrows(IOException.class,
+            () -> FormParser.parse("UTF-8", new ByteArrayInputStream(over)));
+    }
 }

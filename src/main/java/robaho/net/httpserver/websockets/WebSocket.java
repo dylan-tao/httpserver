@@ -161,12 +161,12 @@ public abstract class WebSocket {
         logger.log(TRACE, "frame sent: {0}", frame);
     }
 
-    /** close this websocket with a normal closure. the 3-arg variant is
-     * internal: initiatedByRemote is a fact the framework tracks, not a
-     * parameter for the caller to guess */
     /** initiate (or acknowledge) the close handshake: sends a Close frame
-     *  with the given code and reason and closes the connection. safe to
-     *  call more than once - only the first call has an effect */
+     *  with the given code and reason; the connection fully closes once the
+     *  peer echoes (or the 10s watchdog forces it). safe to call more than
+     *  once - only the first call has an effect. the 3-arg variant is
+     *  internal: initiatedByRemote is a fact the framework tracks, not a
+     *  parameter for the caller to guess */
     public void close(CloseCode code, String reason) throws IOException {
         close(code, reason, false);
     }
@@ -216,8 +216,6 @@ public abstract class WebSocket {
         }
     }
 
-    /** only one thread may transition to CLOSED and invoke onClose (the lock
-     * is reentrant from close()) */
     /** subclass hook invoked under the lock before a forced close (the
      * watchdog path): stop background tasks that would otherwise outlive the
      * websocket. the default is a no-op */
@@ -245,7 +243,15 @@ public abstract class WebSocket {
                     if (state != WebSocketLifecycle.CLOSING) {
                         return;
                     }
-                    if (!lock.tryLock()) {
+                    // NOTE: the watchdog calls doCloseLocked DIRECTLY - it must
+                    // bypass the BufferedWebSocket.doClose override, whose
+                    // future.get(DRAIN_TIMEOUT_SECONDS) would stall the shared
+                    // watchdog Timer behind
+                    // every wedged socket. this bypass is an invariant: routing the
+                    // watchdog through doClose for "uniformity" reintroduces that
+                    // stall (the pill still reaches the drain via the
+                    // prepareForcedClose hook inside doCloseLocked)
+            if (!lock.tryLock()) {
                         scheduleCloseWatchdog(WATCHDOG_RETRY_MILLIS);
                         return;
                     }

@@ -1,5 +1,9 @@
 # robaho httpserver
 
+> 本文档为中文版。英文使用文档见 [README.en.md](README.en.md)。
+> This README is in Chinese; see [README.en.md](README.en.md) for English.
+
+
 零依赖的 JDK `com.sun.net.httpserver.HttpServer` [规范](https://docs.oracle.com/en/java/javase/21/docs/api/jdk.httpserver/com/sun/net/httpserver/package-summary.html)替代实现，专为 **JDK 25 + 虚拟线程** 设计。
 
 ## 特性
@@ -82,7 +86,7 @@ public class Test {
 用于基本测试（下载、echo、hello）：
 
 ```
-mvn -q compile test-compile exec:java -Dexec.mainClass=com.example.SimpleFileServer -Dexec.classpathScope=test
+mvn -q compile test-compile exec:java -Dexec.mainClass=SimpleFileServer -Dexec.classpathScope=test
 ```
 
 ## WebSocket
@@ -211,6 +215,6 @@ HTTP/2 连接级发送窗口（服务端→客户端方向）初始为 65535 字
 
 ## 测试与合规
 
-- 几乎所有 JDK 原有测试均已包含（145 项 TestNG 套件全绿）
+- 几乎所有 JDK 原有测试均已包含（全部 TestNG 套件通过（当前 214 项，见 CI））
 - 额外的代理、WebSocket、HTTP/2 合规测试
 - HTTP/2 通过 [h2spec](https://github.com/summerwind/h2spec) 全部规范测试

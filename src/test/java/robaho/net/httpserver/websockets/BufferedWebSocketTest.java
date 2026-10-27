@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * First coverage for BufferedWebSocket (previously untested, todo.md D-11):
+ * First coverage for BufferedWebSocket
  * the byte cap on the pending queue. the frame-count bound (1024) alone
  * allowed 1024 x frame-size retention when the consumer stalls.
  */

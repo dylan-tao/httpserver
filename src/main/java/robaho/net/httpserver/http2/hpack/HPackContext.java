@@ -391,7 +391,6 @@ public class HPackContext {
         return out;
     }
 
-    /** exact encoded size of a string literal: varint length prefix + raw bytes */
     /** exact encoded size of a string literal: huffman when shorter (RFC 7541
      * 5.2 "SHOULD"), literal otherwise - varint length prefix + payload */
     private static int stringEncodedSize(byte[] value) {

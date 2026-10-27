@@ -233,8 +233,6 @@ public class MultipartFormParser {
         }
     }
 
-    // leading \s* (not \s): "form-data;name=\"f\"" (no space after the
-    // semicolon, legal per RFC 6266) must still match
     /** part header line cap: unbounded lines OOM'd the JVM (64MB heap died
      * to one 64MB header line). mirrors the h1 header line cap */
     private static final int MAX_PART_HEADER_LINE = 64 * 1024;
@@ -244,6 +242,8 @@ public class MultipartFormParser {
     private static final int MAX_PARTS = Integer.getInteger("robaho.net.httpserver.max_form_params", 1000); // 0 == no limit
     private static final long MAX_TOTAL_BYTES = Long.getLong("robaho.net.httpserver.max_form_bytes", 10L * 1024 * 1024); // 0 == no limit
 
+    // leading \s* (not \s): "form-data;name=\"f\"" (no space after the
+    // semicolon, legal per RFC 6266) must still match
     private static final Pattern optionPattern = Pattern.compile("\\s*(?<key>[^=\\s\"]+)\\s*=\\s*\"(?<value>.*)\"");
 
     /** split Content-Disposition options on ';', respecting quoted values */

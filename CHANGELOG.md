@@ -23,16 +23,27 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
 - `/__debug` now returns the connection/stream dump as the response body.
 - CI (GitHub Actions, JDK 25), multi-stage Dockerfile (JDK 25), Maven
   enforcer (requireJavaVersion 25), THIRD-PARTY-NOTICES.
-- Test suite grown to 189 tests, including: h2-over-TLS ALPN (negotiation,
+- Test suite grown to 214 tests, including: h2-over-TLS ALPN (negotiation,
   fallback, multiplexing), h1 chunked trailer coverage, four-path request
   body cap assertions, full-size DATA frame pool round-trip, and the
   pre-existing h2 compliance/regression suites.
 
 ### Changed
+- **`ProxyHandler.authorizeConnect` now DENIES CONNECT by default** (403);
+  1.x allowed every target. Override `authorizeConnect` to restore
+  per-target policy.
+- url-encoded form parsing enforces a **10MB default body cap**
+  (`max_form_bytes`, configurable); query-string keys are percent-decoded
+  before grouping; malformed escapes throw the declared
+  `UnsupportedEncodingException` instead of an unchecked IAE.
+- test_mains (the standalone regression programs) are **compile-only** in
+  the Maven build - main's gradle pipeline executed them at publish time;
+  run individual mains with
+  `java -cp target/classes:target/test-classes <ClassName>`.
 - **Build moved from Gradle to Maven**; target is now JDK 25
   (`--release 25`). ScopedValue (JEP 506) and compact object headers
   (JEP 450, exercised in the test JVM) are available.
-- 17 classes renamed for intent-revealing names, dead public API removed
+- 18 classes renamed for intent-revealing names (ContentEncoding -> ContentTypeCharset, Attributes -> AttributeKeys, Code -> HttpStatus, ActivityTimer -> CachedClock, ...) and dead public API removed
   (see MIGRATION.md for the complete mapping).
 - API surface narrowed: buffer/data-structure internals moved to the
   non-exported `internal` packages, the HTTP/2 engine moved to

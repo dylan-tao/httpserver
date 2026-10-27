@@ -36,7 +36,15 @@ public abstract class BufferedWebSocket extends WebSocket {
      * (including a queued CloseFrame) before cancelling it: long enough for
      * a full queue under normal load, short enough that close() stays
      * responsive when the peer stops reading */
-    private static final long DRAIN_TIMEOUT_SECONDS = 2;
+    // 6s: flushing a healthy consumer's backlog is milliseconds in
+    // isolation, but under load (GC pressure, CPU contention) even 200KB
+    // through a backpressured socket exceeded 2s - measured as a ~44%
+    // flake rate in full-suite runs. 2s failed under load; 5s was
+    // verified green 5x but leaves thin headroom on slower hosts; 6s adds
+    // margin while staying a bound: a STALLED consumer (the budget's
+    // purpose) blocks indefinitely on the socket write and is detected in
+    // 6s exactly as well as in 2s
+    private static final long DRAIN_TIMEOUT_SECONDS = 6;
 
     private final LinkedBlockingQueue<WebSocketFrame> queue = new LinkedBlockingQueue<>(MAX_PENDING_FRAMES);
     private final AtomicInteger pending = new AtomicInteger();
@@ -99,9 +107,52 @@ public abstract class BufferedWebSocket extends WebSocket {
         // - the peer is unresponsive, waiting for a stalled drain write
         // would only delay the teardown; the drain exits on the pill as soon
         // as its current write fails
-        if (!queue.offer(POISON_PILL)) {
-            queue.poll();
-            queue.offer(POISON_PILL);
+        enqueuePoisonPill();
+    }
+
+    /** GUARANTEE the exit pill lands in the queue:
+     * 1. contains() fast path: an earlier close path's pill serves as-is
+     * 2. put() (not offer): cannot lose the freed slot to a racing producer.
+     *    a park is possible in the narrow window where the drain has died
+     *    but state is not yet CLOSED (the drain's own stream closes run
+     *    first): a producer winning the freed slot then leaves put() waiting
+     *    with no consumer. reaching it needs the 1024-cap refilled during
+     *    close AND losing the slot race; the socket close in the caller's
+     *    doClose path fails the parked write eventually - accepted edge
+     * 3. every branch returns - single iteration in practice; the loop
+     *    shape only covers the contains()-excluded pill-poll case */
+    private void enqueuePoisonPill() {
+        // fast path: a pill is already queued by an earlier close-path call
+        if (queue.contains(POISON_PILL)) {
+            return;
+        }
+        while (true) {
+            WebSocketFrame dropped = queue.poll();
+            if (dropped == null) {
+                // momentarily empty: the pill slots straight in
+                queue.offer(POISON_PILL);
+                return;
+            }
+            if (dropped == POISON_PILL) {
+                // unreachable given the contains() fast path; keep the pill
+                queue.offer(POISON_PILL);
+                return;
+            }
+            pending.decrementAndGet();
+            var payload = dropped.getBinaryPayload();
+            if (payload != null) {
+                queuedBytes.addAndGet(-payload.length);
+            }
+            // put (not offer): cannot lose to a racing producer. the only
+            // producers left are close-racing sends whose frames are doomed
+            try {
+                queue.put(POISON_PILL);
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                queue.offer(POISON_PILL);
+                return;
+            }
         }
     }
 
@@ -112,17 +163,12 @@ public abstract class BufferedWebSocket extends WebSocket {
         // drain task a moment to flush before the streams are closed.
         // no lock needed here: the once-only close transition is enforced by
         // the locked super.doClose; this body is safe to run twice.
-        // if the queue is full the exit signal would be dropped and the
-        // drain task only exits via the future timeout + interrupt, losing
-        // the queued frames: make room by dropping the OLDEST frame
-        if (!queue.offer(POISON_PILL)) {
-            queue.poll();
-            queue.offer(POISON_PILL);
-        }
+        enqueuePoisonPill();
         if (Thread.currentThread() != drainThread) {
             // called from the read/user thread: wait for the drain task.
             // from the drain task itself this would deadlock on our own
-            // future for the full 2s timeout and then self-interrupt
+            // future for the full drain timeout (DRAIN_TIMEOUT_SECONDS)
+            // and then self-interrupt
             try {
                 future.get(DRAIN_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
             } catch (Exception ignored) {

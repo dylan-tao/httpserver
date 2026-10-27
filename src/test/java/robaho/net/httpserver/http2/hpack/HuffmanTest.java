@@ -6,8 +6,7 @@ import robaho.net.httpserver.http2.Http2Exception;
 
 /**
  * Huffman decoding against the RFC 7541 appendix vectors, plus the two
- * regressions found while rewriting the decoder (todo.md P3-43 and the
- * P2-40 note): decoded output longer than the input, and invalid padding.
+ * regressions found while rewriting the decoder: decoded output longer than the input, and invalid padding.
  */
 public class HuffmanTest {
 

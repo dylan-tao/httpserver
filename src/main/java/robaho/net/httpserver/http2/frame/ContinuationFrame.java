@@ -14,6 +14,7 @@ public class ContinuationFrame extends BaseFrame {
 	}
 
     @Override
+    /** dead code, kept to satisfy the abstract base: outbound header blocks are written by HPackContext.encodeHeaderFrames (CONTINUATION splitting included); this parse-only frame would drop the header block */
     public void writeTo(OutputStream os) throws IOException {
         getHeader().writeTo(os);
     }

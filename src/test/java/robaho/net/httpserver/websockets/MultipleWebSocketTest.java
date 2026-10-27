@@ -57,12 +57,15 @@ public class MultipleWebSocketTest {
 
     @Test
     public void testEchoMultiple() throws InterruptedException {
+        // fail() on the JDK listener thread never propagates to the test
+        // thread: record what arrived and assert on the test thread
+        var wrongMsg = new java.util.concurrent.atomic.AtomicReference<String>();
         CountDownLatch latch = new CountDownLatch(1);
         var client = WebSocketClientUtil.createWSC(9000, path, s -> {
             if ("a_message".equals(s)) {
                 latch.countDown();
             } else {
-                fail("received wrong message");
+                wrongMsg.compareAndSet(null, s);
             }
         }, null);
 
@@ -71,7 +74,7 @@ public class MultipleWebSocketTest {
             if ("a_message".equals(s)) {
                 latch2.countDown();
             } else {
-                fail("received wrong message");
+                wrongMsg.compareAndSet(null, s);
             }
         }, null);
 
@@ -84,6 +87,7 @@ public class MultipleWebSocketTest {
         if (!latch2.await(5, TimeUnit.SECONDS)) {
             fail("did not receive message on client 2");
         }
+        org.testng.Assert.assertNull(wrongMsg.get(), "received wrong message: " + wrongMsg.get());
     }
 
 }

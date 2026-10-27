@@ -13,7 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /**
- * Regression tests for the 2026-09-21 review batch (todo.md 复查-4 and 复查-6):
+ * Regression tests for the 2026-09-21 review batch
  * a trailer on an interleaved (older, still open) stream must not be rejected
  * by the out-of-order HEADERS guard, and a bare-LF HTTP/1.1 request line must
  * be accepted as a line terminator.
@@ -36,7 +36,7 @@ public class Review3Test {
     }
 
     /** stream 1 POST (no END_STREAM) + interleaved new stream 3 + stream 1
-     *  trailer: both streams must complete, no GOAWAY (复查-4) */
+     *  trailer: both streams must complete, no GOAWAY  */
     @Test
     public void testInterleavedStreamTrailer() throws Exception {
         if (!"true".equals(System.getProperty("robaho.net.httpserver.http2OverNonSSL"))) {
@@ -60,7 +60,7 @@ public class Review3Test {
         }
     }
 
-    /** a bare-LF request line (LF-only client) must be accepted (复查-6) */
+    /** a bare-LF request line (LF-only client) must be accepted  */
     @Test
     public void testBareLfRequestLine() throws Exception {
         try (Socket socket = new Socket("127.0.0.1", server.getAddress().getPort())) {

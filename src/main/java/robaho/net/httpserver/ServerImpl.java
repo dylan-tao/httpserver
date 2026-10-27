@@ -445,6 +445,7 @@ class ServerImpl {
                             try {
                                 s.close();
                             } catch (IOException ex) {
+                                // socket already dead; nothing to close
                             }
                         }
                     });
@@ -454,7 +455,13 @@ class ServerImpl {
                         // (custom bounded pools throw ISE) used to escape and
                         // kill the accept loop permanently - the server kept
                         // "started" while accepting nothing
-                        s.close();
+                        logger.log(Level.DEBUG, "executor rejected connection", e);
+                        try {
+                            s.close();
+                        } catch (IOException closeFailed) {
+                            // the outer IOException catch would misattribute
+                            // a close failure as an accept failure
+                        }
                     }
                 } catch (IOException e) {
                     if (isFinishing() || socket.isClosed()) {
@@ -850,7 +857,9 @@ class ServerImpl {
             logger.log(Level.TRACE,() -> "http2 request on "+connection+" "+method+" for "+uri);
 
             try {
-                activeExchanges.incrementAndGet();
+                // doFilterTracked is the SINGLE counting site for the
+                // in-flight exchange counter (h1 counts there too) - the old
+                // outer increment/finally here double-counted every h2 request
                 doFilterTracked(buildChain(ctx), new Http2ExchangeImpl(stream,uri,method,ctx,request,response,in,out));
             } catch (IOException e) {
                 // common with clients breaking connections; the stream is
@@ -859,8 +868,6 @@ class ServerImpl {
             } catch (Exception e) {
                 logger.log(Level.WARNING, "Dispatcher Exception on "+stream, e);
                 stats.handleExceptionCount.incrementAndGet();
-            } finally {
-                activeExchanges.decrementAndGet();
             }
         }
     }
@@ -967,6 +974,10 @@ class ServerImpl {
             }
 
             if("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
+                // mark busy BEFORE the handoff: between the request line and
+                // the h2 connection construction no busy marker existed, so
+                // stop(delay)'s sweep could close a connection mid-upgrade
+                connection.inRequest = true;
                 logger.log(Level.DEBUG,"found http2 request on non-SSL assuming prior knowledge");
                 // h2 frames (16KB DATA) must be read at the full buffer size,
                 // not the 2KB idle size the connection may carry
@@ -976,6 +987,14 @@ class ServerImpl {
                 // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
                 connection.getSocket().setTcpNoDelay(ServerConfig.http2NoDelay());
                 Http2ConnectionHandler exchange = new Http2ConnectionHandler(protocol, connection);
+                // clear the upgrade-window marker: the h2 connection is now
+                // registered, and its busy state is tracked by
+                // requestsInProgress (the cleaner's h2 branch). leaving
+                // inRequest=true forever would make idle h2c connections
+                // immortal - never idle-closed, never shrunk, never counted
+                // toward maxIdleConnections (the round-2 bug, re-introduced
+                // by the upgrade-window fix and caught in review)
+                connection.inRequest = false;
                 exchange.run();
                 return;
             }
@@ -1239,10 +1258,10 @@ class ServerImpl {
             long now = CachedClock.now();
 
             for (var c : allConnections) {
-                // h2 connections never set inRequest (their streams run on
-                // their own threads): treat an h2 connection with streams in
-                // progress as in-request, or the idle close would kill
-                // ACTIVE h2 streams at the idle timeout
+                // an h2c connection's inRequest is only true during the upgrade window
+                // (cleared at the Http2ConnectionHandler handoff); ALPN h2 never sets it.
+                // busy state is requestsInProgress: streams in progress must not be
+                // idle-closed mid-flight
                 boolean busy = c.inRequest
                     || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
                 if (c.drainingAt != 0 && now- c.drainingAt >= IDLE_INTERVAL / 2) {
@@ -1277,17 +1296,17 @@ class ServerImpl {
             if (MAX_IDLE_CONNECTIONS > 0) {
                 List<HttpConnection> idle = new ArrayList<>();
                 for (var c : allConnections) {
-                    // "idle" = no request in flight AND quiet for a while. h2
-                    // connections never set inRequest (the h2c branch returns
-                    // before it is set), so recency of lastActivityTime is the
-                    // only signal that an h2 connection is still serving:
-                    // without the recency condition the cap would count - and
+                    // "idle" = no request in flight AND quiet for a while.
+                    // h2 busy state is requestsInProgress (inRequest is only
+                    // the brief h2c upgrade window, cleared at the handoff);
+                    // ALPN h2 never sets it. recency of lastActivityTime is
+                    // the additional signal that an h2 connection is still
+                    // serving: without it the cap would count - and
                     // eventually close - ACTIVE h2 connections. the busy
-                    // check matches the main idle-close branch: h2
-                    // connections never set inRequest, so without it the cap
-                    // sweep killed quiet-but-busy h2 streams (a handler
-                    // mid-DB-query sorted as the "oldest idle" and was
-                    // closed preferentially once the cap was exceeded)
+                    // check matches the main idle-close branch: without it
+                    // the cap sweep killed quiet-but-busy h2 streams (a
+                    // handler mid-DB-query sorted as the "oldest idle" and
+                    // was closed preferentially once the cap was exceeded)
                     boolean busy = c.inRequest
                         || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
                     if (!busy && now - c.lastActivityTime >= IDLE_INTERVAL / 2) {
@@ -1306,7 +1325,6 @@ class ServerImpl {
         }
     }
 
-    /** returns true when s consists only of ASCII digits (1*DIGIT, RFC 7230) */
     /** run the filter chain with the in-flight exchange counter maintained:
      * shared by the h1 and h2 request paths so the counting cannot drift */
     private void doFilterTracked(Filter.Chain chain, com.sun.net.httpserver.HttpExchange exchange) throws IOException {

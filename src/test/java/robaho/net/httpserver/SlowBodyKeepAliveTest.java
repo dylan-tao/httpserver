@@ -16,7 +16,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * A client that sends its (small) request body slowly must keep the
  * connection alive: the response is flushed first, then drain() collects the
- * straggling body bytes within its bounded wait (todo.md 复查-3). The original
+ * straggling body bytes within its bounded wait. The original
  * non-blocking drain gave up as soon as available() hit zero and closed the
  * connection.
  */

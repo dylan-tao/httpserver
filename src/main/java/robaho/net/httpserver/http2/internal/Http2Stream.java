@@ -416,12 +416,6 @@ public class Http2Stream {
                 }
         });
     }
-    /**
-     * @param closeStream if true the output stream is closed, and any attempts
-     * to write data to the stream will fail. This is an optimization that
-     * allows the CLOSE_STREAM bit to be set in the Headers frame, reducing the
-     * packet count.
-     */
     /** an interim (1xx) response: encoded and sent WITHOUT consuming the
      * headersSent latch and WITHOUT END_STREAM - the final response still
      * goes through writeResponseHeaders afterwards */
@@ -445,6 +439,11 @@ public class Http2Stream {
         return "HEAD".equalsIgnoreCase(requestHeaders.getFirst(":method"));
     }
 
+    /**
+     * @param closeStream if true, END_STREAM is set on the HEADERS frame and
+     * any later write to the stream fails - saves the trailing empty DATA
+     * frame
+     */
     public void writeResponseHeaders(boolean closeStream) throws IOException {
         if (headersSent.compareAndSet(false, true)) {
             try {

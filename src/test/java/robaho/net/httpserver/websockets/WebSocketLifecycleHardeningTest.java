@@ -17,12 +17,16 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WebSocketLifecycleHardeningTest {
     private HttpServer server;
     private final AtomicReference<WebSocket> serverWebSocket = new AtomicReference<>();
-    private final CountDownLatch closeLatch = new CountDownLatch(1);
+    private CountDownLatch closeLatch = new CountDownLatch(1);
     private final AtomicReference<String> closeInfo = new AtomicReference<>();
 
     @BeforeMethod
     void setUp() throws IOException {
         serverWebSocket.set(null);
+        // reset per test (a second latch-consuming test would otherwise
+        // inherit a fired latch) - the same pattern as the sibling tests
+        closeLatch = new CountDownLatch(1);
+        closeInfo.set(null);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/ws", new WebSocketHandler() {
             @Override

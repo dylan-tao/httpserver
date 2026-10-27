@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
  * followed by CONTINUATION frames) on an open stream must be treated as a
  * multi-frame trailer (RFC 7540 8.1.2.3), not as a new request - the original
  * bug fed the CONTINUATION into request processing and killed the whole
- * connection with GOAWAY (todo.md 复查-2).
+ * connection with GOAWAY.
  */
 public class MultiFrameTrailerTest {
     private HttpServer server;

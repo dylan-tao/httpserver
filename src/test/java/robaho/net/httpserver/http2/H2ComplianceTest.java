@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * h2c protocol compliance checks that were originally verified by the lost
- * /tmp/hs_smoke suite (todo.md P1-25): trailers on open streams, late frames
+ * /tmp/hs_smoke suite trailers on open streams, late frames
  * on closed streams, and RST_STREAM handling - all must stay stream-scoped
  * and never escalate to a connection-level GOAWAY.
  */

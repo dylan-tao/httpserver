@@ -152,7 +152,7 @@ public class ProxyHandler implements HttpHandler {
                 logger.fine("proxy connection to "+s.getRemoteSocketAddress()+" ended");
             }
             // the CONNECT exchange is complete: return instead of falling
-            // through into the forwarding path below (the P2-35 cleanup
+            // through into the forwarding path below (an earlier cleanup
             // removed the old finally-return without replacing it, so every
             // finished tunnel errored into the proxy-forwarding code)
             return;

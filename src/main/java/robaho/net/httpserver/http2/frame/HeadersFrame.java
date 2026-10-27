@@ -144,11 +144,11 @@ public class HeadersFrame extends BaseFrame {
 		return headersFrame;
 	}
 
+    /** never called: outbound HEADERS go through HPackContext.encodeHeaderFrames.
+     * kept only to satisfy the abstract base; a real serialization here would
+     * need the flags/priority/padding context this parse-only frame lost */
     @Override
     public void writeTo(OutputStream os) throws IOException {
-        byte[] buffer = getHeaderBlock();
-        FrameHeader.writeTo(os, buffer.length, FrameType.HEADERS, FlagSet.of(FrameFlag.END_HEADERS), getHeader().streamIdentifier());
-        os.write(buffer);
-        os.flush();
+        throw new UnsupportedOperationException("outbound HEADERS frames are encoded by HPackContext");
     }
 }

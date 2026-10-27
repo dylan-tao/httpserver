@@ -10,4 +10,7 @@ fileserver/
 .project
 test-output/
 .idea/
+
+# internal session/audit log
+todo.md
 .zcodeignore

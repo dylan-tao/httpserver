@@ -21,7 +21,6 @@
       <class name="robaho.net.httpserver.RequestHeadersTest"/>
       <class name="robaho.net.httpserver.SSLSessionTest"/>
       <class name="robaho.net.httpserver.extras.MultipartFormParserTest"/>
-      <class name="robaho.net.httpserver.http2.Http2Test"/>
       <class name="robaho.net.httpserver.websockets.MultipleWebSocketTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketResponseHandlerTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketTest"/>
@@ -32,6 +31,7 @@
       <class name="robaho.net.httpserver.http2.RequestBodyCapTest"/>
       <class name="robaho.net.httpserver.http2.H2ConnectionLevelRegressionTest"/>
       <class name="robaho.net.httpserver.http2.H2InterimResponseTest"/>
+      <class name="robaho.net.httpserver.http2.H2SemanticsGapTest"/>
       <class name="robaho.net.httpserver.http2.MultiConnectionH2Test"/>
       <class name="robaho.net.httpserver.ChunkedTrailerTest"/>
       <class name="robaho.net.httpserver.http2.MultiFrameTrailerTest"/>
@@ -43,6 +43,8 @@
       <class name="robaho.net.httpserver.websockets.WebSocketHandshakeErrorTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketFrameValidationTest"/>
       <class name="robaho.net.httpserver.extras.FormParserTest"/>
+      <class name="robaho.net.httpserver.extras.QueryParametersTest"/>
+      <class name="robaho.net.httpserver.extras.ConnectDefaultDenyTest"/>
       <class name="robaho.net.httpserver.extras.MultipartHardeningTest"/>
       <class name="robaho.net.httpserver.websockets.BufferedWebSocketTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketLifecycleHardeningTest"/>

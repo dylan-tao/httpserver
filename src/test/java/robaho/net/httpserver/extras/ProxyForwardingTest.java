@@ -16,7 +16,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 /**
- * End-to-end checks for the ProxyHandler forwarding path (todo.md P2-34):
+ * End-to-end checks for the ProxyHandler forwarding path
  * the proxied response must not carry both Content-length and
  * Transfer-encoding, and a request whose headers are all restricted must
  * still be forwarded (previously an IllegalArgumentException).
@@ -69,7 +69,7 @@ public class ProxyForwardingTest {
     }
 
     /** a completed CONNECT tunnel must not fall through into the forwarding
-     *  path (the P2-35 cleanup removed the old finally-return): the tunnel
+     *  path (an earlier cleanup removed the old finally-return): the tunnel
      *  itself must round-trip bytes in both directions */
     @Test
     public void testConnectTunnelRoundTrip() throws Exception {
@@ -98,10 +98,10 @@ public class ProxyForwardingTest {
             HttpServer proxy = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             proxy.createContext("/", allowing);
             proxy.start();
-            // NOTE: the CONNECT target must be a hostname: an IP literal
-            // ("127.0.0.1:port") is rejected by the generic request-line URI
-            // parse (not a valid URI scheme) - a known upstream-shared
-            // limitation, recorded in todo.md
+            // NOTE: the CONNECT target must be a hostname, not an IP
+            // literal: the generic request-line URI parser rejects
+            // authority-form IP targets (new URI("127.0.0.1:443") throws -
+            // not a valid scheme) before ProxyHandler ever sees them
             String host = java.net.InetAddress.getLoopbackAddress().getHostName();
             try (Socket socket = new Socket("127.0.0.1", proxy.getAddress().getPort())) {
                 socket.setSoTimeout(10_000);

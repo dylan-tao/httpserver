@@ -87,6 +87,13 @@ public class PipeliningStallTest {
                     + server.getAddress().getPort());
 
             RawClient.runRawSocketHttpClient(loopback, server.getAddress().getPort(),someContext,"I will send all of the data", -1);
+            // the old test had ZERO assertions: a regression of the
+            // pipelining hang could only manifest as an unbounded suite
+            // hang (the raw client used to discard the response)
+            String status = RawClient.lastStatusLine.get();
+            org.testng.Assert.assertNotNull(status, "no response head received (stall regression?)");
+            org.testng.Assert.assertTrue(status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.1 413"),
+                "unexpected status line: " + status);
         } finally {
             System.out.println("shutting server down");
             executor.shutdown();

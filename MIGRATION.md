@@ -15,12 +15,12 @@ HttpExchange, filters, authenticators) your code compiles unchanged.
 | `robaho.net.httpserver.Attributes` | `robaho.net.httpserver.AttributeKeys` |
 | `robaho.net.httpserver.UndefLengthOutputStream` | `robaho.net.httpserver.UndefinedLengthOutputStream` |
 | `robaho.net.httpserver.extras.ContentEncoding` | `robaho.net.httpserver.extras.ContentTypeCharset` |
-| `robaho.net.httpserver.http2.HTTP2Connection` | `robaho.net.httpserver.http2.Http2Connection` |
-| `robaho.net.httpserver.http2.HTTP2Stream` | `robaho.net.httpserver.http2.Http2Stream` |
+| `robaho.net.httpserver.http2.HTTP2Connection` | moved to `robaho.net.httpserver.http2.internal` (see the internal-package table below; NOT `http2.Http2Connection`) |
+| `robaho.net.httpserver.http2.HTTP2Stream` | moved to `robaho.net.httpserver.http2.internal` (see below) |
 | `robaho.net.httpserver.http2.HTTP2ErrorCode` | `robaho.net.httpserver.http2.Http2ErrorCode` |
 | `robaho.net.httpserver.http2.HTTP2Exception` | `robaho.net.httpserver.http2.Http2Exception` |
 | `robaho.net.httpserver.http2.HTTP2Stats` | `robaho.net.httpserver.http2.Http2Stats` |
-| `robaho.net.httpserver.http2.Utils` | `robaho.net.httpserver.http2.BinaryCodec` (methods renamed: `convertToBinary` → `writeInt32`, etc.) |
+| `robaho.net.httpserver.http2.Utils` | moved to `robaho.net.httpserver.http2.internal.BinaryCodec` (methods renamed: `convertToBinary` → `writeInt`, etc.) |
 | `robaho.net.httpserver.http2.frame.FrameSerializer` | `robaho.net.httpserver.http2.frame.FrameParser` |
 | `robaho.net.httpserver.http2.frame.GoawayFrame` | `robaho.net.httpserver.http2.frame.GoAwayFrame` |
 | `robaho.net.httpserver.http2.frame.NotImplementedFrame` | `robaho.net.httpserver.http2.frame.UnknownFrame` |
@@ -35,7 +35,7 @@ HttpExchange, filters, authenticators) your code compiles unchanged.
 |---|---|
 | `robaho.net.httpserver.Utils` | inline the two helpers; nothing in the public API depended on it |
 | `robaho.net.httpserver.DelegatingHttpExchange` | wrap `HttpExchange` directly |
-| `robaho.net.httpserver.OpenAddressIntMap` | `robaho.net.httpserver.OpenAddressMap` |
+| `robaho.net.httpserver.OpenAddressIntMap` | `robaho.net.httpserver.internal.OpenAddressMap` (non-exported) |
 | `robaho.net.httpserver.UndefLengthInputStream` | `UndefinedLengthOutputStream` / chunked responses |
 
 ## Moved to the internal package
@@ -60,6 +60,13 @@ The HTTP/2 engine (connection, stream, codec) is not API: the exported
 `robaho.net.httpserver.http2` package now contains only `Http2Stats`,
 `Http2ErrorCode` and `Http2Exception`.
 
+## Removed API members
+
+The exported `websockets` package also lost member-level API (RFC 6455
+5.1: server frames are never masked): `WebSocketFrame(OpCode, boolean,
+byte[], byte[])`, `WebSocketFrame(OpCode, boolean, String, byte[])` and
+`setUnmasked()`.
+
 ## Visibility narrowed to package-private
 
 These 1.x classes were public in an exported package but are
@@ -74,6 +81,9 @@ module users:
 
 ## Behavior changes
 
+- **`ProxyHandler.authorizeConnect` denies CONNECT by default** (403) -
+  1.x returned true for any target. Override `authorizeConnect` to allow
+  specific upstreams.
 - **JDK 25 required.** The build targets `--release 25`; the Maven
   enforcer fails the build early on older JDKs.
 - **h2 responses now include a `Date` header** (parity with h1). Tests

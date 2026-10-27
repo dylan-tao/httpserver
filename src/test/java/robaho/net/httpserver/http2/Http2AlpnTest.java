@@ -29,8 +29,9 @@ import static org.testng.Assert.assertTrue;
  * {@code robaho.net.httpserver.http2OverSSL=true} is set for the test JVM
  * (surefire systemPropertyVariables), and a full HTTP/2 exchange completes
  * over TLS. this is the only h2 transport test that can run against the JDK
- * client: the prior-knowledge test (Http2Test) is disabled because the JDK
- * client cannot do prior knowledge over plain sockets.
+ * client: prior-knowledge h2c is covered by the hand-rolled H2Client test
+ * classes instead (the JDK client cannot do prior knowledge over plain
+ * sockets).
  */
 public class Http2AlpnTest {
 

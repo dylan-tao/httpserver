@@ -74,7 +74,7 @@ public enum FrameFlag {
             }
             for (FrameFlag flag : FrameFlag._values) {
                 if ((tmp & flag.value) == flag.value) {
-                    if(!sb.isEmpty()) {
+                    if(sb.length() > 1) {   // not isEmpty: sb always starts with "["
                         sb.append(",");
                     }
                     sb.append(flag);

@@ -31,9 +31,13 @@ public class WebSocketDoubleCloseTest {
     private static CountDownLatch serverClosed;
     private static volatile long closeMillis;
 
+    /** the server-side instance, for state polling from the test thread */
+    static volatile DoubleCloseSocket serverSocket;
+
     static class DoubleCloseSocket extends BufferedWebSocket {
         DoubleCloseSocket(HttpExchange exchange) {
             super(exchange);
+            serverSocket = this;
         }
 
         @Override
@@ -84,6 +88,7 @@ public class WebSocketDoubleCloseTest {
         go = new CountDownLatch(1);
         serverClosed = new CountDownLatch(1);
         closeMillis = -1;
+        serverSocket = null;
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.createContext(path, new WebSocketHandler() {
             @Override
@@ -112,14 +117,23 @@ public class WebSocketDoubleCloseTest {
         // the client's Close puts the server into CLOSING (the read loop's
         // close(OPEN) path queues its CloseFrame behind the backlog)
         client.sendClose(1000, "");
-        Thread.sleep(200);
+        // wait for the server read loop to actually process the Close frame
+        // (a fixed sleep exercised the wrong path - close from OPEN - on
+        // slow runs, silently losing the double-close-during-CLOSING coverage)
+        long deadline = System.currentTimeMillis() + 5000;
+        while (serverSocket.state == robaho.net.httpserver.websockets.WebSocketLifecycle.OPEN
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        Assert.assertNotEquals(serverSocket.state, robaho.net.httpserver.websockets.WebSocketLifecycle.OPEN,
+            "the client's close must be processed before the second close fires");
         go.countDown();
 
         Assert.assertTrue(serverClosed.await(10, TimeUnit.SECONDS), "server close must complete");
         Assert.assertTrue(clientDone.await(10, TimeUnit.SECONDS), "client must see the close");
         Assert.assertEquals(received.get(), FRAMES,
                 "every queued frame must be flushed before the close; close took " + closeMillis + "ms");
-        Assert.assertTrue(closeMillis < 1900,
-                "close() must not burn the full future.get timeout: " + closeMillis + "ms");
+        Assert.assertTrue(closeMillis < 6000 - 100,
+                "close() must not burn the full 6s drain budget: " + closeMillis + "ms");
     }
 }

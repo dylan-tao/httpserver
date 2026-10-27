@@ -6,10 +6,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * extracts the charset parameter from the Content-Type header. despite the
- * class name (kept for API compatibility), this has nothing to do with
- * Content-Encoding - that header describes the response compression (e.g.
- * gzip) and never carries a charset.
+ * extracts the charset parameter from the Content-Type header. the 1.x name
+ * was {@code ContentEncoding} - misleading (that header describes response
+ * compression, e.g. gzip, and never carries a charset), so 2.0 renamed it
+ * (see MIGRATION.md).
  */
 public class ContentTypeCharset {
 

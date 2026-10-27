@@ -247,12 +247,18 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             //    closing thread while it holds closeLock: stop() and the
             //    cleaner parked behind it). short per-read timeout so a
             //    quiet peer costs at most one 50ms wait; plain sockets skip
-            //    entirely when nothing is pending, SSL always attempts
-            //    (available() there only reports decrypted plaintext, not
-            //    the kernel-queued ciphertext the RST actually stems from)
+            //    entirely when nothing is pending.
+            //    OWNING THREAD ONLY: for SSL sockets AppInputStream.read takes
+            //    an UNTIMED readLock that the connection's own VT holds while
+            //    parked on the next keep-alive request - a management-thread
+            //    drain blocks on that lock BEFORE any SoTimeout applies and
+            //    wedges the single cleaner Timer (or stop()) server-wide.
+            //    the JDK's own deplete() uses tryLock for exactly this.
+            //    management closes accept the residual RST risk instead
             try {
                 boolean ssl = socket instanceof javax.net.ssl.SSLSocket;
-                if (ssl || socket.getInputStream().available() > 0) {
+                boolean owningThread = flushResponse;
+                if (owningThread && (ssl || socket.getInputStream().available() > 0)) {
                     long drainDeadline = System.currentTimeMillis() + 250;
                     socket.setSoTimeout(50);
                     var raw = socket.getInputStream();

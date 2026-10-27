@@ -34,8 +34,6 @@ class CachedClock {
         return new ClockValue(System.currentTimeMillis(), s,
             s.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
     }
-    /** the Date header value pre-encoded: written on every response, encoding
-     * the string each time is pure waste */
 
     private static final java.util.Timer TIMER = new java.util.Timer("httpserver-activity-timer", true);
 
