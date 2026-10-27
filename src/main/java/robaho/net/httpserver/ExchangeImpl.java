@@ -35,9 +35,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.net.StandardSocketOptions;
 import java.net.URI;
 import java.nio.charset.Charset;
@@ -520,17 +518,11 @@ class ExchangeImpl {
     }
 
     public InetSocketAddress getRemoteAddress() {
-        Socket s = connection.getSocket();
-        InetAddress ia = s.getInetAddress();
-        int port = s.getPort();
-        return new InetSocketAddress(ia, port);
+        return connection.getRemoteAddress();
     }
 
     public InetSocketAddress getLocalAddress() {
-        Socket s = connection.getSocket();
-        InetAddress ia = s.getLocalAddress();
-        int port = s.getLocalPort();
-        return new InetSocketAddress(ia, port);
+        return connection.getLocalAddress();
     }
 
     public String getProtocol() {

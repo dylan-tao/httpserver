@@ -90,6 +90,11 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
 
     final AtomicLong requestCount = new AtomicLong();
 
+    /** cached connection endpoints; a socket's peer and local addresses
+     * never change over its lifetime */
+    private volatile InetSocketAddress remoteAddress;
+    private volatile InetSocketAddress localAddress;
+
     @Override
     public long requestCount() {
         return requestCount.get();
@@ -167,11 +172,20 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     }
 
     public InetSocketAddress getRemoteAddress() {
-        return (InetSocketAddress) socket.getRemoteSocketAddress();
+        // per-connection addresses are immutable: cache them instead of
+        // allocating two InetSocketAddress objects on every exchange's
+        // getRemoteAddress()/getLocalAddress() calls
+        if (remoteAddress == null) {
+            remoteAddress = (InetSocketAddress) socket.getRemoteSocketAddress();
+        }
+        return remoteAddress;
     }
 
     public InetSocketAddress getLocalAddress() {
-        return (InetSocketAddress) socket.getLocalSocketAddress();
+        if (localAddress == null) {
+            localAddress = (InetSocketAddress) socket.getLocalSocketAddress();
+        }
+        return localAddress;
     }
 
     void setContext(HttpContextImpl ctx) {
