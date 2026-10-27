@@ -195,6 +195,7 @@ Total Handler Exceptions: 0
 |---|---|
 | 高吞吐 h2 多路复用 | 默认即可（http2Nodelay=false） |
 | h2 SSE / 低延迟 | `-Drobaho.net.httpserver.http2Nodelay=true -Drobaho.net.httpserver.http2DisableFlushDelay=true` |
+| h2 通用吞吐（推荐起点） | `-Drobaho.net.httpserver.http2InitialWindowSize=131072 -Drobaho.net.httpserver.http2ConnectionWindowSize=131072`（128KB：默认 64KB 的一半窗口往返，流级缓冲增量约 +64KB/流，内存与吞吐的平衡点；更大上传场景再上调） |
 | 内存受限（容器/多实例） | `-XX:+UseCompactObjectHeaders` + G1（默认） |
 | 延迟敏感（P99 SLA） | `-XX:+UseZGC -XX:+ZGenerational` |
 | 吞吐优先、内存充裕 | `-XX:+UseZGC -XX:+ZGenerational`（不设 Xmx，自适应堆） |
