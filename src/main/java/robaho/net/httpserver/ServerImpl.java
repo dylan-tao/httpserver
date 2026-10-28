@@ -54,7 +54,6 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -837,7 +836,12 @@ class ServerImpl {
                 }
             }
 
-            String uriPath = Optional.ofNullable(uri.getPath()).orElse("/");
+            // null-check, not Optional.ofNullable: a fresh Optional per request is
+            // pure allocation on the dispatch hot path
+            String uriPath = uri.getPath();
+            if (uriPath == null) {
+                uriPath = "/";
+            }
             HttpContextImpl ctx = contexts.findContext(protocol, uriPath);
             if (ctx == null) {
                 logger.log(Level.DEBUG, "No context found for request "+uriPath+", rejecting as not found");
@@ -1063,7 +1067,12 @@ class ServerImpl {
                         "Request body exceeds the configured maximum of " + bodySizeLimit + " bytes");
             }
             logger.log(Level.TRACE,() -> "protocol "+protocol+" uri "+uri+" headers "+headers);
-            String uriPath = Optional.ofNullable(uri.getPath()).orElse("/");
+            // null-check, not Optional.ofNullable: a fresh Optional per request is
+            // pure allocation on the dispatch hot path
+            String uriPath = uri.getPath();
+            if (uriPath == null) {
+                uriPath = "/";
+            }
             ctx = contexts.findContext(protocol, uriPath);
             if (ctx == null) {
                 throw new RequestRejectedException(HttpStatus.HTTP_NOT_FOUND, requestLine, "No context found for request");
