@@ -125,6 +125,13 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   caches). byte-identical output (writeAscii is a pure function);
   benefit scales with response header count (~0.3-0.5% at realistic
   6-8 header responses; h2 needs nothing - HPACK already interns names).
+- Multi-valued response headers (Set-Cookie et al.) are written with
+  indexed loops instead of enhanced-for: the validation, counting and
+  write passes each used to allocate an Iterator per multi-valued
+  header per response. (the ArrayList$Itr entries in the earlier
+  profiles turned out to be the JFR sampler's own periodic-event
+  allocations, not the server's - robaho's write path now shows zero
+  iterator allocations under a multi-value-header load.)
 - README gained a measured deployment-recipes section: compact object
   headers, G1PeriodicGCInterval idle-uncommit (validated live: periodic
   collection fires ~30s into idle, committed shrinks to the -Xms floor),

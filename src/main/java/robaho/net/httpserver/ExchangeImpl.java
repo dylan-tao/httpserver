@@ -525,8 +525,11 @@ class ExchangeImpl {
                 if (raw instanceof String single) {
                     posRef[0] = writeHeaderLine(buf, posRef[0], key, single);
                 } else if (raw instanceof List<?> list) {
-                    for (Object v : list) {
-                        posRef[0] = writeHeaderLine(buf, posRef[0], key, (String) v);
+                    // indexed loop: an enhanced-for would allocate an
+                    // Iterator per multi-valued header per response pass
+                    // (this loop runs twice - validation and write)
+                    for (int li = 0; li < list.size(); li++) {
+                        posRef[0] = writeHeaderLine(buf, posRef[0], key, (String) list.get(li));
                     }
                 }
             });
@@ -587,10 +590,10 @@ class ExchangeImpl {
                 if (raw instanceof String single) {
                     totalRef[0] += keyLen + 2 + single.length() + 2;
                 } else if (raw instanceof List<?> list) {
-                    for (Object v : list) {
+                    for (int li = 0; li < list.size(); li++) {
                         // nulls were rejected by validation; toString is the
                         // same value the generic path writes
-                        totalRef[0] += keyLen + 2 + ((String) v).length() + 2;
+                        totalRef[0] += keyLen + 2 + ((String) list.get(li)).length() + 2;
                     }
                 }
             });
@@ -623,8 +626,9 @@ class ExchangeImpl {
                     violation[0] = key;
                 }
             } else if (raw instanceof List<?> list) {
-                for (Object v : list) {
-                    if (v == null || ((String) v).indexOf('\r') >= 0 || ((String) v).indexOf('\n') >= 0) {
+                for (int li = 0; li < list.size(); li++) {
+                    String v = (String) list.get(li);
+                    if (v == null || v.indexOf('\r') >= 0 || v.indexOf('\n') >= 0) {
                         violation[0] = key;
                         break;
                     }
