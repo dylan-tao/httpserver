@@ -422,12 +422,19 @@ public class OptimizedHeaders extends Headers {
     @Override
     public void clear() {
         LazyRequestHeaders view = pendingView;
-        if (view != null && view.isExposed()) {
-            // an EXPOSED view (handed out via getRequestHeaders) may still
-            // be retained by application code: copy now, while the entries
-            // are still ours. an unexposed view dies with its exchange -
-            // nobody can observe it - so its copy is skipped entirely
-            view.materialize();
+        if (view != null) {
+            if (view.isExposed()) {
+                // an EXPOSED view (handed out via getRequestHeaders) may still
+                // be retained by application code: copy now, while the entries
+                // are still ours
+                view.materialize();
+            } else {
+                // an unexposed view is skipped entirely (the never-read fast
+                // path) - but its exchange can still surface it via a LATE
+                // getRequestHeaders, so it must detach and read EMPTY from
+                // now on, never this table's next-request contents
+                view.retire();
+            }
         }
         map.clear();
     }

@@ -113,13 +113,15 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     /** borrow the shared chunked-staging buffer, or null if another
      * exchange currently holds it */
     byte[] borrowChunkBuffer() {
+        // null while lent out (the holder returns it in close()); a fresh
+        // allocation when no buffer is available means every lend is
+        // exclusive - a pipelined concurrent chunked exchange never shares
         byte[] b = chunkBuffer;
-        if (b == null) {
+        if (b != null) {
+            chunkBuffer = null;
+        } else {
             b = new byte[ChunkedOutputStream.CHUNK_SIZE + ChunkedOutputStream.OFFSET + 2];
-            chunkBuffer = b;
         }
-        // lent out: mark by nulling; the holder returns it in close()
-        chunkBuffer = null;
         return b;
     }
 

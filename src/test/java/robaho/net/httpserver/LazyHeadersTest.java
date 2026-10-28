@@ -45,6 +45,23 @@ public class LazyHeadersTest {
     }
 
     @Test
+    public void testLateUnexposedReadNeverSeesNextRequestData() {
+        // the cross-request LEAK regression: an exchange never touched
+        // getRequestHeaders during handle, an async task then surfaces it
+        // only AFTER the connection reparsed the next request. the view
+        // must read EMPTY - reading the refilled table would hand request
+        // N's code request N+1's headers
+        var table = new robaho.net.httpserver.internal.OptimizedHeaders(16);
+        table.add("Secret", "request-one");
+        var stale = new robaho.net.httpserver.internal.LazyRequestHeaders(table);
+        table.clear();                                    // skipped: unexposed
+        table.add("Secret", "request-two");               // the next request
+        // late first access, long after the swap
+        assertTrue(stale.isEmpty());
+        assertNull(stale.getFirst("Secret"));
+    }
+
+    @Test
     public void testExposedUnreadViewIsForceCopied() {
         var table = new robaho.net.httpserver.internal.OptimizedHeaders(16);
         table.add("Key", "value");

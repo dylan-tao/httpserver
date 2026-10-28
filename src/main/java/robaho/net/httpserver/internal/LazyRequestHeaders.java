@@ -75,6 +75,27 @@ public final class LazyRequestHeaders extends Headers {
         return exposed;
     }
 
+    /** called by OptimizedHeaders.clear() for an UNEXPOSED view: the
+     * entries are about to be destroyed, and this view was never handed
+     * to the handler. the exchange object itself can still reach the
+     * view later (an async task calling getRequestHeaders for the first
+     * time after the connection moved on) - such a late read must see
+     * EMPTY, never the table's refilled next-request contents
+     * (cross-request leakage) */
+    void retire() {
+        if (source == null) {
+            return;
+        }
+        synchronized (this) {
+            OptimizedHeaders s = source;
+            if (s == null) {
+                return;
+            }
+            source = null;
+            s.detach(this);
+        }
+    }
+
     /** copy the source table into the standard HashMap backing exactly
      * once; idempotent and safe to call from any thread. package-private:
      * OptimizedHeaders.clear() force-calls this so a never-read view
