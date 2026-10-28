@@ -50,6 +50,7 @@
       <class name="robaho.net.httpserver.websockets.WebSocketLifecycleHardeningTest"/>
       <class name="robaho.net.httpserver.websockets.TokenListConnectionUpgradeTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketDoubleCloseTest"/>
+      <class name="robaho.net.httpserver.OptimizedHeadersNullTest"/>
     </classes>
   </test>
 </suite>

@@ -307,11 +307,17 @@ public class HPackContext {
                 String lower = Http2HeaderField.lowercase(name);
                 if (v instanceof String single) {
                     fields.appendField(lower, single);
-                } else {
-                    for (String value : (List<String>) v) {
+                } else if (v instanceof List<?> values) {
+                    for (String value : (List<String>) values) {
                         fields.appendField(lower, value);
                     }
                 }
+                // v == OptimizedHeaders' NULL_VALUE marker (a single null
+                // header value): skipped - a null cannot be encoded, and
+                // failing loudly here would tear down the whole connection
+                // over one malformed header. the h1 write path reports null
+                // response header values as an error instead; h2 encoders
+                // only ever see them via direct map manipulation
             });
         } else {
             headers.forEach((name, values) -> {
