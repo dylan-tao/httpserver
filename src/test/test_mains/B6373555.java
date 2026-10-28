@@ -51,10 +51,6 @@ import java.util.concurrent.TimeUnit;
 
 public class B6373555 {
 
-    private static final int s_received = 0;
-    private static final int sent = 0;
-
-    private static final int received = 0;
     private static int port;
 
     private static volatile boolean error = false;
@@ -176,7 +172,6 @@ public class B6373555 {
                         writePostReply(msg, buf);
                     } else {
                         System.out.println("****** METHOD not handled ***** " + method);
-                        System.out.println("Received=" + s_received);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();

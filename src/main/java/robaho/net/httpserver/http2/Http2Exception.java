@@ -22,7 +22,9 @@ public class Http2Exception extends Exception {
         this.errorCode = errorCode;
 	}
 	
-	public Http2Exception(String message,Exception cause) {
+	/** generic failure, signaled to the peer as
+	 * {@link Http2ErrorCode#INTERNAL_ERROR} */
+	public Http2Exception(String message,Throwable cause) {
         super(message,cause);
 		errorCode = Http2ErrorCode.INTERNAL_ERROR;
 	}

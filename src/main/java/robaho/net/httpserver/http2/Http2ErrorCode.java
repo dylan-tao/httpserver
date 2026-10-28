@@ -30,6 +30,12 @@ public enum Http2ErrorCode {
 		return value;
 	}
 
+	/**
+	 * Returns the constant for {@code value}. Unknown wire values fall back
+	 * to {@link #NO_ERROR}; callers that must distinguish an unknown code
+	 * from a genuine NO_ERROR should re-check the result's value
+	 * (see GoAwayFrame.parse).
+	 */
 	public static Http2ErrorCode getEnum(int value) {
 		Http2ErrorCode result = Http2ErrorCode.NO_ERROR;
 

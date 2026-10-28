@@ -114,8 +114,15 @@ class ServerImpl {
     static final long IDLE_INTERVAL = ServerConfig.getIdleIntervalMillis();
     private final Timer timer;
     /** separate from the cleaner timer: ping writes can block on a stalled
-     * peer's connection lock and must not freeze connection management */
+     * peer's connection lock and must not freeze connection management.
+     * created lazily by h2ConnectionRegistered(): java.util.Timer starts
+     * its thread in the constructor, so a server that never sees an h2
+     * connection pays nothing for it */
     private Timer pingTimer;
+    /** the scheduled keepalive ping task, or null while this server has no
+     * h2 connections. guarded by pingTaskLock */
+    private TimerTask pingTask;
+    private final Object pingTaskLock = new Object();
     private final Logger logger;
     private Thread dispatcherThread;
 
@@ -147,15 +154,9 @@ class ServerImpl {
         timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
         // note: the shared CachedClock clock runs on its own daemon timer
         // (see CachedClock) so it survives this server instance
-        if (H2_PING_INTERVAL_MILLIS > 0) {
-            // a SEPARATE timer: the ping write takes the connection lock,
-            // which a stalled h2 download can hold in a blocking socket
-            // write for the TCP retransmission timeout. sharing the
-            // cleaner's single-threaded timer let that freeze idle-close,
-            // maxReqTime and maxIdleConnections enforcement server-wide
-            pingTimer = new Timer("h2-keepalive-ping", true);
-            pingTimer.schedule(createH2PingTask(), H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
-        }
+        // the h2 keepalive ping task is NOT scheduled here: it is attached
+        // lazily to its own timer on the first h2 connection and detached
+        // on the last disconnect (see h2ConnectionRegistered)
         logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
         if(Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
             createContext("/__stats",new StatsHandler());
@@ -358,8 +359,14 @@ class ServerImpl {
         allConnections.clear();
         connectionCount.set(0);
         timer.cancel();
-        if (pingTimer != null) {
-            pingTimer.cancel();
+        // under pingTaskLock: h2ConnectionRegistered() re-checks finished
+        // inside the same lock, so a registration racing this cancel either
+        // sees finished (and skips) or its timer is covered by this cancel -
+        // a bare racy null-check could strand a live ping timer past stop
+        synchronized (pingTaskLock) {
+            if (pingTimer != null) {
+                pingTimer.cancel();
+            }
         }
 
         if (dispatcherThread != null && dispatcherThread != Thread.currentThread()) {
@@ -630,6 +637,57 @@ class ServerImpl {
         return true;
     }
 
+    /** called when an h2 connection registers: attaches the keepalive ping
+     * task on the first registration, creating the timer if needed. the
+     * task is detached by h2ConnectionClosed() on the last disconnect, so
+     * a server with no h2 connections pays no per-second ping wakeups
+     * (previously the task fired forever from server start, pinging an
+     * empty registry every second).
+     *
+     * the timer is SEPARATE from the connection-cleaner's because the ping
+     * write takes the connection lock, which a stalled h2 download can
+     * hold in a blocking socket write for the TCP retransmission timeout;
+     * sharing the single-threaded cleaner timer let that freeze
+     * idle-close, maxReqTime and maxIdleConnections enforcement
+     * server-wide.
+     *
+     * both this and the removal path synchronize fully on pingTaskLock and
+     * mutate the registry BEFORE taking the lock: whichever side wins the
+     * lock either observes the other's registry change or leaves pingTask
+     * null for the latecomer to (re)schedule, so the registry can never be
+     * left non-empty with no task attached */
+    private void h2ConnectionRegistered() {
+        synchronized (pingTaskLock) {
+            if (finished || H2_PING_INTERVAL_MILLIS <= 0) {
+                return;
+            }
+            if (pingTask == null) {
+                if (pingTimer == null) {
+                    pingTimer = new Timer("h2-keepalive-ping", true);
+                }
+                pingTask = createH2PingTask();
+                pingTimer.schedule(pingTask, H2_PING_INTERVAL_MILLIS, H2_PING_INTERVAL_MILLIS);
+            }
+        }
+    }
+
+    /** called when an h2 connection deregisters: detaches the keepalive ping
+     * task once the LAST h2 connection is gone, so no timer fire happens
+     * while the registry is empty. the timer itself survives (its thread
+     * parks at zero CPU on the empty queue) and is reused by the next h2
+     * connection; it dies only with stop()'s pingTimer.cancel() */
+    private void h2ConnectionClosed() {
+        if (allHttp2Connections.isEmpty()) {
+            synchronized (pingTaskLock) {
+                if (allHttp2Connections.isEmpty() && pingTask != null) {
+                    pingTask.cancel();
+                    pingTimer.purge();
+                    pingTask = null;
+                }
+            }
+        }
+    }
+
     /** the h2 keepalive ping task: iterates THIS server's h2 connections
      * (the registry is per-instance - a JVM-global one made every server
      * ping every other server's connections and let one server's ping
@@ -718,9 +776,9 @@ class ServerImpl {
                 // the server protocol is "http"/"https" (never "https2" -
                 // that comparison was always false and counted every ALPN
                 // h2 connection as non-SSL in the stats)
-                http2Stats.sslConnections.incrementAndGet();
+                if (Http2Stats.ENABLED) http2Stats.sslConnections.incrementAndGet();
             } else {
-                http2Stats.nonsslConnections.incrementAndGet();
+                if (Http2Stats.ENABLED) http2Stats.nonsslConnections.incrementAndGet();
             }
 
             http2 = new Http2Connection(conn,http2Stats,connection.getInputStream(), connection.getOutputStream(), this);
@@ -731,6 +789,7 @@ class ServerImpl {
         @Override
         public void run() {
             allHttp2Connections.add(this);
+            h2ConnectionRegistered();
 
             try {
                 if(!http2.hasProperPreface()) {
@@ -756,6 +815,7 @@ class ServerImpl {
                     logger.log(Level.WARNING, "error closing http2 connection "+http2, t);
                 }
                 allHttp2Connections.remove(this);
+                h2ConnectionClosed();
             }
         }
 
