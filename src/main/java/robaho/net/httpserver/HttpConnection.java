@@ -67,6 +67,42 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
      * allocation so a huge-header application cannot pin memory */
     byte[] headerScratch;
 
+    /** pre-encoded ISO-8859-1 bytes of response header names already
+     * written on this connection: keep-alive connections re-emit the same
+     * names every response (Date, Content-length, handler headers), so
+     * writeHeaderLine's per-char writeAscii loop becomes one arraycopy.
+     * deterministic (writeAscii is a pure function of the String), bounded
+     * at 64 entries, single-threaded (the connection's writer thread, same
+     * ownership as headerScratch), dies with the connection */
+    private robaho.net.httpserver.internal.OpenAddressMap<String, byte[]> headerNameBytes;
+
+    /** the pre-encoded bytes for a name previously written on this
+     * connection, or null (first emission - cache it after writing) */
+    byte[] cachedHeaderNameBytes(String name) {
+        var m = headerNameBytes;
+        return m == null ? null : m.get(name);
+    }
+
+    /** intern the just-written slice of the assembly buffer as the name's
+     * encoded form; bounded: a connection emitting pathological unique
+     * names stops interning rather than growing the table */
+    void cacheHeaderNameBytes(String name, byte[] src, int off, int len) {
+        if (len == 0 || name.length() == 0) {
+            return;
+        }
+        var m = headerNameBytes;
+        if (m == null) {
+            m = new robaho.net.httpserver.internal.OpenAddressMap<>(32);
+            headerNameBytes = m;
+        }
+        if (m.size() >= 64) {
+            return;
+        }
+        byte[] copy = new byte[len];
+        System.arraycopy(src, off, copy, 0, len);
+        m.put(name, copy);
+    }
+
     /** set when the exchange hands the RAW streams to non-request-loop code
      * (101 upgrade, CONNECT tunnel): reads and writes then come from
      * different threads, so the pre-read flush hook must stand down - its

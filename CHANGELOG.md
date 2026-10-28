@@ -118,6 +118,13 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   parser builds keys in normalized shape while validating TCHAR, so the
   redundant per-header normalize scan is skipped (strictly less work;
   +0.3% rps measured, within run noise).
+- Response header names are pre-encoded per connection: a bounded
+  (64-entry) name->bytes table turns writeHeaderLine's per-char
+  writeAscii loop into one arraycopy for every name a keep-alive
+  connection re-emits (same family as the status-line/digit/Date
+  caches). byte-identical output (writeAscii is a pure function);
+  benefit scales with response header count (~0.3-0.5% at realistic
+  6-8 header responses; h2 needs nothing - HPACK already interns names).
 - README gained a measured deployment-recipes section: compact object
   headers, G1PeriodicGCInterval idle-uncommit (validated live: periodic
   collection fires ~30s into idle, committed shrinks to the -Xms floor),

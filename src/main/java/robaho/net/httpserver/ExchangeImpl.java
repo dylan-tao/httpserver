@@ -546,9 +546,20 @@ class ExchangeImpl {
 
     /** one "Key: value CRLF" line into the head buffer, with the Date
      * identity fast path (the framework-set Date uses the SAME snapshot's
-     * pre-encoded bytes as the string exposed to handlers) */
+     * pre-encoded bytes as the string exposed to handlers) and the
+     * per-connection pre-encoded name table (keep-alive connections emit
+     * the same names every response: one arraycopy instead of the per-char
+     * writeAscii loop) */
     private int writeHeaderLine(byte[] head, int pos, String key, String val) {
-        pos = writeAscii(key, head, pos);
+        byte[] encodedName = connection.cachedHeaderNameBytes(key);
+        if (encodedName != null) {
+            System.arraycopy(encodedName, 0, head, pos, encodedName.length);
+            pos += encodedName.length;
+        } else {
+            int nameStart = pos;
+            pos = writeAscii(key, head, pos);
+            connection.cacheHeaderNameBytes(key, head, nameStart, pos - nameStart);
+        }
         head[pos++] = ':';
         head[pos++] = ' ';
         if (Objects.equals(val, frameworkDate) && frameworkClock != null) {
