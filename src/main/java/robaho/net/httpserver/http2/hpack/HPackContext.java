@@ -10,7 +10,6 @@ import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameHeader;
 import robaho.net.httpserver.http2.frame.FrameType;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -267,35 +266,35 @@ public class HPackContext {
     }
 
 
-    private static void writeField(ByteArrayOutputStream fields, String name, String value) {
-        byte[] header = encodeHeader(name, value);
-        try {
-            fields.write(header);
-        } catch (IOException ex) {
-        }
-    }
-
     /**
-     * encode a response header block into complete HEADERS (+CONTINUATION)
-     * frames, splitting at the PEER's advertised SETTINGS_MAX_FRAME_SIZE
-     * (RFC 7540 4.3/6.5.2: outbound frames must obey the receiver's limit).
-     * callers with a connection pass {@code connection.remoteMaxFrameSize()}.
-     * callers run this OUTSIDE the connection lock and take the lock only for
-     * the writes: the encoding (string building, HPACK) is stream-local, and
-     * keeping it out of the critical section lets concurrent streams on a
-     * connection scale with cores
+     * encode a response header block into an exact-size HPACK fragment,
+     * ready to be streamed as HEADERS (+CONTINUATION) frames split at the
+     * PEER's advertised SETTINGS_MAX_FRAME_SIZE (RFC 7540 4.3/6.5.2:
+     * outbound frames must obey the receiver's limit) - the caller passes
+     * {@code connection.remoteMaxFrameSize()} to
+     * {@link EncodedHeaderBlock#writeFrames}.
+     * encoding runs OUTSIDE the connection lock: the caller takes the lock
+     * only for the writes - the encoding (string building, HPACK) is
+     * stream-local, and keeping it out of the critical section lets
+     * concurrent streams on a connection scale with cores.
+     * the old path built a ByteArrayOutputStream, copied it out with
+     * toByteArray(), then copied each fragment into a fresh byte[9+len]
+     * frame array: this block is encoded positionally at its final size,
+     * and each frame is written as the 9-byte header through the caller's
+     * scratch plus a direct slice of this block - no block-level copy, no
+     * per-frame array allocations
      */
-    public static List<byte[]> encodeHeaderFrames(Headers headers, int streamId, boolean endStream, int maxFrameSize) throws IOException {
+    public static EncodedHeaderBlock encodeHeaderBlock(Headers headers) throws IOException {
         // sized from the header count: the old fixed 256 started ~2 growth
         // copies behind for a typical response (average block ~800 bytes)
-        ByteArrayOutputStream fields = new ByteArrayOutputStream(Math.max(256, headers.size() * 64 + 64));
+        EncodedHeaderBlock fields = new EncodedHeaderBlock(Math.max(256, headers.size() * 64 + 64));
 
         // ':status' is required and the only allowed outbound pseudo headers
         String status = headers.getFirst(":status");
         if (status == null) {
             throw new IOException("response is missing the required :status pseudo header");
         }
-        fields.write(encodeHeader(":status", status));
+        fields.appendField(":status", status);
 
         // raw iteration when possible: forEach() wraps every single-valued
         // header in a mutable ArrayList (its contract), which is pure
@@ -307,10 +306,10 @@ public class HPackContext {
                 }
                 String lower = Http2HeaderField.lowercase(name);
                 if (v instanceof String single) {
-                    writeField(fields, lower, single);
+                    fields.appendField(lower, single);
                 } else {
                     for (String value : (List<String>) v) {
-                        writeField(fields, lower, value);
+                        fields.appendField(lower, value);
                     }
                 }
             });
@@ -321,75 +320,104 @@ public class HPackContext {
                 }
                 String lower = Http2HeaderField.lowercase(name);
                 for (String value : values) {
-                    writeField(fields, lower, value);
+                    fields.appendField(lower, value);
                 }
             });
         }
 
-        return encodeHeaderBlockFrames(fields.toByteArray(), streamId, endStream, maxFrameSize);
+        return fields;
     }
 
-    /** split an encoded header block into complete HEADERS/CONTINUATION frames
-     * (each a byte[] of frame header + fragment) at the given max frame size */
-    private static List<byte[]> encodeHeaderBlockFrames(byte[] block, int streamId, boolean endStream, int maxFrameSize) {
-        List<byte[]> frames = new ArrayList<>(2);
-        int off = 0;
-        while (true) {
-            int len = Math.min(block.length - off, maxFrameSize);
-            boolean last = off + len == block.length;
-            FlagSet flags;
-            if (off == 0) {
-                flags = last
-                    ? (endStream ? END_OF_HEADERS_AND_STREAM : END_OF_HEADERS)
-                    : (endStream ? FlagSet.of(FrameFlag.END_STREAM) : FrameFlag.NONE);
-            } else {
-                flags = last ? END_OF_HEADERS : FrameFlag.NONE;
+    /** an encoded HPACK response block with direct frame streaming. grown
+     * geometrically while encoding (a typical response fits the initial
+     * size); {@link #writeFrames} emits HEADERS/CONTINUATION frames as the
+     * 9-byte frame header through the caller's scratch plus direct block
+     * slices, replacing the old toByteArray() copy and the per-frame
+     * byte[9+len] allocations + arraycopies */
+    public static final class EncodedHeaderBlock {
+        private byte[] buf;
+        private int len;
+
+        EncodedHeaderBlock(int capacity) {
+            buf = new byte[capacity];
+        }
+
+        private void ensure(int extra) {
+            if (len + extra > buf.length) {
+                buf = java.util.Arrays.copyOf(buf, Math.max(buf.length * 2, len + extra));
             }
-            byte[] frame = new byte[9 + len];
-            FrameHeader.encodeInto(frame, len, off == 0 ? FrameType.HEADERS : FrameType.CONTINUATION, flags, streamId);
-            System.arraycopy(block, off, frame, 9, len);
-            frames.add(frame);
-            off += len;
-            if (last) {
-                return frames;
+        }
+
+        private void append(byte[] encoded) {
+            ensure(encoded.length);
+            System.arraycopy(encoded, 0, buf, len, encoded.length);
+            len += encoded.length;
+        }
+
+        /** append one encoded header field, written positionally: the old
+         * encodeHeader() allocated an exact-size byte[] per field and the
+         * buffer absorbed it with another copy. the value's UTF-8 bytes
+         * remain one allocation (String.getBytes is the only portable
+         * encoder); the huffman length is computed over them as before */
+        void appendField(String name, String value) {
+            if (":status".equals(name)) {
+                byte[] result = RFC7541StaticTable.STATUSES.get(value);
+                if (result != null) {
+                    append(result);
+                    return;
+                }
+            }
+            var index = RFC7541StaticTable.getIndex(name);
+            byte[] valueBytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (index != null) {
+                ensure(indexedFieldEncodedSize(index, 4) + stringEncodedSize(valueBytes));
+                int pos = encodeIndexedFieldInto(buf, len, index, 4);
+                len = encodeStringInto(buf, pos, valueBytes);
+            } else {
+                byte[] nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                ensure(1 + stringEncodedSize(nameBytes) + stringEncodedSize(valueBytes));
+                buf[len] = 0x00; // Literal Header Field without Indexing
+                int pos = encodeStringInto(buf, len + 1, nameBytes);
+                len = encodeStringInto(buf, pos, valueBytes);
+            }
+        }
+
+        /** stream this block as complete HEADERS/CONTINUATION frames into
+         * the connection output stream: per frame the 9-byte header goes
+         * through the caller's scratch and the fragment is a direct slice.
+         * the frame-split and flag logic is byte-identical to the old
+         * encodeHeaderBlockFrames. returns the frame count for stats.
+         * MUST run under the connection lock */
+        public int writeFrames(java.io.OutputStream os, byte[] frameHeaderScratch, int streamId,
+                boolean endStream, int maxFrameSize) throws IOException {
+            int off = 0;
+            int frames = 0;
+            while (true) {
+                int fragLen = Math.min(len - off, maxFrameSize);
+                boolean last = off + fragLen == len;
+                FlagSet flags;
+                if (off == 0) {
+                    flags = last
+                        ? (endStream ? END_OF_HEADERS_AND_STREAM : END_OF_HEADERS)
+                        : (endStream ? FlagSet.of(FrameFlag.END_STREAM) : FrameFlag.NONE);
+                } else {
+                    flags = last ? END_OF_HEADERS : FrameFlag.NONE;
+                }
+                FrameHeader.encodeInto(frameHeaderScratch, fragLen,
+                    off == 0 ? FrameType.HEADERS : FrameType.CONTINUATION, flags, streamId);
+                os.write(frameHeaderScratch, 0, FrameHeader.LENGTH);
+                os.write(buf, off, fragLen);
+                frames++;
+                off += fragLen;
+                if (last) {
+                    return frames;
+                }
             }
         }
     }
 
     private static final FlagSet END_OF_HEADERS = FlagSet.of(FrameFlag.END_HEADERS);
     private static final FlagSet END_OF_HEADERS_AND_STREAM = FlagSet.of(FrameFlag.END_HEADERS,FrameFlag.END_STREAM);
-
-    private static byte[] encodeHeader(String name, String value) {
-        if(":status".equals(name)) {
-            byte[] result = RFC7541StaticTable.STATUSES.get(value);
-            if(result!=null) return result;
-        }
-        var index = RFC7541StaticTable.getIndex(name);
-
-        // single allocation for the whole field: the previous version built
-        // 2-3 intermediate byte[] per header (encodeString growth via
-        // Arrays.copyOf + combineByteArrays), ~6-8 allocations per response
-        // header at high h2 RPS
-        byte[] nameBytes = null;
-        byte[] valueBytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int size;
-        if(index!=null) {
-            size = indexedFieldEncodedSize(index, 4) + stringEncodedSize(valueBytes);
-        } else {
-            nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            size = 1 + stringEncodedSize(nameBytes) + stringEncodedSize(valueBytes);
-        }
-        byte[] out = new byte[size];
-        int pos;
-        if(index!=null) {
-            pos = encodeIndexedFieldInto(out, 0, index, 4);
-        } else {
-            out[0] = 0x00; // Literal Header Field without Indexing
-            pos = encodeStringInto(out, 1, nameBytes);
-        }
-        encodeStringInto(out, pos, valueBytes);
-        return out;
-    }
 
     /** exact encoded size of a string literal: huffman when shorter (RFC 7541
      * 5.2 "SHOULD"), literal otherwise - varint length prefix + payload */

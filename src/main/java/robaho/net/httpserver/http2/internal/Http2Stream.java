@@ -420,14 +420,12 @@ public class Http2Stream {
      * headersSent latch and WITHOUT END_STREAM - the final response still
      * goes through writeResponseHeaders afterwards */
     public void writeInterimResponseHeaders() throws IOException {
-        var frames = HPackContext.encodeHeaderFrames(responseHeaders, streamId, false,
-            connection.remoteMaxFrameSize());
+        var block = HPackContext.encodeHeaderBlock(responseHeaders);
         connection.lock();
         try {
-            for (byte[] frame : frames) {
-                connection.outputStream.write(frame);
-                if (Http2Stats.ENABLED) connection.stats.framesSent.incrementAndGet();
-            }
+            int frames = block.writeFrames(connection.outputStream, connection.frameHeaderScratch, streamId, false,
+                connection.remoteMaxFrameSize());
+            if (Http2Stats.ENABLED) connection.stats.framesSent.addAndGet(frames);
             connection.outputStream.flush();
         } finally {
             connection.unlock();
@@ -451,13 +449,12 @@ public class Http2Stream {
                 // stream-local, only the frame writes need mutual exclusion.
                 // this shrinks the per-response critical section ~10x so
                 // concurrent streams scale with cores
-                var frames = HPackContext.encodeHeaderFrames(responseHeaders, streamId, closeStream,
-                    connection.remoteMaxFrameSize());
+                var block = HPackContext.encodeHeaderBlock(responseHeaders);
                 connection.lock();
                 try {
-                    for (byte[] frame : frames) {
-                        connection.outputStream.write(frame);
-                    }
+                    int frames = block.writeFrames(connection.outputStream, connection.frameHeaderScratch, streamId, closeStream,
+                        connection.remoteMaxFrameSize());
+                    if (Http2Stats.ENABLED) connection.stats.framesSent.addAndGet(frames);
                     if (closeStream) {
                         streamOutputClosed = true;
                     }
