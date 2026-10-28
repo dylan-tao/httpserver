@@ -694,6 +694,12 @@ public class Http2Connection {
                 for (Http2HeaderField field : fields) {
                     if (field.value == null) {
                         logger.log(Level.TRACE, () -> "ignoring null header for " + field.getName());
+                    } else if (requestHeaders instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
+                        // normalizedName is ALREADY the normalized shape
+                        // (Http2HeaderField.normalize), so the redundant
+                        // rescan in add() is skipped - same fast path as
+                        // the h1 parser
+                        optimized.addNormalized(field.normalizedName, field.value);
                     } else {
                         requestHeaders.add(field.normalizedName, field.value);
                     }

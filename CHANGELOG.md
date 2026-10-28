@@ -132,6 +132,11 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   profiles turned out to be the JFR sampler's own periodic-event
   allocations, not the server's - robaho's write path now shows zero
   iterator allocations under a multi-value-header load.)
+- The h2 header-decode loop feeds its per-stream table through
+  addNormalized as well: HPACK fields carry an already-normalized name,
+  so add()'s rescan is skipped (mirrors the h1 parser fast path). the
+  h2 request-header path itself needs no lazy view - each stream owns a
+  fresh table that IS the API object, so there is no copy to skip.
 - README gained a measured deployment-recipes section: compact object
   headers, G1PeriodicGCInterval idle-uncommit (validated live: periodic
   collection fires ~30s into idle, committed shrinks to the -Xms floor),
