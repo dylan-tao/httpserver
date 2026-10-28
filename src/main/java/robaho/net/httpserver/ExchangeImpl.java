@@ -366,7 +366,7 @@ class ExchangeImpl {
                     contentLen = 0;
                 }
                 if (!noContentLengthHeader) {
-                    rspHdrs.set("Content-length", Long.toString(contentLen));
+                    rspHdrs.set("Content-length", contentLengthString(contentLen));
                 }
                 o.setWrappedStream(new FixedLengthOutputStream(this, ros, contentLen));
             }
@@ -413,6 +413,22 @@ class ExchangeImpl {
     }
 
     static final Charset ISO_CHARSET = StandardCharsets.ISO_8859_1;
+
+    /** digit strings for the common small content lengths: the
+     * Content-Length header was the last per-response String allocation on
+     * the hot path (Long.toString). shared immutable Strings are safe in
+     * the headers map; lengths beyond the table (large bodies) fall back
+     * to Long.toString, where one small String is noise next to the body */
+    private static final String[] SMALL_LENGTHS = new String[1024];
+    static {
+        for (int i = 0; i < SMALL_LENGTHS.length; i++) {
+            SMALL_LENGTHS[i] = Integer.toString(i);
+        }
+    }
+
+    private static String contentLengthString(long len) {
+        return len >= 0 && len < SMALL_LENGTHS.length ? SMALL_LENGTHS[(int) len] : Long.toString(len);
+    }
     private static final byte[] STATUS_101 = "HTTP/1.1 101 Switching Protocols\r\n".getBytes(ISO_CHARSET);
     /** status lines are immutable per code: cache the encoded bytes instead of
      * rebuilding the String (and re-encoding it) on every response. a plain
