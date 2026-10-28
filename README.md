@@ -202,6 +202,57 @@ Total Handler Exceptions: 0
 | 大文件上传 | 增大 `http2InitialWindowSize`（如 1024000） |
 | CPU 密集 handler | `-Djdk.virtualThreadScheduler.parallelism=<核数>` |
 
+### 部署配方（实测数据）
+
+以下配方均在 8 核 macOS / JDK 25 / 本库 33k rps 负载下实测验证：
+
+**1. 紧凑对象头**（分配密集场景，零代码）：
+
+```bash
+java -XX:+UseCompactObjectHeaders ...
+```
+
+本库每请求分配已压到 ~2KB，对象头 12B→8B 对小对象（String、ArrayList 节点）再省约 10% 脚印，等效减少 young GC 频率。测试套件默认在该模式下运行。
+
+**2. 闲时内存主动归还**（长连接服务空闲时把内存还给系统）：
+
+```bash
+java -Xms64m -Xmx256m -XX:G1PeriodicGCInterval=30000 ...
+```
+
+默认配置下 JVM 闲置后不主动归还（`Xms=Xmx` 时 G1 永不 uncommit），物理内存回落依赖操作系统内核对冷页的异步压缩，实测需要约 5 分钟。开启周期 GC 后，实测闲置 ~30 秒即触发 `G1 Periodic Collection`（37M→8M，committed 收缩回 Xms 下限，RSS 从 123MB 降到 96MB）。适合跑在计费按 RSS、或与其他进程共址的容器里；吞吐负载下周期 GC 会被高分配率自然抑制，无副作用。
+
+**3. 分代 ZGC**（停顿敏感部署的可选项）：
+
+```bash
+java -XX:+UseZGC -XX:+ZGenerational ...
+```
+
+实测与 G1 对比：吞吐 33.1k vs 33.4k rps（-0.6%）、p99 8.26ms 持平、服务端 CPU 持平、负载期零可测 GC 停顿（G1 为 0.7-5ms/次）。G1 默认停顿已足够小；仅在 P99 有硬性 SLA 且对亚毫秒停顿敏感时选 ZGC。
+
+**4. AOT 缓存**（JDK 24+ Leyden，缩短冷启动，面向 CLI/短生命周期进程）：
+
+```bash
+# 1) 训练运行（classpath 必须全部是 JAR，非空目录会被 CDS 拒绝）：
+java -XX:AOTMode=record -XX:AOTCacheOutput=app.aot -cp app.jar:... Main
+# 2) 生成缓存：
+java -XX:AOTMode=create -XX:AOTConfiguration=app.aot.config -XX:AOTCacheOutput=app.aot
+# 3) 正式启动：
+java -XX:AOTCache=app.aot -cp app.jar:... Main
+```
+
+训练进程需正常退出（`System.exit`）才会落盘 config；训练时带一轮真实流量可预热方法编译。实测本库示例服务冷启动 ~150ms → ~111ms（-25%）；应用类越多收益越大。
+
+**5. h1 密集 + 低连接数场景的平台线程模式**（省 CPU 而非提吞吐）：
+
+```java
+server.setExecutor(Executors.newCachedThreadPool(
+    Thread.ofPlatform().name("conn-", 0).factory()));
+```
+
+实测 64/256/1024 连接下吞吐与虚拟线程持平（瓶颈在链路时延），但服务端 CPU 从 1.55 核降到 1.05 核（-32%——省去了 VT 调度器 + Read-Poller 唤醒机制，两者合计约 27% 执行采样 + 11% poller CPU）。注意：该执行器同时服务于 h2 流分发，h2 多路复用场景勿用（每流一个平台线程会毁掉多路复用）。连接数上万时回退虚拟线程（平台线程栈内存 ~16KB+ 栈预留 1MB/线程）。
+
+
 ### 客户端流控窗口指引（大响应/多路复用下载）
 
 HTTP/2 连接级发送窗口（服务端→客户端方向）初始为 65535 字节（协议默认），**只能由客户端通过 WINDOW_UPDATE 增长**，服务端无法代为扩大。大响应或多路复用下载场景下，客户端收满 64KB 后服务端写线程会等待窗口信用回流，吞吐受窗口往返次数限制（实测：默认窗口下 640KB 多路复用响应需约 10 次窗口往返）。

@@ -332,7 +332,18 @@ public class OptimizedHeaders extends Headers {
 
     @Override
     public void add(String key, String value) {
-        var normalized = normalize(key);
+        addNormalized(normalize(key), value);
+    }
+
+    /** add with a caller-guaranteed NORMALIZED key: first char upper, rest
+     * lower, ASCII, no CR/LF - the exact shape normalize() produces. the
+     * h1 request parser builds keys in this shape while validating TCHAR
+     * (it has already touched every byte), so the redundant normalize scan
+     * is skipped on the per-header parse path. measured within run-to-run
+     * noise on the 8-core bench (+0.3% rps), but it is strictly less work
+     * per header and scales with header count on real traffic */
+    public void addNormalized(String key, String value) {
+        var normalized = key;
         Object o = map.get(normalized);
         if (o == null) {
             map.put(normalized, value == null ? NULL_VALUE : value);

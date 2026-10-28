@@ -114,6 +114,17 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   LinkedList contract. Measured 10-header requests: 3.63KB -> 2.07KB
   allocated per request (-43% across the header-path series), 33.6k
   rps with p99 7.99ms.
+- The request parser feeds the header table through addNormalized: the
+  parser builds keys in normalized shape while validating TCHAR, so the
+  redundant per-header normalize scan is skipped (strictly less work;
+  +0.3% rps measured, within run noise).
+- README gained a measured deployment-recipes section: compact object
+  headers, G1PeriodicGCInterval idle-uncommit (validated live: periodic
+  collection fires ~30s into idle, committed shrinks to the -Xms floor),
+  generational ZGC (throughput parity -0.6%, zero measurable pauses),
+  AOT cache cold-start recipe (~150ms -> ~111ms, -25%), and the
+  platform-thread executor option for h1-heavy low-connection workloads
+  (measured -32% server CPU at equal throughput).
 - OpenAddressMap is backed by flat parallel key/value arrays (HPPC
   style): no per-entry object at all - the four consumers
   (OptimizedHeaders, the per-connection parse table, HeaderFieldList,

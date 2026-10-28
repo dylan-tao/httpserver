@@ -363,11 +363,18 @@ class Request {
     }
 
     /** enforce the request header count limit and add the header: shared by
-     * the end-of-headers and mid-headers paths so the limit cannot drift */
+     * the end-of-headers and mid-headers paths so the limit cannot drift.
+     * the key builder already produced the normalized shape while
+     * validating TCHAR (first char upper, rest lower), so the redundant
+     * normalize scan in add() is skipped (addNormalized) */
     private void addHeader(BufferedBuilder key, BufferedBuilder value, int count) throws IOException {
         if (count > ServerConfig.getMaxReqHeaders()) {
             throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
         }
-        hdrs.add(key.trimmed(), value.trimmed());
+        if (hdrs instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
+            optimized.addNormalized(key.trimmed(), value.trimmed());
+        } else {
+            hdrs.add(key.trimmed(), value.trimmed());
+        }
     }
 }
