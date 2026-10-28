@@ -881,6 +881,18 @@ class ServerImpl {
      * invoked in one doFilter call. shared by the http/1 and http/2 request
      * paths so the chain construction cannot drift between them */
     private Filter.Chain buildChain(HttpContextImpl ctx) {
+        // the whole chain is cached on the context for the common shapes:
+        // a Filter$Chain over an immutable empty list never advances its
+        // iterator, so it is stateless and safely shared across concurrent
+        // exchanges. user filters present -> only the thin per-exchange
+        // user Chain is built (its iterator is per-request state)
+        Filter.Chain cached = ctx.getFilterChain();
+        if (cached != null) {
+            return cached;
+        }
+        // fallback for a nonstandard system filter list (unreachable today:
+        // only the constructor's AuthFilter is ever added): the old
+        // per-request build, iterator state and all
         final List<Filter> sf = ctx.getSystemFilters();
         final List<Filter> uf = ctx.getFilters();
         final Filter.Chain sc = new Filter.Chain(sf, ctx.getHandler());
