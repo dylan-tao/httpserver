@@ -88,6 +88,10 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   connection vs 1.x.
 - Status-line cache without boxing, single-byte write scratch, reusable
   header-assembly scratch, bulk line reader for the header parser.
+- The h2 keepalive ping task is scheduled lazily (attached on the first
+  h2 connection, detached on the last disconnect) and its timer thread is
+  created only on first h2 use: idle servers stop waking once a second to
+  ping an empty registry (~6ms/min measured idle CPU).
 - Measured vs JDK 25 HttpServer: CPU -23%, sequential +11%, pipelined
   5×, header parsing 2-3×; idle memory parity.
 
