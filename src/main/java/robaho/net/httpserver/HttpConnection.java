@@ -196,9 +196,11 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
         return socket;
     }
 
-    /** guards the close transition. a ReentrantLock, NOT a synchronized
-     * monitor: close() flushes and closes streams (blocking IO) while holding
-     * it, which would pin a virtual thread's carrier (JEP 444) */
+    /** guards the close transition. a ReentrantLock rather than a
+     * synchronized monitor - historically because close() flushes and
+     * closes streams (blocking IO) while holding it, which pinned a
+     * virtual thread's carrier under JEP 444; JDK 24 (JEP 491) removed
+     * that pinning, so this is now a plain style choice */
     private final java.util.concurrent.locks.ReentrantLock closeLock = new java.util.concurrent.locks.ReentrantLock();
 
     void close() {

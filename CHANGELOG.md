@@ -92,6 +92,21 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   h2 connection, detached on the last disconnect) and its timer thread is
   created only on first h2 use: idle servers stop waking once a second to
   ping an empty registry (~6ms/min measured idle CPU).
+- Request headers are materialized lazily (LazyRequestHeaders): the
+  per-request copy into a JDK Headers (HashMap table + node + ArrayList
+  per header, ~28% of the benchmark allocation profile) is skipped for
+  handlers that never read request headers; a view handed out but
+  unread is force-copied when the parse table is cleared for the next
+  request, so a reference retained past response completion still sees
+  its own request's headers.
+- OpenAddressMap is backed by flat parallel key/value arrays (HPPC
+  style): no per-entry object at all - the four consumers
+  (OptimizedHeaders, the per-connection parse table, HeaderFieldList,
+  BloomSet) dropped every OpenAddressMap Entry allocation, and value
+  consumers scan a contiguous values region. Tombstone semantics are
+  unchanged. Measured combined with the lazy view: 10-header requests
+  3.63KB -> 3.34KB allocated per request, and the gain grows with
+  header count.
 - CachedClock has no background timer anymore: the Date header snapshot
   is refreshed on demand from the response path (one format per second at
   most under load, zero while idle), and the per-second staleness of the

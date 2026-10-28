@@ -90,13 +90,18 @@ class ExchangeImpl {
     ExchangeImpl(
             String m, URI u, Request req, long len, HttpConnection connection) throws IOException {
         this.req = req;
-        // make a mutable copy to allow HttpHandler to modify in chain.
-        // OptimizedHeaders.copyInto avoids the per-header wrapper
-        // allocations of the generic putAll() path (~60-70 per request)
-        this.reqHdrs = new Headers();
-        if (req.headers() instanceof OptimizedHeaders optimized) {
-            optimized.copyInto(reqHdrs);
+        // a mutable view over the parse table, materializing on first Map
+        // access: most handlers never read request headers, so the eager
+        // per-request copy (HashMap + Node + ArrayList per header, ~28% of
+        // the benchmark allocation profile) is skipped entirely for them.
+        // the view force-materializes when the table is cleared for the
+        // next request (same connection thread, after this handler
+        // returns), so a retained reference always sees a snapshot
+        // (LazyRequestHeaders)
+        if (req.headers() instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
+            this.reqHdrs = new robaho.net.httpserver.internal.LazyRequestHeaders(optimized);
         } else {
+            this.reqHdrs = new Headers();
             reqHdrs.putAll(req.headers());
         }
         this.rspHdrs = new Headers();

@@ -156,8 +156,36 @@ public class OptimizedHeaders extends Headers {
         }
     }
 
+    /** a LazyRequestHeaders handed to application code for the CURRENT
+     * request, or null. clear() force-materializes it before dropping the
+     * entries so a retained view can never observe a cleared table.
+     * volatile: attach/detach run under the view's monitor from any
+     * thread, clear() reads it from the connection thread */
+    private volatile LazyRequestHeaders pendingView;
+
+    /** register the view that must materialize before this table is
+     * cleared for reuse. one live view at a time: a connection handles
+     * one request at a time, and the previous view has been materialized
+     * (forcefully, in clear()) before the next one attaches */
+    void attach(LazyRequestHeaders view) {
+        pendingView = view;
+    }
+
+    void detach(LazyRequestHeaders view) {
+        if (pendingView == view) {
+            pendingView = null;
+        }
+    }
+
     @Override
     public void clear() {
+        LazyRequestHeaders view = pendingView;
+        if (view != null) {
+            // the view was handed out but never read: copy now, while the
+            // entries are still ours - a lazy read after clear() would
+            // otherwise see an empty (or next-request) table
+            view.materialize();
+        }
         map.clear();
     }
 

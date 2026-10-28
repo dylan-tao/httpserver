@@ -18,6 +18,7 @@
       <class name="ZeroLengthOutputStream"/>
       <class name="robaho.net.httpserver.HttpsConfiguratorTest"/>
       <class name="robaho.net.httpserver.PipeliningStallTest"/>
+      <class name="robaho.net.httpserver.LazyHeadersTest"/>
       <class name="robaho.net.httpserver.RequestHeadersTest"/>
       <class name="robaho.net.httpserver.SSLSessionTest"/>
       <class name="robaho.net.httpserver.extras.MultipartFormParserTest"/>

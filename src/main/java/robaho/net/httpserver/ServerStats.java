@@ -18,9 +18,9 @@ class ServerStats {
     private long lastStatsTime = System.currentTimeMillis();
 
     /** guards the time snapshot and counter resets: concurrent calls must not
-     * interleave them (which produced bogus requests/sec values). a
-     * ReentrantLock rather than a synchronized method: monitor-based locking
-     * is banned for virtual thread safety (JEP 444 pinning) */
+     * interleave them (which produced bogus requests/sec values). kept as a
+     * ReentrantLock for no urgent reason: monitors stopped pinning virtual
+     * threads in JDK 24 (JEP 491), so either primitive is safe here */
     private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
 
     public String stats() {

@@ -38,9 +38,10 @@ class ContextList {
     private final Map<CacheKey,HttpContextImpl> cache = new ConcurrentHashMap<>();
     private record CacheKey(String protocol,String path){}
 
-    /** serializes add/remove against each other (rare admin operations). a
-     * ReentrantLock rather than synchronized methods: monitor-based locking
-     * is banned for virtual thread safety (JEP 444 pinning) */
+    /** serializes add/remove against each other (rare admin operations).
+     * kept as a ReentrantLock for no urgent reason: the original
+     * justification (monitor-based locking pinning virtual threads, JEP 444)
+     * was removed in JDK 24 (JEP 491) - either primitive is safe now */
     private final ReentrantLock lock = new ReentrantLock();
 
     public void add(HttpContextImpl ctx) {

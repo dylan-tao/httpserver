@@ -55,10 +55,10 @@ abstract class LeftOverInputStream extends FilterInputStream {
         this.server = t.getServerImpl();
     }
 
-    /** guards read/skip/close against each other. a ReentrantLock, NOT a
-     * synchronized monitor: these methods block on socket IO while holding
-     * it, and a virtual thread that blocks inside a monitor pins its carrier
-     * platform thread (JEP 444), destroying thread-per-request scalability */
+    /** guards read/skip/close against each other. a ReentrantLock rather
+     * than a synchronized monitor: purely historical - monitors stopped
+     * pinning virtual threads' carriers in JDK 24 (JEP 491), so a plain
+     * synchronized would also be correct today */
     private final ReentrantLock lock = new ReentrantLock();
 
     /** matches read(): a concurrent close (e.g. from a timeout task) must not

@@ -4,25 +4,25 @@ import java.util.Arrays;
 import java.util.function.BiConsumer;
 
 /**
- * an open addressing hash map. NOT thread safe - intended for single
- * threaded or externally synchronized use.
+ * an open addressing hash map backed by flat parallel arrays (HPPC-style):
+ * no per-entry object, the keys and values live in two separate arrays so
+ * value consumers ({@link #forEach}, the header copy and HPACK encode
+ * paths) scan a contiguous values region. NOT thread safe - intended for
+ * single threaded or externally synchronized use.
+ *
+ * slot states: {@code keys[i] == null} - empty; {@code keys[i] != null &&
+ * values[i] == null} - tombstone, the put-null-as-remove convention
+ * shared by OptimizedHeaders, HeaderFieldList and the HPACK context (the
+ * map itself never allocates a marker object for a stored null).
  */
 public class OpenAddressMap<K,V> {
 
-    private static class Entry<K,V> {
-        K key;
-        V value;
-
-        Entry(K key, V value) {
-            this.key = key;
-            this.value = value;
-        }
-    }
     private int capacity;
     private int mask;
     private int size;
     private int used;
-    private Entry[] entries;
+    private Object[] keys;
+    private Object[] values;
 
     private static int hash(int hash) {
         // spread the high bits into the low bits: String.hashCode keeps most
@@ -43,7 +43,8 @@ public class OpenAddressMap<K,V> {
 
         this.capacity = capacity;
         this.mask = capacity - 1;
-        this.entries = new Entry[capacity];
+        this.keys = new Object[capacity];
+        this.values = new Object[capacity];
     }
 
     public V put(K key, V value) {
@@ -54,11 +55,11 @@ public class OpenAddressMap<K,V> {
         int index = hash(key.hashCode()) & mask;
         int start = index;
         int sentinel = -1;
-        Entry entry;
-        while ((entry = entries[index]) != null) {
-            if (entry.key.equals(key)) {
-                Object oldValue = entry.value;
-                entry.value = value;
+        Object k;
+        while ((k = keys[index]) != null) {
+            if (k.equals(key)) {
+                Object oldValue = values[index];
+                values[index] = value;
                 if (value == null && oldValue != null) {
                     size--;
                 } else if (value != null && oldValue == null) {
@@ -69,7 +70,7 @@ public class OpenAddressMap<K,V> {
                     size++;
                 }
                 return (V)oldValue;
-            } else if (entry.value == null) {
+            } else if (values[index] == null) {
                 sentinel = index;
             }
             index = (index + 1) & mask;
@@ -86,34 +87,41 @@ public class OpenAddressMap<K,V> {
             // removing a key that is not present creates no entry
             return null;
         }
-        entries[sentinel==-1 ? index : sentinel] = new Entry(key, value);
+        int slot = sentinel==-1 ? index : sentinel;
+        keys[slot] = key;
+        values[slot] = value;
         size++;
         if(sentinel==-1) used++;
         return null;
     }
 
     private void resize() {
-        OpenAddressMap newMap = new OpenAddressMap(capacity << 1);
-        for (var entry : entries) {
-            if (entry != null && entry.value != null) {
-                // tombstones are dropped on resize
-                newMap.put(entry.key, entry.value);
+        // rebuild in place into doubled arrays, dropping tombstones; the
+        // live count is below half of the OLD capacity, hence a quarter of
+        // the new one, so the re-puts cannot trigger another resize
+        Object[] oldKeys = keys;
+        Object[] oldValues = values;
+        int newCapacity = capacity << 1;
+        keys = new Object[newCapacity];
+        values = new Object[newCapacity];
+        capacity = newCapacity;
+        mask = newCapacity - 1;
+        size = 0;
+        used = 0;
+        for (int i = 0; i < oldKeys.length; i++) {
+            if (oldKeys[i] != null && oldValues[i] != null) {
+                put((K) oldKeys[i], (V) oldValues[i]);
             }
         }
-        this.entries = newMap.entries;
-        this.capacity = newMap.capacity;
-        this.mask = newMap.mask;
-        this.size = newMap.size;
-        this.used = newMap.used;
     }
 
     public V get(K key) {
         int index = hash(key.hashCode()) & mask;
         int start = index;
-        Entry entry;
-        while ((entry = entries[index]) != null) {
-            if (entry.key.equals(key)) {
-                return (V)entry.value;
+        Object k;
+        while ((k = keys[index]) != null) {
+            if (k.equals(key)) {
+                return (V)values[index];
             }
             index = (index + 1) & mask;
             if(index==start) {
@@ -128,15 +136,18 @@ public class OpenAddressMap<K,V> {
     }
 
     public void clear() {
-        Arrays.fill(entries, null);
+        // both arrays: a stale non-null key would occupy probe slots and
+        // corrupt the empty-slot termination logic
+        Arrays.fill(keys, null);
+        Arrays.fill(values, null);
         size=0;
         used=0;
     }
 
     public void forEach(BiConsumer<K,V> action) {
-        for (Entry entry : entries) {
-            if (entry != null && entry.value != null) {
-                action.accept((K)entry.key,(V)entry.value);
+        for (int i = 0; i < keys.length; i++) {
+            if (keys[i] != null && values[i] != null) {
+                action.accept((K)keys[i],(V)values[i]);
             }
         }
     }
@@ -151,8 +162,8 @@ public class OpenAddressMap<K,V> {
 
             @Override
             public boolean hasNext() {
-                while (index < entries.length) {
-                    if (entries[index] != null && entries[index].value != null) {
+                while (index < keys.length) {
+                    if (keys[index] != null && values[index] != null) {
                         return true;
                     }
                     index++;
@@ -169,8 +180,8 @@ public class OpenAddressMap<K,V> {
                 if (!hasNext()) {
                     throw new java.util.NoSuchElementException();
                 }
-                Entry entry = entries[index++];
-                return new java.util.AbstractMap.SimpleEntry<>((K) entry.key, (V) entry.value);
+                int i = index++;
+                return new java.util.AbstractMap.SimpleEntry<>((K) keys[i], (V) values[i]);
             }
         };
     }
@@ -180,8 +191,8 @@ public class OpenAddressMap<K,V> {
 
         @Override
         public boolean hasNext() {
-            while (index < entries.length) {
-                if (entries[index] != null && entries[index].value != null) {
+            while (index < keys.length) {
+                if (keys[index] != null && values[index] != null) {
                     return true;
                 }
                 index++;
@@ -194,7 +205,7 @@ public class OpenAddressMap<K,V> {
             if (!hasNext()) {
                 throw new java.util.NoSuchElementException();
             }
-            return (K) entries[index++].key;
+            return (K) keys[index++];
         }
     }
 }

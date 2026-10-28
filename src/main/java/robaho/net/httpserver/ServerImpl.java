@@ -259,8 +259,10 @@ class ServerImpl {
         // virtual threads by default (JDK 21, JEP 444): connection handling is
         // blocking-IO-heavy (request reads, drains, SSL handshakes) and
         // thread-per-connection scales far better virtually than on the
-        // platform-thread pool. all monitor-based locking has been removed
-        // from the blocking paths so nothing pins a carrier thread.
+        // platform-thread pool. the old "no monitors anywhere" rule existed
+        // only for JEP 444 pinning; JDK 24 (JEP 491) removed it, and locks
+        // that need tryLock (h2 connection, websocket watchdog) keep
+        // ReentrantLock for that semantic, not for pinning
         // opt out with robaho.net.httpserver.virtualThreads=false
         private final ExecutorService executor = ServerConfig.virtualThreads()
             ? Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("httpserver-vt-", 0).factory())
