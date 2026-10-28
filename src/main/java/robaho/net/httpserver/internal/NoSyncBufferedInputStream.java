@@ -199,10 +199,20 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
      * one huge line does not pin that memory for the connection's lifetime */
     private byte[] lineBuf;
 
+    /** the direct view handed out by the last readLine when the whole line
+     * was already buffered (zero-copy fast path); null when the result
+     * lives in {@link #lineBuf} instead. cleared at the start of every
+     * readLine, so a stale view is never observable */
+    private byte[] viewBuf;
+    private int viewOffset;
+
     /**
      * Bulk line read for the request/header parsers: consumes bytes up to and
-     * including the next LF, copying them into a reusable internal buffer -
-     * one scan and one arraycopy per line instead of a per-byte read chain.
+     * including the next LF. when the ENTIRE line is already buffered (the
+     * common case - request lines and headers arrive far below the buffer
+     * size), the result is a direct zero-copy view into the stream buffer;
+     * only a line spanning a buffer boundary is accumulated into the
+     * reusable internal buffer. one scan per line, zero or one arraycopy.
      * Returns the line length (excluding the LF), or -1 at EOF (partial line
      * content at EOF is discarded, matching the old per-byte readers which
      * cleared their builder). CR bytes are copied verbatim: the request-line
@@ -215,6 +225,8 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
         } else if (lineBuf.length > 8192) {
             lineBuf = new byte[8192];
         }
+        viewBuf = null;
+        viewOffset = 0;
         int lineLen = 0;
         while (true) {
             byte[] b = getBufIfOpen();
@@ -224,6 +236,20 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
                     lf = i;
                     break;
                 }
+            }
+            // zero-copy fast path: the whole line (and its LF) sit in the
+            // stream buffer - hand out a view instead of copying. valid
+            // until the next readLine on this stream, exactly like the
+            // accumulated buffer
+            if (lf >= 0 && lineLen == 0) {
+                int len = lf - pos;
+                if (len > maxLen) {
+                    throw new IOException("line too long (limit " + maxLen + " bytes)");
+                }
+                viewBuf = b;
+                viewOffset = pos;
+                pos = lf + 1;
+                return len;
             }
             int chunkEnd = lf >= 0 ? lf : count;
             int avail = chunkEnd - pos;
@@ -259,9 +285,17 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
     }
 
     /** the buffer holding the last readLine result; valid until the next
-     * readLine call on this stream */
+     * readLine call on this stream. may be the stream buffer itself (a
+     * zero-copy view) - combine with {@link #lineBufferOffset()} */
     public byte[] lineBuffer() {
-        return lineBuf;
+        return viewBuf != null ? viewBuf : lineBuf;
+    }
+
+    /** the start offset of the last readLine result within the array
+     * returned by {@link #lineBuffer()}: 0 when the result was accumulated
+     * into the internal buffer, the view start otherwise */
+    public int lineBufferOffset() {
+        return viewOffset;
     }
 
     /** mark/reset are not supported: the buffer is swapped and shrunk by the

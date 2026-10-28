@@ -112,11 +112,12 @@ class Request {
                 return "";
             }
             byte[] raw = is.lineBuffer();
-            if (len > 0 && raw[len - 1] == CR && (len == 1 || raw[len - 2] != CR)) {
+            int off = is.lineBufferOffset();
+            if (len > 0 && raw[off + len - 1] == CR && (len == 1 || raw[off + len - 2] != CR)) {
                 len--;
             }
             if (len > 0) {
-                bb.appendBytes(raw, 0, len);
+                bb.appendBytes(raw, off, len);
                 return bb.trimmed();
             }
             // empty line: skip it (RFC 9112 3), but bound the count - an
@@ -264,19 +265,22 @@ class Request {
                 throw new IOException("Maximum header size (" + budget + ") exceeded");
             }
             byte[] raw = is.lineBuffer();
+            // the line may be a zero-copy view into the stream buffer: all
+            // indexes below are offset-relative
+            int off = is.lineBufferOffset();
             // header CR rule: ALL trailing CRs are swallowed (the old parser
             // set prevCR on each); any CR left inside the line was followed
             // by a non-CR/non-LF byte - a bare CR
-            int end = len;
-            while (end > 0 && raw[end - 1] == CR) {
+            int end = off + len;
+            while (end > off && raw[end - 1] == CR) {
                 end--;
             }
-            for (int i = 0; i < end; i++) {
+            for (int i = off; i < end; i++) {
                 if (raw[i] == CR) {
                     throw new IOException("bare CR in header line");
                 }
             }
-            if (end == 0) {
+            if (end == off) {
                 // blank line: end of headers, flushing a pending header first
                 if (!key.isEmpty() || !value.isEmpty()) {
                     addHeader(key, value, ++headerCount);
@@ -285,14 +289,14 @@ class Request {
             }
             // obs-fold: a line starting with whitespace continues the pending
             // value (RFC 9112 5.2: replace obs-fold with SP)
-            if (raw[0] == ' ' || raw[0] == '\t') {
+            if (raw[off] == ' ' || raw[off] == '\t') {
                 if (key.isEmpty() && value.isEmpty()) {
                     // a continuation line before any header field: RFC 9112
                     // 5.2 makes the whole message malformed. the old code
                     // flushed it as a header with an EMPTY NAME
                     throw new IOException("obs-fold line before any header field");
                 }
-                int start = 0;
+                int start = off;
                 while (start < end && (raw[start] == ' ' || raw[start] == '\t')) {
                     start++;
                 }
@@ -310,17 +314,17 @@ class Request {
             // name up to the FIRST colon (first char upper, rest lower, as
             // the old parser normalized); then the value after leading
             // whitespace
-            int colon = 0;
+            int colon = off;
             while (colon < end && raw[colon] != ':') {
                 colon++;
             }
-            if (colon > limit) {
+            if (colon - off > limit) {
                 throw new IOException("header line too long (limit " + limit + " bytes)");
             }
-            if (colon == 0 || colon >= end) {
+            if (colon == off || colon >= end) {
                 // empty name, or no colon at all: both are malformed
                 // field-lines (RFC 9112 5) and rejected with 400 by the JDK
-                throw new IOException(colon == 0 ? "empty header name" : "header line without colon");
+                throw new IOException(colon == off ? "empty header name" : "header line without colon");
             }
             // RFC 9112 5.1: "No whitespace is allowed between the field
             // name and colon... A server MUST reject, with a response status
@@ -330,15 +334,15 @@ class Request {
             // smuggling differential against RFC-compliant front proxies
             // (the JDK 400s it; the differential harness caught the gap)
             int nameEnd = colon;
-            if (nameEnd > 0 && (raw[nameEnd - 1] == ' ' || raw[nameEnd - 1] == '\t')) {
+            if (nameEnd > off && (raw[nameEnd - 1] == ' ' || raw[nameEnd - 1] == '\t')) {
                 throw new IOException("whitespace between header field name and colon");
             }
-            for (int j = 0; j < nameEnd; j++) {
+            for (int j = off; j < nameEnd; j++) {
                 char c = (char) (raw[j] & 0xFF);
                 if (c >= 128 || !TCHAR[c]) {
                     throw new IOException("invalid character in header name");
                 }
-                key.append(j == 0 ? Character.toUpperCase(c) : Character.toLowerCase(c));
+                key.append(j == off ? Character.toUpperCase(c) : Character.toLowerCase(c));
             }
             if (colon < end) {
                 int v = colon + 1;
@@ -346,8 +350,7 @@ class Request {
                     v++;
                 }
                 appendLimited(value, raw, v, end - v, limit);
-            }
-        }
+            }        }
         return hdrs;
     }
 
