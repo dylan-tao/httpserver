@@ -34,11 +34,22 @@ public class LazyHeadersTest {
     // --- unit level: view lifecycle against the parse table ---
 
     @Test
-    public void testUnreadOnlyViewStaysEmpty() {
+    public void testUnreadUnexposedViewIsSkippedByClear() {
         var table = new robaho.net.httpserver.internal.OptimizedHeaders(16);
         table.add("Key", "value");
         var view = new robaho.net.httpserver.internal.LazyRequestHeaders(table);
-        // no read: clear() must have force-materialized into the view
+        // never exposed via getRequestHeaders: nobody can retain it, so
+        // clear() skips the copy (the never-read fast path)
+        table.clear();
+        assertTrue(view.isEmpty());
+    }
+
+    @Test
+    public void testExposedUnreadViewIsForceCopied() {
+        var table = new robaho.net.httpserver.internal.OptimizedHeaders(16);
+        table.add("Key", "value");
+        var view = new robaho.net.httpserver.internal.LazyRequestHeaders(table);
+        view.markExposed(); // handed out via getRequestHeaders, never read
         table.clear();
         assertEquals(view.getFirst("Key"), "value");
     }
@@ -62,9 +73,11 @@ public class LazyHeadersTest {
         var table = new robaho.net.httpserver.internal.OptimizedHeaders(16);
         table.add("X-Req", "first");
         var first = new robaho.net.httpserver.internal.LazyRequestHeaders(table);
+        first.markExposed();
         table.clear();                                    // force-copy 'first'
         table.add("X-Req", "second");
         var second = new robaho.net.httpserver.internal.LazyRequestHeaders(table);
+        second.markExposed();
         table.clear();                                    // force-copy 'second'
         assertEquals(first.getFirst("X-Req"), "first");
         assertEquals(second.getFirst("X-Req"), "second");

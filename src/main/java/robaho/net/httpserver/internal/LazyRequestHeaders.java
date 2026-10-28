@@ -41,6 +41,15 @@ public final class LazyRequestHeaders extends Headers {
      * entries to lock-free readers */
     private volatile OptimizedHeaders source;
 
+    /** set when this view was handed to application code
+     * (getRequestHeaders). only an exposed view can be RETAINED past
+     * response completion, so clear() only force-materializes exposed
+     * views - an unexposed one dies with its exchange and is skipped,
+     * eliminating the copy for handlers that never read request headers.
+     * volatile: exposure can happen on any thread that holds the
+     * exchange while clear() runs on the connection thread */
+    private volatile boolean exposed;
+
     /** reentrancy guard: copyInto(target) calls target.put(...) virtually,
      * which lands back in this class's put() - a materialize() triggered
      * from inside materialize()'s own copy must be a no-op or it recurses
@@ -50,6 +59,20 @@ public final class LazyRequestHeaders extends Headers {
     public LazyRequestHeaders(OptimizedHeaders source) {
         this.source = source;
         source.attach(this);
+    }
+
+    /** called when the view is handed to application code
+     * (ExchangeImpl.getRequestHeaders): from this point the view can be
+     * retained past response completion, so the table's clear() must
+     * force-materialize it */
+    public void markExposed() {
+        exposed = true;
+    }
+
+    /** true once handed out: clear() force-materializes only exposed
+     * views, skipping the copy for the never-read case */
+    boolean isExposed() {
+        return exposed;
     }
 
     /** copy the source table into the standard HashMap backing exactly

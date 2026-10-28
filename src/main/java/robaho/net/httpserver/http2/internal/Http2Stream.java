@@ -420,6 +420,12 @@ public class Http2Stream {
      * headersSent latch and WITHOUT END_STREAM - the final response still
      * goes through writeResponseHeaders afterwards */
     public void writeInterimResponseHeaders() throws IOException {
+        // the reflective HeadersTest contract (see OptimizedHeaders):
+        // merge entries swapped into the PARENT map field after handlers
+        // ran; a no-op compiled out on production JVMs
+        if (responseHeaders instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
+            optimized.mergeReflectivelySwappedEntries();
+        }
         var block = HPackContext.encodeHeaderBlock(responseHeaders);
         connection.lock();
         try {
@@ -445,6 +451,10 @@ public class Http2Stream {
     public void writeResponseHeaders(boolean closeStream) throws IOException {
         if (headersSent.compareAndSet(false, true)) {
             try {
+                // same reflective-parent-map merge as the interim path
+                if (responseHeaders instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
+                    optimized.mergeReflectivelySwappedEntries();
+                }
                 // encode OUTSIDE the connection lock: the encoding is
                 // stream-local, only the frame writes need mutual exclusion.
                 // this shrinks the per-response critical section ~10x so
