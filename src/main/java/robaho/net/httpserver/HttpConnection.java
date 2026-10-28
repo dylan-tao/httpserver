@@ -103,6 +103,31 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
         m.put(name, copy);
     }
 
+    /** the connection's shared chunked-staging buffer. lent to ONE chunked
+     * exchange at a time by borrowChunkBuffer(); the chunked body stream
+     * runs on the connection's single writer thread and returns it at
+     * close(). null while lent out - a concurrent (pipelined) chunked
+     * exchange allocates privately instead */
+    private byte[] chunkBuffer;
+
+    /** borrow the shared chunked-staging buffer, or null if another
+     * exchange currently holds it */
+    byte[] borrowChunkBuffer() {
+        byte[] b = chunkBuffer;
+        if (b == null) {
+            b = new byte[ChunkedOutputStream.CHUNK_SIZE + ChunkedOutputStream.OFFSET + 2];
+            chunkBuffer = b;
+        }
+        // lent out: mark by nulling; the holder returns it in close()
+        chunkBuffer = null;
+        return b;
+    }
+
+    /** return a buffer borrowed via borrowChunkBuffer */
+    void returnChunkBuffer(byte[] b) {
+        chunkBuffer = b;
+    }
+
     /** set when the exchange hands the RAW streams to non-request-loop code
      * (101 upgrade, CONNECT tunnel): reads and writes then come from
      * different threads, so the pre-read flush hook must stand down - its

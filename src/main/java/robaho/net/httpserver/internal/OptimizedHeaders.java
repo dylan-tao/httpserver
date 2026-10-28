@@ -317,9 +317,34 @@ public class OptimizedHeaders extends Headers {
             }
         }
         if(i==len) return key;
-        // the fix path never re-checks the tail for CR/LF (the scan loop
-        // broke at the first fix point): a lowercase-first name carrying
-        // "\r\n..." passed where the JDK Headers throws
+        // single-pass fold into a fresh byte array: the old expression
+        // (toUpperCase + substring + toLowerCase + concat) allocated 4-5
+        // intermediate objects per non-conforming name ("Set-Cookie" style
+        // mixed-case names hit this on every set/add). the fold also
+        // completes the CR/LF tail check the scan loop never reached.
+        // non-latin1 names fall back to the general expression
+        byte[] folded = new byte[len];
+        for (int j = 0; j < len; j++) {
+            char c = key.charAt(j);
+            if (c == '\r' || c == '\n') {
+                throw new IllegalArgumentException("illegal character in key");
+            }
+            if (c > 0xFF) {
+                return slowFold(key);
+            }
+            if (c >= 'A' && c <= 'Z') {
+                c = (char) (c - 'A' + 'a');
+            }
+            folded[j] = (byte) c;
+        }
+        folded[0] = (byte) Character.toUpperCase(key.charAt(0));
+        return new String(folded, java.nio.charset.StandardCharsets.ISO_8859_1);
+    }
+
+    /** the general-case fold for non-latin1 names: behavior-identical to
+     * the original expression (unicode-aware case mapping), with the full
+     * CR/LF validation */
+    private static String slowFold(String key) {
         String fixed = Character.toUpperCase(key.charAt(0))+key.substring(1).toLowerCase();
         for (int j = 0; j < fixed.length(); j++) {
             char c = fixed.charAt(j);

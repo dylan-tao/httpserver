@@ -137,6 +137,20 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   so add()'s rescan is skipped (mirrors the h1 parser fast path). the
   h2 request-header path itself needs no lazy view - each stream owns a
   fresh table that IS the API object, so there is no copy to skip.
+- The chunked-response staging buffer is borrowed from the connection
+  and returned at close() instead of a fresh 4KB byte[] per chunked
+  response - it was the single largest per-response allocation site
+  (~90% of the profile's byte[] samples under a Set-Cookie-style
+  workload). a pipelined concurrent chunked exchange that cannot borrow
+  falls back to a private allocation. byte[] allocation samples under
+  the same load: 9426 -> 2212.
+- normalize()'s fix path (mixed-case names like "Set-Cookie" on every
+  set/add) folds in a single pass into one byte[] + String instead of
+  the old toUpperCase+substring+toLowerCase+concat chain of 4-5
+  intermediate objects, with the full CR/LF tail validation in the same
+  pass; non-latin1 names keep the general unicode-aware fold. 2212 ->
+  1798 samples, and the remaining ones are the fold's single inherent
+  allocation.
 - README gained a measured deployment-recipes section: compact object
   headers, G1PeriodicGCInterval idle-uncommit (validated live: periodic
   collection fires ~30s into idle, committed shrinks to the -Xms floor),

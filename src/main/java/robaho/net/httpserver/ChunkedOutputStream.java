@@ -57,7 +57,18 @@ class ChunkedOutputStream extends FilterOutputStream {
     static final int OFFSET = 6; /* initial <=4 bytes for len + CRLF */
     private int pos = OFFSET;
     private int count = 0;
-    private final byte[] buf = new byte[CHUNK_SIZE + OFFSET + 2];
+    /** CONNECTION-REUSED, not per response: the chunked body stream is
+     * used by the connection's single writer thread and dies at close,
+     * so the 4KB staging buffer is borrowed from the connection in the
+     * constructor and returned in close() - this was the single largest
+     * per-response allocation site in the profile (a fresh
+     * CHUNK_SIZE+8 byte[] per chunked response) */
+    private final byte[] buf;
+    /** set when this instance borrowed the connection's shared buffer;
+     * false when the shared buffer was still held by another (stalled)
+     * exchange and this one allocated privately */
+    private final boolean borrowedSharedBuffer;
+    private final HttpConnection connection;
     ExchangeImpl t;
 
     /* header of a full size chunk, for the zero copy large write path */
@@ -68,6 +79,18 @@ class ChunkedOutputStream extends FilterOutputStream {
     ChunkedOutputStream(ExchangeImpl t, OutputStream src) {
         super(src);
         this.t = t;
+        this.connection = t.getConnection();
+        // borrow the connection's shared buffer; a concurrent (pipelined)
+        // exchange may still hold it, in which case fall back to a private
+        // allocation - correctness first, the common case is uncontended
+        byte[] shared = connection.borrowChunkBuffer();
+        if (shared != null) {
+            buf = shared;
+            borrowedSharedBuffer = true;
+        } else {
+            buf = new byte[CHUNK_SIZE + OFFSET + 2];
+            borrowedSharedBuffer = false;
+        }
     }
 
     @Override
@@ -167,6 +190,9 @@ class ChunkedOutputStream extends FilterOutputStream {
             t.close = true;
         } finally {
             closed = true;
+            if (borrowedSharedBuffer) {
+                connection.returnChunkBuffer(buf);
+            }
             t.drainOriginalInputStream();
         }
     }
