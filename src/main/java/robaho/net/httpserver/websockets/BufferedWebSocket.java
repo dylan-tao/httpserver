@@ -110,20 +110,35 @@ public abstract class BufferedWebSocket extends WebSocket {
         enqueuePoisonPill();
     }
 
-    /** GUARANTEE the exit pill lands in the queue:
+    /** GUARANTEE the exit pill lands in the queue WITHOUT dropping a live
+     * frame:
      * 1. contains() fast path: an earlier close path's pill serves as-is
-     * 2. put() (not offer): cannot lose the freed slot to a racing producer.
-     *    a park is possible in the narrow window where the drain has died
-     *    but state is not yet CLOSED (the drain's own stream closes run
-     *    first): a producer winning the freed slot then leaves put() waiting
-     *    with no consumer. reaching it needs the 1024-cap refilled during
-     *    close AND losing the slot race; the socket close in the caller's
-     *    doClose path fails the parked write eventually - accepted edge
-     * 3. every branch returns - single iteration in practice; the loop
+     * 2. offer() first: the pill is APPENDED behind every queued frame. a
+     *    queued CloseFrame is the peer's close handshake - the old
+     *    poll-then-put unconditionally dropped the head frame to make room,
+     *    and when the drain was between the backlog and the CloseFrame that
+     *    dropped frame WAS the CloseFrame: the peer got EOF with no close
+     *    completion and hung (observed as the WebSocketDoubleCloseTest
+     *    full-suite flake - the JDK client's EOF handling fires onClose(1006)
+     *    only sometimes; with the CloseFrame delivered it fires onClose(1000)
+     *    deterministically)
+     * 3. the full-queue fallback (offer failed = 1024 queued frames): poll
+     *    one doomed frame and put() - cannot lose the freed slot to a racing
+     *    producer. the remaining producers are close-racing sends whose
+     *    frames are doomed anyway; the read-loop's own CloseFrame enqueue
+     *    blocks in put() while the queue is full, so it is never the dropped
+     *    head
+     * 4. every branch returns - single iteration in practice; the loop
      *    shape only covers the contains()-excluded pill-poll case */
     private void enqueuePoisonPill() {
         // fast path: a pill is already queued by an earlier close-path call
         if (queue.contains(POISON_PILL)) {
+            return;
+        }
+        // append the pill BEHIND every queued frame: offer() never touches
+        // the live frames, and the drain task (a plain take() loop) is
+        // guaranteed to write each of them before it reaches the pill
+        if (queue.offer(POISON_PILL)) {
             return;
         }
         while (true) {
