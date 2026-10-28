@@ -92,6 +92,17 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
   h2 connection, detached on the last disconnect) and its timer thread is
   created only on first h2 use: idle servers stop waking once a second to
   ping an empty registry (~6ms/min measured idle CPU).
+- CachedClock has no background timer anymore: the Date header snapshot
+  is refreshed on demand from the response path (one format per second at
+  most under load, zero while idle), and the per-second staleness of the
+  old 750ms tick (~1.75s worst case) improves to ~1s.
+- The connection-cleaner task is scheduled lazily too (attached on the
+  first accepted connection, detached on the last close, timer thread
+  created only on first use): a fully idle server now has zero
+  self-initiated periodic wakeups. Idle/timeout bookkeeping
+  (lastActivityTime, drainingAt) reads System.currentTimeMillis()
+  directly - it must advance while nothing is being served, and comparing
+  against a demand-driven cache would misjudge connection idle age.
 - Measured vs JDK 25 HttpServer: CPU -23%, sequential +11%, pipelined
   5×, header parsing 2-3×; idle memory parity.
 

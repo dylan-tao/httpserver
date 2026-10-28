@@ -112,7 +112,15 @@ class ServerImpl {
     // served
     // some request in the past
     static final long IDLE_INTERVAL = ServerConfig.getIdleIntervalMillis();
-    private final Timer timer;
+    /** the connection-cleaner timer. created lazily by
+     * connectionRegistered(): java.util.Timer starts its thread in the
+     * constructor, so a server that never accepts a connection pays
+     * nothing for it */
+    private Timer cleanerTimer;
+    /** the scheduled connection-cleaner task, or null while this server
+     * has no open connections. guarded by cleanerTaskLock */
+    private TimerTask cleanerTask;
+    private final Object cleanerTaskLock = new Object();
     /** separate from the cleaner timer: ping writes can block on a stalled
      * peer's connection lock and must not freeze connection management.
      * created lazily by h2ConnectionRegistered(): java.util.Timer starts
@@ -150,10 +158,13 @@ class ServerImpl {
             logger.log(Level.INFO,"server bound to "+socket.getLocalSocketAddress() + " with backlog "+backlog);
         }
         dispatcher = new Dispatcher();
-        timer = new Timer("connection-cleaner", true);
-        timer.schedule(new ConnectionCleanerTask(), IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
-        // note: the shared CachedClock clock runs on its own daemon timer
-        // (see CachedClock) so it survives this server instance
+        // the connection-cleaner task is NOT scheduled here: it is attached
+        // lazily to its own timer on the first accepted connection and
+        // detached when the last one closes (see connectionRegistered), so
+        // an idle server has no cleaner timer thread at all
+        // note: the shared CachedClock Date cache is refreshed on demand
+        // from the response path (see CachedClock) and has no timer or
+        // per-instance lifecycle at all
         // the h2 keepalive ping task is NOT scheduled here: it is attached
         // lazily to its own timer on the first h2 connection and detached
         // on the last disconnect (see h2ConnectionRegistered)
@@ -358,7 +369,15 @@ class ServerImpl {
         }
         allConnections.clear();
         connectionCount.set(0);
-        timer.cancel();
+        // under cleanerTaskLock: connectionRegistered() re-checks finished
+        // inside the same lock, so an accept racing this cancel either sees
+        // finished (and skips) or its timer is covered by this cancel - a
+        // bare racy null-check could strand a live cleaner timer past stop
+        synchronized (cleanerTaskLock) {
+            if (cleanerTimer != null) {
+                cleanerTimer.cancel();
+            }
+        }
         // under pingTaskLock: h2ConnectionRegistered() re-checks finished
         // inside the same lock, so a registration racing this cancel either
         // sees finished (and skips) or its timer is covered by this cancel -
@@ -593,6 +612,7 @@ class ServerImpl {
             try {
                 allConnections.add(c);
                 connectionCount.incrementAndGet();
+                connectionRegistered();
                 if (isFinishing()) {
                     // stop()'s sweep may have completed between the entry
                     // check and this registration (the SSL handshake can
@@ -739,6 +759,7 @@ class ServerImpl {
         if (allConnections.remove(conn)) {
             connectionCount.decrementAndGet();
         }
+        connectionClosed();
     }
 
     /* used to link to 2 or more Filter.Chains together */
@@ -1336,11 +1357,66 @@ class ServerImpl {
      * Responsible for closing connections that have been idle or exceed other
      * limits
      */
+    /** called when a connection is accepted: attaches the
+     * connection-cleaner task on the first registration, creating the
+     * timer if needed. the task is detached by connectionClosed() when the
+     * last connection closes, so a server with no open connections pays no
+     * periodic wakeups at all (previously the task fired forever from
+     * server start, sweeping an empty registry every 10s).
+     *
+     * the timer is SEPARATE from the h2 keepalive ping's because the
+     * cleaner's closeConnection write path must stay independent of a
+     * stalled peer (and vice versa: the original single shared timer let a
+     * stalled h2 download freeze idle-close server-wide).
+     *
+     * both this and the removal path synchronize fully on cleanerTaskLock
+     * and mutate the registry BEFORE taking the lock: whichever side wins
+     * the lock either observes the other's registry change or leaves
+     * cleanerTask null for the latecomer to (re)schedule, so the registry
+     * can never be left non-empty with no task attached */
+    private void connectionRegistered() {
+        synchronized (cleanerTaskLock) {
+            if (finished) {
+                return;
+            }
+            if (cleanerTask == null) {
+                if (cleanerTimer == null) {
+                    cleanerTimer = new Timer("connection-cleaner", true);
+                }
+                cleanerTask = new ConnectionCleanerTask();
+                cleanerTimer.schedule(cleanerTask, IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
+            }
+        }
+    }
+
+    /** called when a connection closes: detaches the connection-cleaner
+     * task once the LAST connection is gone, so no timer fire happens
+     * while the registry is empty. the timer itself survives (its thread
+     * parks at zero CPU on the empty queue) and is reused by the next
+     * accepted connection; it dies only with stop()'s cancel. cancelling
+     * the running task from inside the cleaner itself (it just closed the
+     * last connection) is legal: cancel() only prevents future runs */
+    private void connectionClosed() {
+        if (allConnections.isEmpty()) {
+            synchronized (cleanerTaskLock) {
+                if (allConnections.isEmpty() && cleanerTask != null) {
+                    cleanerTask.cancel();
+                    cleanerTimer.purge();
+                    cleanerTask = null;
+                }
+            }
+        }
+    }
+
     class ConnectionCleanerTask extends TimerTask {
 
         @Override
         public void run() {
-            long now = CachedClock.now();
+            // System.currentTimeMillis, not the CachedClock snapshot: the
+            // cleaner compares this against lastActivityTime/drainingAt,
+            // which are plain wall-clock writes (see HttpConnection) - both
+            // sides of the comparison must use the same source
+            long now = System.currentTimeMillis();
 
             for (var c : allConnections) {
                 // an h2c connection's inRequest is only true during the upgrade window

@@ -364,7 +364,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
 
         private ActivityTrackingInputStream(InputStream inputStream) {
             super(inputStream);
-            lastActivityTime = CachedClock.now();
+            lastActivityTime = System.currentTimeMillis();
         }
 
         @Override
@@ -372,7 +372,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             try {
                 return super.read();
             } finally {
-                lastActivityTime = CachedClock.now();
+                lastActivityTime = System.currentTimeMillis();
             }
         }
 
@@ -381,7 +381,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             try {
                 return super.skip(n);
             } finally {
-                lastActivityTime = CachedClock.now();
+                lastActivityTime = System.currentTimeMillis();
             }
         }
 
@@ -390,7 +390,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             try {
                 return super.read(b, off, len);
             } finally {
-                lastActivityTime = CachedClock.now();
+                lastActivityTime = System.currentTimeMillis();
             }
         }
 
@@ -400,14 +400,14 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
 
         private ActivityTrackingOutputStream(OutputStream outputStream) {
             super(outputStream);
-            lastActivityTime = CachedClock.now();
+            lastActivityTime = System.currentTimeMillis();
         }
         @Override
         public void write(int b) throws IOException {
             try {
                 out.write(b);
             } finally {
-                lastActivityTime = CachedClock.now();
+                lastActivityTime = System.currentTimeMillis();
             }
         }
 
@@ -416,7 +416,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
             try {
                 out.write(b, off, len);
             } finally {
-                lastActivityTime = CachedClock.now();
+                lastActivityTime = System.currentTimeMillis();
             }
         }
     }
