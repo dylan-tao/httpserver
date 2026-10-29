@@ -68,8 +68,6 @@ class ExchangeImpl {
 
     private static final String HEAD = "HEAD";
     private static final String CONNECT = "CONNECT";
-    private static final String HEADER_CONNECTION = "Connection";
-    private static final String HEADER_CONNECTION_UPGRADE = "Upgrade";
     /*
      * streams which take care of the HTTP protocol framing
      * and are passed up to higher layers
@@ -151,25 +149,6 @@ class ExchangeImpl {
 
     private boolean isConnectRequest() {
         return CONNECT.equals(getRequestMethod());
-    }
-    private boolean isUpgradeRequest() {
-        // token-list per RFC 7230 7: "Connection: keep-alive, Upgrade" (the
-        // exact form Firefox sends) must count as an upgrade request. the
-        // old whole-value equalsIgnoreCase let the 101 handshake succeed
-        // but handed the websocket a 0-length fixed stream - instant EOF
-        // after the handshake for every token-list client
-        var connectionValues = reqHdrs.get(HEADER_CONNECTION);
-        if (connectionValues == null) {
-            return false;
-        }
-        for (String value : connectionValues) {
-            for (String token : value.split(",")) {
-                if (HEADER_CONNECTION_UPGRADE.equalsIgnoreCase(token.trim())) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     public void close() {
