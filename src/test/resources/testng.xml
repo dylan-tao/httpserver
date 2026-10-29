@@ -26,6 +26,7 @@
       <class name="robaho.net.httpserver.websockets.WebSocketResponseHandlerTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketTest"/>
       <class name="robaho.net.httpserver.SlowBodyKeepAliveTest"/>
+      <class name="robaho.net.httpserver.http2.hpack.HuffmanDecodeTest"/>
       <class name="robaho.net.httpserver.http2.hpack.HuffmanTest"/>
       <class name="robaho.net.httpserver.http2.H2ComplianceTest"/>
       <class name="robaho.net.httpserver.http2.Http2AlpnTest"/>

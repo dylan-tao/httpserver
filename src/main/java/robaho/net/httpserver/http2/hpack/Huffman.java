@@ -142,11 +142,155 @@ public class Huffman {
         return decode(value, 0, value.length);
     }
 
+    /** byte-driven decode table: RFC 7541's shortest code is 5 bits, so one
+     * input byte completes at most ONE symbol - every (state, byte) pair
+     * resolves to an optional symbol plus the next state in a single flat
+     * lookup. the state space is the internal nodes of the canonical code
+     * tree (a full binary tree has internal = leaves - 1 = 256), so the
+     * whole table is two flat arrays of 256x256 entries (~190KB, built
+     * once). this replaces the per-bit shift/range-check loop that measured
+     * ~8ns/byte with a single array access per byte */
+    private static final short[] DECODE_SYM;
+    /** second symbol completed by the same (state, byte) entry, or -1.
+     * walking one byte from a NON-ROOT state can complete TWO symbols:
+     * the first code finishes early (the state already held its prefix
+     * bits), the walk returns to the root, and up to 7 remaining bits can
+     * complete one more 5-bit code. a third is impossible: after the
+     * second code at most 2 bits remain */
+    private static final byte[] DECODE_SYM2;
+    private static final byte[] DECODE_NEXT;
+    /** states reachable by walking 1..7 one-bits from the root: the only
+     * legal padding positions (the EOS code is 30 one-bits, so any shorter
+     * all-ones prefix is an internal node) */
+    private static final boolean[] PADDING_OK;
+
+    /** sentinel in DECODE_SYM: the walk hit the EOS symbol */
+    private static final short EOS_ERR = -2;
+    /** sentinel in DECODE_SYM: the walk fell into a tree hole - the RFC
+     * 7541 code set is NOT a complete tree (Kraft sum < 1: some bit
+     * sequences are no code's prefix), and the bitwise reference rejects
+     * those as bits > MAX_CODE_LENGTH */
+    private static final short INVALID_ERR = -3;
+
+    static {
+        // build the canonical code tree: child arrays indexed by node id,
+        // internal nodes carry the next node id, leaves carry -(symbol+1)
+        int[] child0 = new int[512];
+        int[] child1 = new int[512];
+        java.util.Arrays.fill(child0, -1);
+        java.util.Arrays.fill(child1, -1);
+        int nodeCount = 1; // node 0 = root
+        for (int sym = 0; sym < 257; sym++) {
+            long code = sym == 256 ? (1L << 30) - 1 : CODES[sym];
+            int len = sym == 256 ? 30 : LENGTHS[sym];
+            int cur = 0;
+            for (int bit = len - 1; bit >= 0; bit--) {
+                int[] child = ((code >>> bit) & 1) == 0 ? child0 : child1;
+                if (bit == 0) {
+                    if (child[cur] != -1) {
+                        throw new IllegalStateException("huffman prefix collision");
+                    }
+                    // leaf marker -(sym+2): -(0+1) would be -1, the SAME
+                    // value as the unallocated sentinel and symbol 0's leaf
+                    // would be indistinguishable from a tree hole
+                    child[cur] = -(sym + 2);
+                } else {
+                    if (child[cur] == -1) {
+                        if (nodeCount == child0.length) {
+                            child0 = java.util.Arrays.copyOf(child0, child0.length * 2);
+                            child1 = java.util.Arrays.copyOf(child1, child1.length * 2);
+                        }
+                        child[cur] = nodeCount;
+                        child0[nodeCount] = -1;
+                        child1[nodeCount] = -1;
+                        nodeCount++;
+                    }
+                    cur = child[cur];
+                }
+            }
+        }
+        // a full binary tree has internal = leaves - 1 = 256 nodes, so the
+        // state space fits the fixed tables exactly
+        if (nodeCount > 256) {
+            throw new IllegalStateException("huffman tree has " + nodeCount + " states");
+        }
+        DECODE_SYM = new short[256 * 256];
+        DECODE_SYM2 = new byte[256 * 256];
+        DECODE_NEXT = new byte[256 * 256];
+        boolean[] padding = new boolean[256];
+        padding[0] = true; // fully consumed: zero padding bits
+        buildTables(child0, child1, nodeCount, padding);
+        PADDING_OK = padding;
+    }
+
+    /** walk every (state, byte) combination: from the state's node, follow
+     * the byte's 8 bits; the FIRST completed leaf (if any, at most one
+     * since the shortest code is 5 bits) is the emitted symbol and the walk
+     * continues from the root for the remaining bits; the final node is the
+     * next state */
+    private static void buildTables(int[] child0, int[] child1, int nodeCount, boolean[] padding) {
+        for (int state = 0; state < nodeCount; state++) {
+            for (int b = 0; b < 256; b++) {
+                int cur = state;
+                short sym1 = -1;
+                byte sym2 = -1;
+                for (int k = 7; k >= 0; k--) {
+                    int bit = (b >>> k) & 1;
+                    int[] child = bit == 0 ? child0 : child1;
+                    int next = child[cur];
+                    if (next == -1) {
+                        // a tree hole: this bit sequence is no code's prefix
+                        // (the RFC 7541 code set is incomplete by design).
+                        // a hole prefix always contains a 0 bit, so it can
+                        // never be legal end-of-stream padding - reject the
+                        // whole entry
+                        if (sym1 == -1) {
+                            sym1 = INVALID_ERR;
+                        } else {
+                            sym2 = (byte) INVALID_ERR;
+                        }
+                        cur = 0;
+                        break;
+                    }
+                    if (next <= -2) {
+                        int symbol = -next - 2;
+                        if (symbol == 256) {
+                            if (sym1 == -1) {
+                                sym1 = EOS_ERR;
+                            } else {
+                                sym2 = (byte) EOS_ERR;
+                            }
+                        } else if (sym1 == -1) {
+                            sym1 = (short) symbol;
+                        } else {
+                            sym2 = (byte) symbol;
+                        }
+                        cur = 0; // continue from the root
+                    } else {
+                        cur = next;
+                    }
+                }
+                DECODE_SYM[state * 256 + b] = sym1;
+                DECODE_SYM2[state * 256 + b] = sym2;
+                DECODE_NEXT[state * 256 + b] = (byte) cur;
+            }
+        }
+        // padding positions: walk 1..7 one-bits from the root
+        int cur = 0;
+        for (int depth = 1; depth <= 7; depth++) {
+            int next = child1[cur];
+            if (next <= 0) {
+                break; // a leaf within 7 one-bits: not a legal padding state
+            }
+            cur = next;
+            padding[cur] = true;
+        }
+    }
+
     /** decode a region of the header block in place: the caller has already
      * validated the bounds, so the previous copyOfRange per name/value was a
      * duplicate allocation */
     public static String decode(byte[] value, int offset, int length) throws Http2Exception {
-        Tables t = TABLES;
         // RFC 7541 5.2: the decoded symbol sequence is the UTF-8 encoding of
         // the header value - collect raw bytes, then convert once (decoding
         // symbol-by-symbol into a String would corrupt multi byte sequences).
@@ -154,20 +298,54 @@ public class Huffman {
         // than the input in bytes (e.g. 96 input bits -> 15+ symbols)
         byte[] decoded = new byte[length * 8 / 5 + 2];
         int pos = 0;
+        int state = 0;
+        for (int i = offset; i < offset + length; i++) {
+            int idx = (state << 8) | (value[i] & 0xFF);
+            int sym = DECODE_SYM[idx];
+            if (sym >= 0) {
+                decoded[pos++] = (byte) sym;
+                // the same byte may complete a SECOND code (the state held
+                // the first code's prefix bits): at most one more fits
+                int sym2 = DECODE_SYM2[idx];
+                if (sym2 >= 0) {
+                    decoded[pos++] = (byte) sym2;
+                } else if (sym2 == EOS_ERR) {
+                    throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "decoded data contains EOS");
+                } else if (sym2 == INVALID_ERR) {
+                    throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "invalid huffman code");
+                }
+            } else if (sym == EOS_ERR) {
+                throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "decoded data contains EOS");
+            } else if (sym == INVALID_ERR) {
+                throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "invalid huffman code");
+            }
+            state = DECODE_NEXT[idx] & 0xFF;
+        }
+        // remaining bits must be all-ones padding of fewer than 8 bits: the
+        // state itself records how deep into the all-ones path we are
+        if (!PADDING_OK[state]) {
+            throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "decoded data has incorrect padding");
+        }
 
+        return new String(decoded, 0, pos, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** reference per-bit decoder kept for differential testing against the
+     * table-driven path (HuffmanDecodeTest) */
+    static String decodeBitwise(byte[] value, int offset, int length) throws Http2Exception {
+        Tables t = TABLES;
+        byte[] decoded = new byte[length * 8 / 5 + 2];
+        int pos = 0;
         long acc = 0;
         int bits = 0;
-
         for (int i = offset; i < offset + length; i++) {
             int b = value[i] & 0xFF;
             for (int j = 7; j >= 0; j--) {
                 acc = (acc << 1) | ((b >> j) & 1);
                 bits++;
-
                 if (bits > MAX_CODE_LENGTH) {
                     throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "invalid huffman code");
                 }
-
                 long base = t.firstCode[bits];
                 if (base != -1) {
                     long codeOffset = acc - base;
@@ -183,12 +361,9 @@ public class Huffman {
                 }
             }
         }
-
-        // any remaining bits must be padding: fewer than 8 bits, all ones
         if (bits > 7 || (bits > 0 && acc != (1L << bits) - 1)) {
             throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, "decoded data has incorrect padding");
         }
-
         return new String(decoded, 0, pos, java.nio.charset.StandardCharsets.UTF_8);
     }
 
