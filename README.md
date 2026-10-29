@@ -270,3 +270,7 @@ HTTP/2 连接级发送窗口（服务端→客户端方向）初始为 65535 字
 - 几乎所有 JDK 原有测试均已包含（全部 TestNG 套件通过（当前 214 项，见 CI））
 - 额外的代理、WebSocket、HTTP/2 合规测试
 - HTTP/2 通过 [h2spec](https://github.com/summerwind/h2spec) 全部规范测试
+
+### 已知差异（vs JDK HttpServer）
+
+- **异步迟到读取请求头返回空表**：handler 从未调用 `getRequestHeaders()` 的交换，其请求头视图按需惰性物化；若应用代码在**响应完成且连接已服务下一请求之后**才首次读取该视图，得到的是空 `Headers`（而非 JDK 实现的过期快照）。任何时点在 handler 内正常读取（含异步 handler 在 doFilter 返回前获取引用）行为与 JDK 完全一致。此差异杜绝了跨请求头泄漏，是安全性取舍。

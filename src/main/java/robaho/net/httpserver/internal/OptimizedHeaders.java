@@ -355,6 +355,11 @@ public class OptimizedHeaders extends Headers {
         return fixed;
     }
 
+    /** test hook: number of stored entries (names normalize to one slot) */
+    public int mapSizeForTest() {
+        return map.size();
+    }
+
     @Override
     public void add(String key, String value) {
         addNormalized(normalize(key), value);

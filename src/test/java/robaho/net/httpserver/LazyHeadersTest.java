@@ -38,8 +38,11 @@ public class LazyHeadersTest {
         var table = new robaho.net.httpserver.internal.OptimizedHeaders(16);
         table.add("Key", "value");
         var view = new robaho.net.httpserver.internal.LazyRequestHeaders(table);
-        // never exposed via getRequestHeaders: nobody can retain it, so
-        // clear() skips the copy (the never-read fast path)
+        // never exposed via getRequestHeaders: clear() skips the snapshot
+        // copy (the never-read fast path) and RETIRES the view - a late
+        // getRequestHeaders through a retained exchange then reads EMPTY
+        // (see testLateUnexposedReadNeverSeesNextRequestData), never the
+        // refilled table
         table.clear();
         assertTrue(view.isEmpty());
     }

@@ -24,6 +24,36 @@ public class RequestHeadersTest {
         assertEquals(r.headers().getFirst("KEY"),"VALUE");
     }
     @Test
+    public void TestNormalizeUnicodeFallback() {
+        // the normalize() fast path folds ASCII in one byte[] pass; names
+        // containing >0xFF chars must fall back to the unicode-aware
+        // slowFold with identical results
+        var h = new robaho.net.httpserver.internal.OptimizedHeaders();
+        // 'ž' (0x17E) exceeds one byte: a fix-path name carrying it takes
+        // the slowFold branch (fix triggered by the lowercase first char)
+        h.add("x-ž", "v");
+        assertEquals(h.getFirst("X-ž"), "v");
+        assertEquals(h.getFirst("x-ž"), "v");
+        // non-ASCII first char is NOT case-folded (ASCII-only rule): the
+        // name stores as-is and lookups with the exact form hit
+        h.add("ünicode-key", "u");
+        assertEquals(h.getFirst("ünicode-key"), "u");
+        // pure ASCII mixed case: the fast fold, one slot per name
+        h.add("set-cookie", "c1");
+        assertEquals(h.getFirst("Set-Cookie"), "c1");
+        assertEquals(h.getFirst("set-cookie"), "c1");
+        assertEquals(h.mapSizeForTest(), 3);
+    }
+    @Test
+    public void TestNormalizeCRLFRejection() {
+        var h = new robaho.net.httpserver.internal.OptimizedHeaders();
+        // a lowercase-first name with a hidden CR in the tail passed the
+        // old scan loop; the fold must reject it like the JDK does.
+        // (VALUE bytes are validated on the write path, not here)
+        assertThrows(IllegalArgumentException.class, () -> h.add("bad\rname", "v"));
+        h.add("good", "v\rvalue"); // stored; getTotal rejects it at write time
+    }
+    @Test
     public void TestMultiLineHeaderParse() throws IOException {
         String request = "GET blah\r\nKEY:VAL\r\n 2\r\n\r\n";
         var is = new ByteArrayInputStream(request.getBytes());
