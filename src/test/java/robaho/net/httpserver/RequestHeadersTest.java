@@ -38,11 +38,20 @@ public class RequestHeadersTest {
         // name stores as-is and lookups with the exact form hit
         h.add("ünicode-key", "u");
         assertEquals(h.getFirst("ünicode-key"), "u");
+        // REGRESSION: a first char whose Unicode uppercase exceeds one byte
+        // ('ÿ' U+00FF -> U+0178) used to truncate in the byte cast, storing
+        // "xx" instead of the old fold's "Ÿx". the fix restores the exact
+        // pre-fold expression's behavior (unicode-aware, lookup by the
+        // stored normalized form)
+        h.add("ÿX", "y");
+        assertEquals(h.getFirst("Ÿx"), "y");
+        // and the truncation is gone: the stored key is no longer "xx"
+        assertEquals(h.keySet().stream().filter(k -> k.equals("xx")).count(), 0);
         // pure ASCII mixed case: the fast fold, one slot per name
         h.add("set-cookie", "c1");
         assertEquals(h.getFirst("Set-Cookie"), "c1");
         assertEquals(h.getFirst("set-cookie"), "c1");
-        assertEquals(h.mapSizeForTest(), 3);
+        assertEquals(h.mapSizeForTest(), 4);
     }
     @Test
     public void TestNormalizeCRLFRejection() {

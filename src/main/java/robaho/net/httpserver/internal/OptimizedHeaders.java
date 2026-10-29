@@ -322,7 +322,13 @@ public class OptimizedHeaders extends Headers {
         // intermediate objects per non-conforming name ("Set-Cookie" style
         // mixed-case names hit this on every set/add). the fold also
         // completes the CR/LF tail check the scan loop never reached.
-        // non-latin1 names fall back to the general expression
+        // the fold's first-char uppercase is ASCII-only: a first char whose
+        // Unicode uppercase exceeds one byte (e.g. U+00FF -> U+0178) would
+        // truncate in the byte cast - those names take the general fold
+        char firstUpper = Character.toUpperCase(key.charAt(0));
+        if (firstUpper > 0xFF) {
+            return slowFold(key);
+        }
         byte[] folded = new byte[len];
         for (int j = 0; j < len; j++) {
             char c = key.charAt(j);
@@ -337,7 +343,7 @@ public class OptimizedHeaders extends Headers {
             }
             folded[j] = (byte) c;
         }
-        folded[0] = (byte) Character.toUpperCase(key.charAt(0));
+        folded[0] = (byte) firstUpper;
         return new String(folded, java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 

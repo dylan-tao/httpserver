@@ -156,8 +156,10 @@ public class Huffman {
      * the first code finishes early (the state already held its prefix
      * bits), the walk returns to the root, and up to 7 remaining bits can
      * complete one more 5-bit code. a third is impossible: after the
-     * second code at most 2 bits remain */
-    private static final byte[] DECODE_SYM2;
+     * second code at most 2 bits remain. short, not byte: second codes are
+     * always <= 7-bit codes (ASCII today), but a byte would silently
+     * truncate any symbol >= 128 into the negative sentinel space */
+    private static final short[] DECODE_SYM2;
     private static final byte[] DECODE_NEXT;
     /** states reachable by walking 1..7 one-bits from the root: the only
      * legal padding positions (the EOS code is 30 one-bits, so any shorter
@@ -215,7 +217,7 @@ public class Huffman {
             throw new IllegalStateException("huffman tree has " + nodeCount + " states");
         }
         DECODE_SYM = new short[256 * 256];
-        DECODE_SYM2 = new byte[256 * 256];
+        DECODE_SYM2 = new short[256 * 256];
         DECODE_NEXT = new byte[256 * 256];
         boolean[] padding = new boolean[256];
         padding[0] = true; // fully consumed: zero padding bits
@@ -233,7 +235,7 @@ public class Huffman {
             for (int b = 0; b < 256; b++) {
                 int cur = state;
                 short sym1 = -1;
-                byte sym2 = -1;
+                short sym2 = -1;
                 for (int k = 7; k >= 0; k--) {
                     int bit = (b >>> k) & 1;
                     int[] child = bit == 0 ? child0 : child1;
@@ -247,7 +249,7 @@ public class Huffman {
                         if (sym1 == -1) {
                             sym1 = INVALID_ERR;
                         } else {
-                            sym2 = (byte) INVALID_ERR;
+                            sym2 = INVALID_ERR;
                         }
                         cur = 0;
                         break;
@@ -258,12 +260,12 @@ public class Huffman {
                             if (sym1 == -1) {
                                 sym1 = EOS_ERR;
                             } else {
-                                sym2 = (byte) EOS_ERR;
+                                sym2 = EOS_ERR;
                             }
                         } else if (sym1 == -1) {
                             sym1 = (short) symbol;
                         } else {
-                            sym2 = (byte) symbol;
+                            sym2 = (short) symbol;
                         }
                         cur = 0; // continue from the root
                     } else {
