@@ -149,7 +149,7 @@ public class WebSocketFrame {
             // connection
             throw new IllegalArgumentException("control frame payload exceeds 125 bytes: " + payload.length);
         }
-        setBinaryPayload(payload);
+        setBinaryPayload(payload == null ? new byte[0] : payload);
     }
 
     /** a frame with a UTF-8 text payload */

@@ -581,7 +581,6 @@ class ExchangeImpl {
         int total = statusLine.length + 2; // trailing CRLF
         for (Map.Entry<String, List<String>> entry : map.entrySet()) {
             String key = entry.getKey();
-            int keyLen = key.length();
             for (String val : entry.getValue()) {
                 total += checkedValueLen(key, val);
             }

@@ -298,8 +298,10 @@ public class Http2Connection {
         // a single read() may return short when the preface is segmented by
         // the transport; readFully loops until the whole preface arrived
         readFully(inputStream, preface);
-        String prefaceStr = new String(preface);
-        return prefaceStr.equals(expectedPreface);
+        // byte-exact comparison: the preface is a fixed ASCII constant, so no
+        // charset round-trip is needed (and none of the bytes are mutable)
+        return java.util.Arrays.equals(preface,
+            expectedPreface.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     }
 
     public boolean isClosed() {
@@ -479,7 +481,6 @@ public class Http2Connection {
                     // header block and kill the connection on validation
                     continue;
                 case DATA:
-                    DataFrame dataFrame = (DataFrame) frame;
                     // flow control accounting uses the full frame payload length
                     // (including any PADDED bytes), not the stripped body (RFC 7540 6.9)
                     if (receiveWindow.addAndGet(-frame.getHeader().length()) < 0) {
@@ -630,7 +631,6 @@ public class Http2Connection {
                     // stream priority is ignore for now
                     continue;
                 case RST_STREAM:
-                    ResetStreamFrame resetFrame = (ResetStreamFrame) frame;
                     // any RST_STREAM (including NO_ERROR and codes the enum
                     // does not know) must close the stream: the peer considers
                     // it cancelled

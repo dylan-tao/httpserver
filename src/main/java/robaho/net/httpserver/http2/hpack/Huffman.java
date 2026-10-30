@@ -84,7 +84,7 @@ public class Huffman {
             classloader = Huffman.class.getClassLoader();
         }
         try (InputStream is = classloader.getResourceAsStream("huffman_codes_rfc7541.txt");
-             BufferedReader br = new BufferedReader(new InputStreamReader(is))) {
+             BufferedReader br = new BufferedReader(new InputStreamReader(is, java.nio.charset.StandardCharsets.US_ASCII))) {
             String line;
             while ((line = br.readLine()) != null) {
                 // lines look like "  'w' (119)  |1111000   78  [ 7]" or "EOS (256)  |...  [30]".

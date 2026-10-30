@@ -185,7 +185,7 @@ class ServerImpl {
                 "Active Connections: "+connectionCount.get()+"\n" +
                 stats.stats()+
                 http2Stats.stats()
-                ).getBytes();
+                ).getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
             exchange.sendResponseHeaders(200,output.length);
             exchange.getResponseBody().write(output);

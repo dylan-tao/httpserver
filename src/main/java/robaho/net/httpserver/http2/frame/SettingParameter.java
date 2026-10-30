@@ -18,7 +18,7 @@ public class SettingParameter {
      * connection level, unless changed by SETTINGS or WINDOW_UPDATE */
     public static final long INITIAL_WINDOW_SIZE = 65535;
 
-    public static SettingParameter DEFAULT_INITIAL_WINDOWSIZE = new SettingParameter(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE, (int) INITIAL_WINDOW_SIZE);
+    public static final SettingParameter DEFAULT_INITIAL_WINDOWSIZE = new SettingParameter(SettingIdentifier.SETTINGS_INITIAL_WINDOW_SIZE, (int) INITIAL_WINDOW_SIZE);
 
     public SettingParameter() {
     }
