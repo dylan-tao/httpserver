@@ -1335,7 +1335,7 @@ class ServerImpl {
      */
     private static class RequestRejectedException extends IOException {
 
-      private static final long serialVersionUID = 1L;
+      private static final long serialVersionUID = 8410134731992176435L;
 
       final int code;
 

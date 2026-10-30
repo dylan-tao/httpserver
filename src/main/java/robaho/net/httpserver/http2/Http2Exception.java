@@ -6,7 +6,7 @@ package robaho.net.httpserver.http2;
  */
 public class Http2Exception extends Exception {
 
-  private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 6638545812909078098L;
 
   private final Http2ErrorCode errorCode;
 

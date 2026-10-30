@@ -8,7 +8,7 @@ import java.util.List;
 
 public class QueryParameters extends LinkedHashMap<String, List<String>> {
 
-  private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 7690091473620689039L;
 
   /**
    * @param encoding a valid java character set name
