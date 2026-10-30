@@ -83,8 +83,9 @@ public class ProxyHandler implements HttpHandler {
         return List.of(new Proxy(Proxy.Type.HTTP, new InetSocketAddress(hp.server, hp.port)));
       }
 
-      @Override
       /** {@inheritDoc} - a failed tunnel connect is logged and given up on */
+
+      @Override
       public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
         ProxyHandler.this.connectFailed(uri, sa, ioe);
       }

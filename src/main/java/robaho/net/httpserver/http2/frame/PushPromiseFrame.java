@@ -9,8 +9,9 @@ public class PushPromiseFrame extends BaseFrame {
     super(header);
   }
 
-  @Override
   /** dead code, kept to satisfy the abstract base: server push is not implemented; this parse-only stub drops the promised-stream payload */
+
+  @Override
   public void writeTo(OutputStream os) throws IOException {
     getHeader().writeTo(os);
   }

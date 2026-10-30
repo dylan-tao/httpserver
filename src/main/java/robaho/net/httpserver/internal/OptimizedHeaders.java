@@ -546,12 +546,12 @@ public class OptimizedHeaders extends Headers {
     return entrySetView;
   }
 
-  @Override
   // intentionally identity-based: content equality would walk every
   // header of every instance - on the request hot path that is pure
   // overhead, and headers are never used as map keys. hashCode stays
   // content-based (inherited) which is legal: equal objects must have
   // equal hashCodes, not the converse
+  @Override
   public boolean equals(Object o) {
     return (this == o);
   }

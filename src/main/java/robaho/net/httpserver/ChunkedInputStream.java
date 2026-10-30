@@ -37,7 +37,6 @@ class ChunkedInputStream extends LeftOverInputStream {
   private int remaining;
 
   /* true when a chunk header needs to be read */
-
   private boolean needToReadHeader = true;
 
   static final char CR = '\r';
