@@ -50,161 +50,176 @@ import java.util.Objects;
  */
 
 class ChunkedOutputStream extends FilterOutputStream {
-    private boolean closed = false;
-    /* max. amount of user data per chunk */
-    static final int CHUNK_SIZE = 4096;
-    /* allow 4 bytes for chunk-size plus 4 for CRLFs */
-    static final int OFFSET = 6; /* initial <=4 bytes for len + CRLF */
-    private int pos = OFFSET;
-    private int count = 0;
-    /** CONNECTION-REUSED, not per response: the chunked body stream is
-     * used by the connection's single writer thread and dies at close,
-     * so the 4KB staging buffer is borrowed from the connection in the
-     * constructor and returned in close() - this was the single largest
-     * per-response allocation site in the profile (a fresh
-     * CHUNK_SIZE+8 byte[] per chunked response) */
-    private final byte[] buf;
-    /** set when this instance borrowed the connection's shared buffer;
-     * false when the shared buffer was still held by another (stalled)
-     * exchange and this one allocated privately */
-    private final boolean borrowedSharedBuffer;
-    private final HttpConnection connection;
-    ExchangeImpl t;
 
-    /* header of a full size chunk, for the zero copy large write path */
-    private static final byte[] FULL_CHUNK_HEADER =
-            (Integer.toHexString(CHUNK_SIZE) + "\r\n").getBytes(StandardCharsets.ISO_8859_1);
-    private static final byte[] CRNL_BYTES = "\r\n".getBytes(StandardCharsets.ISO_8859_1);
+  private boolean closed = false;
 
-    ChunkedOutputStream(ExchangeImpl t, OutputStream src) {
-        super(src);
-        this.t = t;
-        this.connection = t.getConnection();
-        // borrow the connection's shared buffer; a concurrent (pipelined)
-        // exchange may still hold it, in which case fall back to a private
-        // allocation - correctness first, the common case is uncontended
-        byte[] shared = connection.borrowChunkBuffer();
-        if (shared != null) {
-            buf = shared;
-            borrowedSharedBuffer = true;
-        } else {
-            buf = new byte[CHUNK_SIZE + OFFSET + 2];
-            borrowedSharedBuffer = false;
-        }
+  /* max. amount of user data per chunk */
+  static final int CHUNK_SIZE = 4096;
+
+  /* allow 4 bytes for chunk-size plus 4 for CRLFs */
+  static final int OFFSET = 6; /* initial <=4 bytes for len + CRLF */
+
+  private int pos = OFFSET;
+
+  private int count = 0;
+
+  /**
+   * CONNECTION-REUSED, not per response: the chunked body stream is
+   * used by the connection's single writer thread and dies at close,
+   * so the 4KB staging buffer is borrowed from the connection in the
+   * constructor and returned in close() - this was the single largest
+   * per-response allocation site in the profile (a fresh
+   * CHUNK_SIZE+8 byte[] per chunked response)
+   */
+  private final byte[] buf;
+
+  /**
+   * set when this instance borrowed the connection's shared buffer;
+   * false when the shared buffer was still held by another (stalled)
+   * exchange and this one allocated privately
+   */
+  private final boolean borrowedSharedBuffer;
+
+  private final HttpConnection connection;
+
+  ExchangeImpl t;
+
+  /* header of a full size chunk, for the zero copy large write path */
+  private static final byte[] FULL_CHUNK_HEADER =
+      (Integer.toHexString(CHUNK_SIZE) + "\r\n").getBytes(StandardCharsets.ISO_8859_1);
+
+  private static final byte[] CRNL_BYTES = "\r\n".getBytes(StandardCharsets.ISO_8859_1);
+
+  ChunkedOutputStream(ExchangeImpl t, OutputStream src) {
+    super(src);
+    this.t = t;
+    this.connection = t.getConnection();
+    // borrow the connection's shared buffer; a concurrent (pipelined)
+    // exchange may still hold it, in which case fall back to a private
+    // allocation - correctness first, the common case is uncontended
+    byte[] shared = connection.borrowChunkBuffer();
+    if (shared != null) {
+      buf = shared;
+      borrowedSharedBuffer = true;
+    } else {
+      buf = new byte[CHUNK_SIZE + OFFSET + 2];
+      borrowedSharedBuffer = false;
     }
+  }
 
-    @Override
-    public void write(int b) throws IOException {
-        if (closed) {
-            throw new StreamClosedException();
-        }
-        buf[pos++] = (byte) b;
-        count++;
-        if (count == CHUNK_SIZE) {
-            writeChunk();
-        }
-        assert count < CHUNK_SIZE;
+  @Override
+  public void write(int b) throws IOException {
+    if (closed) {
+      throw new StreamClosedException();
     }
-
-    @Override
-    public void write(byte[] b, int off, int len) throws IOException {
-        Objects.checkFromIndexSize(off, len, b.length);
-        if (len == 0) {
-            return;
-        }
-        if (closed) {
-            throw new StreamClosedException();
-        }
-        int remain = CHUNK_SIZE - count;
-        if (len > remain) {
-            System.arraycopy(b, off, buf, pos, remain);
-            count = CHUNK_SIZE;
-            writeChunk();
-            len -= remain;
-            off += remain;
-            while (len >= CHUNK_SIZE) {
-                // full size chunks are written directly from the caller's
-                // buffer, avoiding a copy through the internal buffer
-                out.write(FULL_CHUNK_HEADER);
-                out.write(b, off, CHUNK_SIZE);
-                out.write(CRNL_BYTES);
-                len -= CHUNK_SIZE;
-                off += CHUNK_SIZE;
-            }
-        }
-        if (len > 0) {
-            System.arraycopy(b, off, buf, pos, len);
-            count += len;
-            pos += len;
-        }
-        if (count == CHUNK_SIZE) {
-            writeChunk();
-        }
+    buf[pos++] = (byte) b;
+    count++;
+    if (count == CHUNK_SIZE) {
+      writeChunk();
     }
+    assert count < CHUNK_SIZE;
+  }
 
-    /**
-     * write out a chunk , and reset the pointers
-     * chunk does not have to be CHUNK_SIZE bytes
-     * count must == number of user bytes (<= CHUNK_SIZE)
-     */
-    private void writeChunk() throws IOException {
-        char[] c = Integer.toHexString(count).toCharArray();
-        int clen = c.length;
-        int startByte = 4 - clen;
-        int i;
-        for (i = 0; i < clen; i++) {
-            buf[startByte + i] = (byte) c[i];
-        }
-        buf[startByte + (i++)] = '\r';
-        buf[startByte + (i++)] = '\n';
-        buf[startByte + (i++) + count] = '\r';
-        buf[startByte + (i++) + count] = '\n';
-        out.write(buf, startByte, i + count);
-        count = 0;
-        pos = OFFSET;
+  @Override
+  public void write(byte[] b, int off, int len) throws IOException {
+    Objects.checkFromIndexSize(off, len, b.length);
+    if (len == 0) {
+      return;
     }
-
-    @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        try {
-            if (count > 0) {
-                writeChunk();
-            }
-            /* write an empty chunk */
-            writeChunk();
-            // flush only when no pipelined request is waiting: the batch
-            // coalesces (see FixedLengthOutputStream.close)
-            if (!t.getConnection().hasBufferedInput()) {
-                out.flush();
-            }
-            /* some clients close the connection before empty chunk is sent */
-        } catch (IOException e) {
-            // make the failure visible instead of silently swallowing it
-            t.getServerImpl().getLogger().log(Level.DEBUG, "error writing final chunk", e);
-            // the chunked response is truncated mid-stream: the connection
-            // must not be reused or the client would misparse the bytes
-            // that follow as the next response
-            t.close = true;
-        } finally {
-            closed = true;
-            if (borrowedSharedBuffer) {
-                connection.returnChunkBuffer(buf);
-            }
-            t.drainOriginalInputStream();
-        }
+    if (closed) {
+      throw new StreamClosedException();
     }
+    int remain = CHUNK_SIZE - count;
+    if (len > remain) {
+      System.arraycopy(b, off, buf, pos, remain);
+      count = CHUNK_SIZE;
+      writeChunk();
+      len -= remain;
+      off += remain;
+      while (len >= CHUNK_SIZE) {
+        // full size chunks are written directly from the caller's
+        // buffer, avoiding a copy through the internal buffer
+        out.write(FULL_CHUNK_HEADER);
+        out.write(b, off, CHUNK_SIZE);
+        out.write(CRNL_BYTES);
+        len -= CHUNK_SIZE;
+        off += CHUNK_SIZE;
+      }
+    }
+    if (len > 0) {
+      System.arraycopy(b, off, buf, pos, len);
+      count += len;
+      pos += len;
+    }
+    if (count == CHUNK_SIZE) {
+      writeChunk();
+    }
+  }
 
-    @Override
-    public void flush() throws IOException {
-        if (closed) {
-            throw new StreamClosedException();
-        }
-        if (count > 0) {
-            writeChunk();
-        }
+  /**
+   * write out a chunk , and reset the pointers
+   * chunk does not have to be CHUNK_SIZE bytes
+   * count must == number of user bytes (<= CHUNK_SIZE)
+   */
+  private void writeChunk() throws IOException {
+    char[] c = Integer.toHexString(count).toCharArray();
+    int clen = c.length;
+    int startByte = 4 - clen;
+    int i;
+    for (i = 0; i < clen; i++) {
+      buf[startByte + i] = (byte) c[i];
+    }
+    buf[startByte + (i++)] = '\r';
+    buf[startByte + (i++)] = '\n';
+    buf[startByte + (i++) + count] = '\r';
+    buf[startByte + (i++) + count] = '\n';
+    out.write(buf, startByte, i + count);
+    count = 0;
+    pos = OFFSET;
+  }
+
+  @Override
+  public void close() throws IOException {
+    if (closed) {
+      return;
+    }
+    try {
+      if (count > 0) {
+        writeChunk();
+      }
+      /* write an empty chunk */
+      writeChunk();
+      // flush only when no pipelined request is waiting: the batch
+      // coalesces (see FixedLengthOutputStream.close)
+      if (!t.getConnection().hasBufferedInput()) {
         out.flush();
+      }
+      /* some clients close the connection before empty chunk is sent */
+    } catch (IOException e) {
+      // make the failure visible instead of silently swallowing it
+      t.getServerImpl().getLogger().log(Level.DEBUG, "error writing final chunk", e);
+      // the chunked response is truncated mid-stream: the connection
+      // must not be reused or the client would misparse the bytes
+      // that follow as the next response
+      t.close = true;
+    } finally {
+      closed = true;
+      if (borrowedSharedBuffer) {
+        connection.returnChunkBuffer(buf);
+      }
+      t.drainOriginalInputStream();
     }
+  }
+
+  @Override
+  public void flush() throws IOException {
+    if (closed) {
+      throw new StreamClosedException();
+    }
+    if (count > 0) {
+      writeChunk();
+    }
+    out.flush();
+  }
+
 }

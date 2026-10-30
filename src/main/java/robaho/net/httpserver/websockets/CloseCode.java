@@ -34,40 +34,40 @@ package robaho.net.httpserver.websockets;
  */
 
 public enum CloseCode {
-    NormalClosure(1000),
-    GoingAway(1001),
-    ProtocolError(1002),
-    UnsupportedData(1003),
-    NoStatusRcvd(1005),
-    AbnormalClosure(1006),
-    InvalidFramePayloadData(1007),
-    PolicyViolation(1008),
-    MessageTooBig(1009),
-    MandatoryExt(1010),
-    InternalServerError(1011),
-    TLSHandshake(1015);
 
-    // cached: values() clones the array on every call
-    private static final CloseCode[] _values = CloseCode.values();
+  NormalClosure(1000),
+  GoingAway(1001),
+  ProtocolError(1002),
+  UnsupportedData(1003),
+  NoStatusRcvd(1005),
+  AbnormalClosure(1006),
+  InvalidFramePayloadData(1007),
+  PolicyViolation(1008),
+  MessageTooBig(1009),
+  MandatoryExt(1010),
+  InternalServerError(1011),
+  TLSHandshake(1015);
 
-    /** the close code for a wire value, or null for unknown values */
-    public static CloseCode find(int value) {
-        for (CloseCode code : _values) {
-            if (code.getValue() == value) {
-                return code;
-            }
-        }
-        return null;
+  // cached: values() clones the array on every call
+  private static final CloseCode[] _values = CloseCode.values();
+
+  /** the close code for a wire value, or null for unknown values */
+  public static CloseCode find(int value) {
+    for (CloseCode code : _values) {
+      if (code.getValue() == value) {
+        return code;
+      }
     }
+    return null;
+  }
 
-    private final int code;
+  private final int code;
 
-    CloseCode(int code) {
-        this.code = code;
-    }
+  CloseCode(int code) {
+    this.code = code;
+  }
 
-    /** the 2-byte wire value of this close code */
-    public int getValue() {
-        return this.code;
-    }
+  /** the 2-byte wire value of this close code */
+  public int getValue() { return this.code; }
+
 }

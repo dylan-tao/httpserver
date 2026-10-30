@@ -6,10 +6,11 @@ package robaho.net.httpserver;
  */
 public final class AttributeKeys {
 
-    private AttributeKeys() {}
+  private AttributeKeys() {}
 
-    /**
-     * an Integer which sets the size of the kernel socket write buffer
-     */
-    public static final String SOCKET_WRITE_BUFFER = "__SOCKET_WRITE_BUFFER";
+  /**
+   * an Integer which sets the size of the kernel socket write buffer
+   */
+  public static final String SOCKET_WRITE_BUFFER = "__SOCKET_WRITE_BUFFER";
+
 }

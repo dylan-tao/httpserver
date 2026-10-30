@@ -1,0 +1,49 @@
+<FindBugsFilter>
+    <!-- pre-encoded cache pattern: Date bytes, status lines, name
+         dictionaries hand out internal arrays by design (immutable by
+         convention, zero-copy). EI/EI2 in pre-4.10 pattern naming -->
+    <Match><Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/></Match>
+    <!-- lifecycle flags set before start(), read after: happens-before
+         via the executor handoff; no volatile needed -->
+    <Match><Bug pattern="AT_STALE_THREAD_WRITE_OF_PRIMITIVE,AT_UNSAFE_ATOMIC_PRIMITIVE_ARRAY_LAZY_WRITE,AT_NONATOMIC_64BIT_PRIMITIVE,AT_NONATOMIC_OPERATIONS_ON_SHARED_VARIABLE"/></Match>
+    <!-- finalizer attacks require a finalizer; none of these classes
+         has one -->
+    <Match><Bug pattern="CT_CONSTRUCTOR_THROW"/></Match>
+    <!-- the pool-lend null check is a deliberate atomic claim
+         (borrow/return protocol), not a redundant nullcheck -->
+    <Match><Bug pattern="RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"/>
+        <Or>
+            <Class name="robaho.net.httpserver.ChunkedOutputStream"/>
+        </Or>
+    </Match>
+    <!-- h2 frame & HPACK field holders in non-exported packages
+         (http2.frame, http2.hpack) are wire-format structs: public
+         fields model the on-the-wire layout, mutation mirrors parse -->
+    <Match><Bug pattern="PA_PUBLIC_PRIMITIVE_ATTRIBUTE"/>
+        <Or>
+            <Class name="~robaho\.net\.httpserver\.http2\.(frame|hpack)\..*"/>
+        </Or>
+    </Match>
+    <!-- stop()'s socket close swallows IOException deliberately:
+         the operator's stop must never fail because a peer's socket
+         was already dead -->
+    <Match><Bug pattern="DE_MIGHT_IGNORE"/>
+        <Or>
+            <Class name="robaho.net.httpserver.ServerImpl"/>
+        </Or>
+    </Match>
+    <!-- instanceof on a field whose declared type is the BASE type is a
+         real check; SpotBugs 4.10 models final-assignment flows as
+         vacuous (HttpConnection.os, FrameHeader.debug's catch family) -->
+    <Match><Bug pattern="BC_VACUOUS_INSTANCEOF,REC_CATCH_EXCEPTION"/>
+        <Or>
+            <Class name="robaho.net.httpserver.HttpConnection"/>
+            <Class name="robaho.net.httpserver.http2.frame.FrameHeader"/>
+        </Or>
+    </Match>
+    <!-- pool-drop semantics documented at the call site: full pool
+         discards the buffer by design (allocator produces fresh on miss) -->
+    <Match><Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE"/>
+        <Class name="robaho.net.httpserver.http2.frame.DataFrameBodyPool"/>
+    </Match>
+</FindBugsFilter>

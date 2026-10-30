@@ -51,253 +51,222 @@ import static org.testng.Assert.assertEquals;
 
 public class WebSocketResponseHandlerTest {
 
-    Headers headers;
-    WebSocketHandler handler;
-    HttpExchange exchange;
+  Headers headers;
 
-    @BeforeMethod
-    public void setUp() {
-        this.headers = new Headers();
-        this.headers.add("upgrade", "websocket");
-        this.headers.add("connection", "Upgrade");
-        this.headers.add("sec-websocket-key", "x3JJHMbDL1EzLkh9GBhXDw==");
-        this.headers.add("sec-websocket-protocol", "chat, superchat");
-        this.headers.add("sec-websocket-version", "13");
+  WebSocketHandler handler;
 
-        handler = new TestWebsocketHandler();
-        exchange = new TestHttpExchange(headers, new Headers());
+  HttpExchange exchange;
+
+  @BeforeMethod
+  public void setUp() {
+    this.headers = new Headers();
+    this.headers.add("upgrade", "websocket");
+    this.headers.add("connection", "Upgrade");
+    this.headers.add("sec-websocket-key", "x3JJHMbDL1EzLkh9GBhXDw==");
+    this.headers.add("sec-websocket-protocol", "chat, superchat");
+    this.headers.add("sec-websocket-version", "13");
+
+    handler = new TestWebsocketHandler();
+    exchange = new TestHttpExchange(headers, new Headers());
+  }
+
+  private static class TestWebsocketHandler extends WebSocketHandler {
+
+    @Override
+    protected String supportsProtocol(String protocol) {
+      // this test handler accepts any requested sub protocol
+      return protocol;
     }
 
-    private static class TestWebsocketHandler extends WebSocketHandler {
-        @Override
-        protected String supportsProtocol(String protocol) {
-            // this test handler accepts any requested sub protocol
-            return protocol;
-        }
-
-        @Override
-        protected WebSocket openWebSocket(HttpExchange exchange) {
-            return new TestWebSocket(exchange);
-        }
-
-        private static class TestWebSocket extends WebSocket {
-            TestWebSocket(HttpExchange exchange) {
-                super(exchange);
-            }
-
-            protected void onClose(CloseCode code, String reason, boolean initiatedByRemote) {
-            }
-
-            @Override
-            protected void onMessage(WebSocketFrame message) throws WebSocketException {
-            }
-
-            @Override
-            protected void onPong(WebSocketFrame pong) throws WebSocketException {
-            }
-        }
-
+    @Override
+    protected WebSocket openWebSocket(HttpExchange exchange) {
+      return new TestWebSocket(exchange);
     }
 
-    private static class TestHttpExchange extends StubHttpExchange {
-        private final Headers request, response;
+    private static class TestWebSocket extends WebSocket {
 
-        private final InputStream in = new ByteArrayInputStream(new byte[0]);
-        private final OutputStream out = new ByteArrayOutputStream();
-        private int responseCode;
+      TestWebSocket(HttpExchange exchange) {
+        super(exchange);
+      }
 
-        TestHttpExchange(Headers request, Headers response) {
-            this.request = request;
-            this.response = response;
-        }
+      protected void onClose(CloseCode code, String reason, boolean initiatedByRemote) {}
 
-        @Override
-        public Headers getRequestHeaders() {
-            return request;
-        }
+      @Override
+      protected void onMessage(WebSocketFrame message) throws WebSocketException {}
 
-        @Override
-        public Headers getResponseHeaders() {
-            return response;
-        }
-
-        @Override
-        public InputStream getRequestBody() {
-            return in;
-        }
-
-        @Override
-        public OutputStream getResponseBody() {
-            return out;
-        }
-
-        @Override
-        public void sendResponseHeaders(int rCode, long responseLength) {
-            responseCode = rCode;
-        }
-
-        @Override
-        public int getResponseCode() {
-            return responseCode;
-        }
+      @Override
+      protected void onPong(WebSocketFrame pong) throws WebSocketException {}
 
     }
 
-    private void testResponseHeader(String key, String expected) {
-        String value = exchange.getResponseHeaders().getFirst(key);
-        if (expected == null && value == null) {
-            return;
-        }
-        if (expected == null && value != null) {
-            Assert.fail(key + " should not have a value " + value);
-        }
-        assertEquals(value, expected);
+  }
+
+  private static class TestHttpExchange extends StubHttpExchange {
+
+    private final Headers request, response;
+
+    private final InputStream in = new ByteArrayInputStream(new byte[0]);
+
+    private final OutputStream out = new ByteArrayOutputStream();
+
+    private int responseCode;
+
+    TestHttpExchange(Headers request, Headers response) {
+      this.request = request;
+      this.response = response;
     }
 
-    @Test
-    public void testConnectionHeaderHandlesKeepAlive_FixingFirefoxConnectIssue() throws IOException {
-        this.headers.set("connection", "keep-alive, Upgrade");
-        handler.handle(exchange);
-        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
-        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, "chat");
+    @Override
+    public Headers getRequestHeaders() { return request; }
+
+    @Override
+    public Headers getResponseHeaders() { return response; }
+
+    @Override
+    public InputStream getRequestBody() { return in; }
+
+    @Override
+    public OutputStream getResponseBody() { return out; }
+
+    @Override
+    public void sendResponseHeaders(int rCode, long responseLength) {
+      responseCode = rCode;
     }
 
-    @Test
-    public void testHandshakeReturnsResponseWithExpectedHeaders() throws IOException {
-        handler.handle(exchange);
+    @Override
+    public int getResponseCode() { return responseCode; }
 
-        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
-        testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, "chat");
+  }
+
+  private void testResponseHeader(String key, String expected) {
+    String value = exchange.getResponseHeaders().getFirst(key);
+    if (expected == null && value == null) {
+      return;
     }
-
-    @Test
-    public void testMissingKeyReturnsErrorResponse() throws IOException {
-        this.headers.remove("sec-websocket-key");
-
-        handler.handle(exchange);
-
-        assertEquals(HttpStatus.HTTP_BAD_REQUEST, exchange.getResponseCode());
+    if (expected == null && value != null) {
+      Assert.fail(key + " should not have a value " + value);
     }
+    assertEquals(value, expected);
+  }
 
-    @Test
-    public void testWrongConnectionHeaderReturnsNullResponse() throws IOException {
-        this.headers.set("connection", "Junk");
-        handler.handle(exchange);
-        testResponseHeader(WebSocketHandshake.HEADER_UPGRADE, null);
+  @Test
+  public void testConnectionHeaderHandlesKeepAlive_FixingFirefoxConnectIssue() throws IOException {
+    this.headers.set("connection", "keep-alive, Upgrade");
+    handler.handle(exchange);
+    testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
+    testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, "chat");
+  }
+
+  @Test
+  public void testHandshakeReturnsResponseWithExpectedHeaders() throws IOException {
+    handler.handle(exchange);
+
+    testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_ACCEPT, "HSmrc0sMlYUkAGmm5OPpG2HaGWk=");
+    testResponseHeader(WebSocketHandshake.HEADER_WEBSOCKET_PROTOCOL, "chat");
+  }
+
+  @Test
+  public void testMissingKeyReturnsErrorResponse() throws IOException {
+    this.headers.remove("sec-websocket-key");
+
+    handler.handle(exchange);
+
+    assertEquals(HttpStatus.HTTP_BAD_REQUEST, exchange.getResponseCode());
+  }
+
+  @Test
+  public void testWrongConnectionHeaderReturnsNullResponse() throws IOException {
+    this.headers.set("connection", "Junk");
+    handler.handle(exchange);
+    testResponseHeader(WebSocketHandshake.HEADER_UPGRADE, null);
+  }
+
+  @Test
+  public void testWrongUpgradeHeaderReturnsNullResponse() throws IOException {
+    this.headers.set("upgrade", "not a websocket");
+    handler.handle(exchange);
+    testResponseHeader(WebSocketHandshake.HEADER_UPGRADE, null);
+  }
+
+  @Test
+  public void testWrongWebsocketVersionReturnsErrorResponse() throws IOException {
+    this.headers.set("sec-websocket-version", "12");
+    handler.handle(exchange);
+    assertEquals(HttpStatus.HTTP_BAD_REQUEST, exchange.getResponseCode());
+  }
+
+  @Test
+  public void testSetMaskingKeyThrowsExceptionMaskingKeyLengthIsNotFour() {
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Text, true, new byte[0]);
+    for (int maskingKeyLength = 0; maskingKeyLength < 10; maskingKeyLength++) {
+      if (maskingKeyLength == 4)
+        continue;
+      try {
+        webSocketFrame.setMaskingKey(new byte[maskingKeyLength]);
+        Assert.fail("IllegalArgumentException expected but not thrown");
+      } catch (IllegalArgumentException e) {
+
+      }
     }
+  }
 
-    @Test
-    public void testWrongUpgradeHeaderReturnsNullResponse() throws IOException {
-        this.headers.set("upgrade", "not a websocket");
-        handler.handle(exchange);
-        testResponseHeader(WebSocketHandshake.HEADER_UPGRADE, null);
-    }
+  @Test
+  public void testIsMasked() {
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Text, true, new byte[0]);
+    Assert.assertFalse(webSocketFrame.isMasked(), "isMasked should return true if masking key is not set.");
 
-    @Test
-    public void testWrongWebsocketVersionReturnsErrorResponse() throws IOException {
-        this.headers.set("sec-websocket-version", "12");
-        handler.handle(exchange);
-        assertEquals(HttpStatus.HTTP_BAD_REQUEST, exchange.getResponseCode());
-    }
+    webSocketFrame.setMaskingKey(new byte[4]);
+    Assert.assertTrue(webSocketFrame.isMasked(), "isMasked should return true if correct masking key is set.");
 
-    @Test
-    public void testSetMaskingKeyThrowsExceptionMaskingKeyLengthIsNotFour() {
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Text, true, new byte[0]);
-        for (int maskingKeyLength = 0; maskingKeyLength < 10; maskingKeyLength++) {
-            if (maskingKeyLength == 4)
-                continue;
-            try {
-                webSocketFrame.setMaskingKey(new byte[maskingKeyLength]);
-                Assert.fail("IllegalArgumentException expected but not thrown");
-            } catch (IllegalArgumentException e) {
+  }
 
-            }
-        }
-    }
+  @Test
+  public void testWriteWhenNotMasked() throws IOException {
+    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Text, true, "payload".getBytes());
+    webSocketFrame.write(byteArrayOutputStream);
+    byte[] writtenBytes = byteArrayOutputStream.toByteArray();
+    Assert.assertEquals(9, writtenBytes.length);
+    Assert.assertEquals(-127, writtenBytes[0], "Header byte incorrect.");
+    Assert.assertEquals(7, writtenBytes[1], "Payload length byte incorrect.");
+    Assert.assertEquals(new byte[] {-127, 7, 112, 97, 121, 108, 111, 97, 100}, writtenBytes);
+  }
 
-    @Test
-    public void testIsMasked() {
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Text, true, new byte[0]);
-        Assert.assertFalse(webSocketFrame.isMasked(), "isMasked should return true if masking key is not set.");
+  @Test
+  public void testWriteWhenMasked() throws IOException {
+    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Binary, true, "payload".getBytes());
+    webSocketFrame.setMaskingKey(new byte[] {12, 45, 33, 32});
+    webSocketFrame.write(byteArrayOutputStream);
+    byte[] writtenBytes = byteArrayOutputStream.toByteArray();
+    Assert.assertEquals(13, writtenBytes.length);
+    Assert.assertEquals(-126, writtenBytes[0], "Header byte incorrect.");
+    Assert.assertEquals(-121, writtenBytes[1], "Payload length byte incorrect.");
+    Assert.assertEquals(new byte[] {-126, -121, 12, 45, 33, 32, 124, 76, 88, 76, 99, 76, 69}, writtenBytes);
+  }
 
-        webSocketFrame.setMaskingKey(new byte[4]);
-        Assert.assertTrue(webSocketFrame.isMasked(), "isMasked should return true if correct masking key is set.");
+  /**
+   * control frame payloads are capped at 125 bytes (RFC 6455 5.5): these
+   * tests previously codified writing oversized Ping frames, which makes
+   * every compliant peer fail the connection
+   */
+  @Test(expectedExceptions = IllegalArgumentException.class)
+  public void testWriteWhenNotMaskedPayloadLengthGreaterThan125() throws IOException {
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, true, new byte[257]);
+    webSocketFrame.write(new ByteArrayOutputStream());
+  }
 
-    }
+  @Test(expectedExceptions = IllegalArgumentException.class)
+  public void testWriteWhenMaskedPayloadLengthGreaterThan125() throws IOException {
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, false, new byte[257]);
+    webSocketFrame.setMaskingKey(new byte[] {19, 25, 79, 11});
+    webSocketFrame.write(new ByteArrayOutputStream());
+  }
 
-    @Test
-    public void testWriteWhenNotMasked() throws IOException {
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Text, true, "payload".getBytes());
-        webSocketFrame.write(byteArrayOutputStream);
-        byte[] writtenBytes = byteArrayOutputStream.toByteArray();
-        Assert.assertEquals(9, writtenBytes.length);
-        Assert.assertEquals(-127, writtenBytes[0], "Header byte incorrect.");
-        Assert.assertEquals(7, writtenBytes[1], "Payload length byte incorrect.");
-        Assert.assertEquals(new byte[] {
-                -127,
-                7,
-                112,
-                97,
-                121,
-                108,
-                111,
-                97,
-                100
-        }, writtenBytes);
-    }
+  @Test(expectedExceptions = IllegalArgumentException.class)
+  public void testWriteWhenNotMaskedPayloadLengthGreaterThan65535() throws IOException {
+    WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, true, new byte[65536]);
+    webSocketFrame.write(new ByteArrayOutputStream());
+  }
 
-    @Test
-    public void testWriteWhenMasked() throws IOException {
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Binary, true, "payload".getBytes());
-        webSocketFrame.setMaskingKey(new byte[] {
-                12,
-                45,
-                33,
-                32
-        });
-        webSocketFrame.write(byteArrayOutputStream);
-        byte[] writtenBytes = byteArrayOutputStream.toByteArray();
-        Assert.assertEquals(13, writtenBytes.length);
-        Assert.assertEquals(-126, writtenBytes[0], "Header byte incorrect.");
-        Assert.assertEquals(-121, writtenBytes[1], "Payload length byte incorrect.");
-        Assert.assertEquals(new byte[] {
-                -126,
-                -121,
-                12,
-                45,
-                33,
-                32,
-                124,
-                76,
-                88,
-                76,
-                99,
-                76,
-                69
-        }, writtenBytes);
-    }
-
-    /** control frame payloads are capped at 125 bytes (RFC 6455 5.5): these
-     *  tests previously codified writing oversized Ping frames, which makes
-     *  every compliant peer fail the connection */
-    @Test(expectedExceptions = IllegalArgumentException.class)
-    public void testWriteWhenNotMaskedPayloadLengthGreaterThan125() throws IOException {
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, true, new byte[257]);
-        webSocketFrame.write(new ByteArrayOutputStream());
-    }
-
-    @Test(expectedExceptions = IllegalArgumentException.class)
-    public void testWriteWhenMaskedPayloadLengthGreaterThan125() throws IOException {
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, false, new byte[257]);
-        webSocketFrame.setMaskingKey(new byte[] { 19, 25, 79, 11 });
-        webSocketFrame.write(new ByteArrayOutputStream());
-    }
-
-    @Test(expectedExceptions = IllegalArgumentException.class)
-    public void testWriteWhenNotMaskedPayloadLengthGreaterThan65535() throws IOException {
-        WebSocketFrame webSocketFrame = new WebSocketFrame(OpCode.Ping, true, new byte[65536]);
-        webSocketFrame.write(new ByteArrayOutputStream());
-    }
 }

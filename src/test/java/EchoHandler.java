@@ -34,48 +34,51 @@ import java.nio.charset.StandardCharsets;
  * Implements a basic static EchoHandler for an HTTP server
  */
 public class EchoHandler implements HttpHandler {
-    public void handle (HttpExchange t)
-        throws IOException
-    {
-        InputStream is = t.getRequestBody();
-        OutputStream os = t.getResponseBody();
 
-        Headers map = t.getRequestHeaders();
+  public void handle(HttpExchange t) throws IOException {
+    InputStream is = t.getRequestBody();
+    OutputStream os = t.getResponseBody();
 
-        String fixedrequest = map.getFirst("Xfixed");
-        // return the number of bytes received (no echo)
-        String summary = map.getFirst ("Xsummary");
+    Headers map = t.getRequestHeaders();
 
-        if(fixedrequest==null && summary==null) {
-            t.sendResponseHeaders(200, 0);
-            is.transferTo(os);
-        } else {
-            byte[] in;
-            in = is.readAllBytes();
-            if (summary != null) {
-                in = Integer.toString(in.length).getBytes(StandardCharsets.UTF_8);
-            }
-            if (fixedrequest != null) {
-                t.sendResponseHeaders(200, in.length == 0 ? -1 : in.length);
-            } else {
-                t.sendResponseHeaders(200, 0);
-            }
-            os.write(in);
-        }
-        close(t, os);
-        close(t, is);
-    }
+    String fixedrequest = map.getFirst("Xfixed");
+    // return the number of bytes received (no echo)
+    String summary = map.getFirst("Xsummary");
 
-    protected void close(OutputStream os) throws IOException {
-        os.close();
+    if (fixedrequest == null && summary == null) {
+      t.sendResponseHeaders(200, 0);
+      is.transferTo(os);
+    } else {
+      byte[] in;
+      in = is.readAllBytes();
+      if (summary != null) {
+        in = Integer.toString(in.length).getBytes(StandardCharsets.UTF_8);
+      }
+      if (fixedrequest != null) {
+        t.sendResponseHeaders(200, in.length == 0 ? -1 : in.length);
+      } else {
+        t.sendResponseHeaders(200, 0);
+      }
+      os.write(in);
     }
-    protected void close(InputStream is) throws IOException {
-        is.close();
-    }
-    protected void close(HttpExchange t, OutputStream os) throws IOException {
-        close(os);
-    }
-    protected void close(HttpExchange t, InputStream is) throws IOException {
-        close(is);
-    }
+    close(t, os);
+    close(t, is);
+  }
+
+  protected void close(OutputStream os) throws IOException {
+    os.close();
+  }
+
+  protected void close(InputStream is) throws IOException {
+    is.close();
+  }
+
+  protected void close(HttpExchange t, OutputStream os) throws IOException {
+    close(os);
+  }
+
+  protected void close(HttpExchange t, InputStream is) throws IOException {
+    close(is);
+  }
+
 }

@@ -11,32 +11,32 @@ import java.util.logging.Logger;
 
 public class LoggingFilter extends Filter {
 
-    private final Logger logger;
-    private final DateFormat df;
+  private final Logger logger;
 
-    public LoggingFilter(Logger logger) throws IOException {
-        df = DateFormat.getDateTimeInstance();
-        this.logger = logger;
-    }
+  private final DateFormat df;
 
-    /**
-     * The filter's implementation, which is invoked by the server
-     */
-    public void doFilter(HttpExchange t, Filter.Chain chain) throws IOException {
-        chain.doFilter(t);
-        String s = df.format(new Date());
-        s = s + " " + t.getRequestMethod() + " " + t.getRequestURI() + " ";
-        s = s + " " + t.getResponseCode() + " " + t.getRemoteAddress();
-        logger.info(s);
-    }
+  public LoggingFilter(Logger logger) throws IOException {
+    df = DateFormat.getDateTimeInstance();
+    this.logger = logger;
+  }
 
-    public void init(HttpContext ctx) {
-    }
+  /**
+   * The filter's implementation, which is invoked by the server
+   */
+  public void doFilter(HttpExchange t, Filter.Chain chain) throws IOException {
+    chain.doFilter(t);
+    String s = df.format(new Date());
+    s = s + " " + t.getRequestMethod() + " " + t.getRequestURI() + " ";
+    s = s + " " + t.getResponseCode() + " " + t.getRemoteAddress();
+    logger.info(s);
+  }
 
-    public String description() {
-        return "Request logger";
-    }
+  public void init(HttpContext ctx) {}
 
-    public void destroy(HttpContext c) {
-    }
+  public String description() {
+    return "Request logger";
+  }
+
+  public void destroy(HttpContext c) {}
+
 }

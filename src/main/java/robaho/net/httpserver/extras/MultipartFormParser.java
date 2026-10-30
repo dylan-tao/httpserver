@@ -24,438 +24,457 @@ import java.util.regex.Pattern;
  * parse multipart form data
  */
 public class MultipartFormParser {
-    static final Logger logger = Logger.getLogger("robaho.net.httpserver.MultipartFormParser");
 
-    // maximum size in bytes of a non-file form field - protection against memory exhaustion
-    private static final int MAX_FIELD_SIZE = Integer.getInteger("robaho.net.httpserver.max_multipart_field_bytes", 1024 * 1024); // 0 == no limit
+  static final Logger logger = Logger.getLogger("robaho.net.httpserver.MultipartFormParser");
 
-    /**
-     * a multipart part.
-     *
-     * either data or file will be non-null, but not both.
-     *
-     * @param contentType if non-null, the content type of the data
-     * @param filename if non-null, the form provided filename
-     * @param file if non-null, points to the uploaded file data (the name may
-     * differ from filename). The storage directory's contents are deleted
-     * best-effort at JVM exit.
-     * @param data if non-null, contains the part data as a String.
-     */
-    public record Part(String contentType, String filename, String data, File file) {
+  // maximum size in bytes of a non-file form field - protection against memory exhaustion
+  private static final int MAX_FIELD_SIZE = Integer.getInteger("robaho.net.httpserver.max_multipart_field_bytes", 1024 * 1024); // 0 == no limit
 
-    }
+  /**
+   * a multipart part.
+   * either data or file will be non-null, but not both.
+   * @param contentType if non-null, the content type of the data
+   * @param filename if non-null, the form provided filename
+   * @param file if non-null, points to the uploaded file data (the name may
+   *          differ from filename). The storage directory's contents are deleted
+   *          best-effort at JVM exit.
+   * @param data if non-null, contains the part data as a String.
+   */
+  public record Part(String contentType, String filename, String data, File file) {
 
-    /** parser-created files pending best-effort exit cleanup. bounded: the
-     * registry must not grow without limit (the File.deleteOnExit() leak this
-     * replaces grew ~100-200B per upload forever); beyond the cap NEW files
-     * are not tracked and simply survive on disk. only files the PARSER
-     * created are tracked - a shared storage directory's other contents are
-     * never touched */
-    private static final java.util.concurrent.ConcurrentLinkedQueue<Path> CREATED_FILES = new java.util.concurrent.ConcurrentLinkedQueue<>();
-    private static final java.util.concurrent.atomic.AtomicInteger trackedFileCount = new java.util.concurrent.atomic.AtomicInteger();
-    private static final int MAX_TRACKED_FILES = 10_000;
-    private static final java.util.concurrent.atomic.AtomicBoolean CLEANUP_HOOK_REGISTERED = new java.util.concurrent.atomic.AtomicBoolean();
+  }
 
-    private static void trackForExitCleanup(File file) {
-        if (CLEANUP_HOOK_REGISTERED.compareAndSet(false, true)) {
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                Path p;
-                while ((p = CREATED_FILES.poll()) != null) {
-                    try {
-                        java.nio.file.Files.deleteIfExists(p);
-                    } catch (IOException ignored) {
-                        // best effort: a locked file simply survives
-                    }
-                }
-            }, "multipart-file-cleanup"));
+  /**
+   * parser-created files pending best-effort exit cleanup. bounded: the
+   * registry must not grow without limit (the File.deleteOnExit() leak this
+   * replaces grew ~100-200B per upload forever); beyond the cap NEW files
+   * are not tracked and simply survive on disk. only files the PARSER
+   * created are tracked - a shared storage directory's other contents are
+   * never touched
+   */
+  private static final java.util.concurrent.ConcurrentLinkedQueue<Path> CREATED_FILES =
+      new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+  private static final java.util.concurrent.atomic.AtomicInteger trackedFileCount =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  private static final int MAX_TRACKED_FILES = 10_000;
+
+  private static final java.util.concurrent.atomic.AtomicBoolean CLEANUP_HOOK_REGISTERED =
+      new java.util.concurrent.atomic.AtomicBoolean();
+
+  private static void trackForExitCleanup(File file) {
+    if (CLEANUP_HOOK_REGISTERED.compareAndSet(false, true)) {
+      Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        Path p;
+        while ((p = CREATED_FILES.poll()) != null) {
+          try {
+            java.nio.file.Files.deleteIfExists(p);
+          } catch (IOException ignored) {
+            // best effort: a locked file simply survives
+          }
         }
-        if (trackedFileCount.incrementAndGet() <= MAX_TRACKED_FILES) {
-            CREATED_FILES.offer(file.toPath());
-        } else {
-            trackedFileCount.decrementAndGet();
+      }, "multipart-file-cleanup"));
+    }
+    if (trackedFileCount.incrementAndGet() <= MAX_TRACKED_FILES) {
+      CREATED_FILES.offer(file.toPath());
+    } else {
+      trackedFileCount.decrementAndGet();
+    }
+  }
+
+  private record PartMetadata(String contentType, String name, String filename) {
+
+  }
+
+  /**
+   * parse a multipart input stream, write files to storage. The caller is
+   * responsible to delete files when they are no longer needed.
+   * @return a map of key to either a String (non-file) or a File
+   */
+  public static Map<String, List<Part>> parse(String encoding, String contentType, InputStream is, Path storage)
+      throws IOException {
+    Charset charset = encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
+
+    String boundary = parseBoundary(contentType);
+
+    // an unsynchronized buffered stream: the parser reads single bytes, and
+    // BufferedInputStream.read() is synchronized per byte
+    // the configured connection buffer size: this wrap exists to amortize
+    // the LeftOver lock across single-byte reads, so it follows the same
+    // sizing knob as the connection buffers
+    is = new NoSyncBufferedInputStream(is, robaho.net.httpserver.ServerConfig.bufferSize());
+
+    Map<String, List<Part>> results = new HashMap<>();
+    // part count and total data caps: the per-field cap was bypassable
+    // by splitting into many parts (100 x 1MB fields OOM'd a 64MB heap)
+    int maxParts = MAX_PARTS;
+    long maxTotal = MAX_TOTAL_BYTES;
+    long totalBytes = 0;
+    int partCount = 0;
+
+    // the CRLF is considered part of the boundary
+    byte[] boundaryCheck = ("\r\n--" + boundary).getBytes(charset);
+
+    List<String> headers = new LinkedList<>();
+
+    logger.finer(() -> "reading multipart form data with boundary '%s'".formatted(boundary));
+
+    // read until boundary found
+    int matchCount = 2; // starting at 2 allows matching non-compliant senders. rfc says CRLF is part of
+                        // boundary marker
+    while (true) {
+      int c = is.read();
+      if (c == -1) {
+        // EOF before the first boundary: the body is truncated (a
+        // multipart body MUST contain the first boundary)
+        throw new IOException("truncated multipart body: no boundary found");
+      }
+      if (c == boundaryCheck[matchCount]) {
+        matchCount++;
+        if (matchCount == boundaryCheck.length) {
+          break;
         }
+      } else {
+        matchCount = 0;
+        if (c == boundaryCheck[matchCount]) {
+          matchCount++;
+        }
+      }
     }
 
-    private record PartMetadata(String contentType, String name, String filename) {
-
+    // read to end of line
+    String s = readLine(charset, is);
+    if (s == null || "--".equals(s)) {
+      return results;
     }
 
-    /**
-     * parse a multipart input stream, write files to storage. The caller is
-     * responsible to delete files when they are no longer needed.
-     *
-     * @return a map of key to either a String (non-file) or a File
-     */
-    public static Map<String, List<Part>> parse(String encoding, String contentType, InputStream is, Path storage) throws IOException {
-        Charset charset = encoding == null ? StandardCharsets.ISO_8859_1 : Charset.forName(encoding);
+    while (true) {
+      if (maxParts != 0 && partCount >= maxParts) {
+        // checked BEFORE the FileOutputStream below: the old
+        // placement threw after opening it, leaking one fd and an
+        // orphan file per abusive request
+        throw new IOException("multipart part count exceeds the maximum of " + maxParts);
+      }
 
+      // read part headers until blank line
+      headers.clear();
 
-        String boundary = parseBoundary(contentType);
+      int headerLineCount = 0;
+      while (true) {
+        s = readLine(charset, is);
+        if (s == null) {
+          // EOF mid-part: returning the partial map silently
+          // mispresented a cut-off upload as a valid smaller one
+          throw new IOException("truncated multipart body: EOF in part headers");
+        }
+        if ("".equals(s)) {
+          break;
+        }
+        // line COUNT cap: the per-line length cap alone left an OOM
+        // via millions of small header lines for one part
+        if (++headerLineCount > 100) {
+          throw new IOException("multipart part header count exceeds 100");
+        }
+        headers.add(s);
+      }
 
-        // an unsynchronized buffered stream: the parser reads single bytes, and
-        // BufferedInputStream.read() is synchronized per byte
-        // the configured connection buffer size: this wrap exists to amortize
-        // the LeftOver lock across single-byte reads, so it follows the same
-        // sizing knob as the connection buffers
-        is = new NoSyncBufferedInputStream(is, robaho.net.httpserver.ServerConfig.bufferSize());
+      // read part data - need to detect end of part
+      PartMetadata meta = parseHeaders(headers);
 
-        Map<String, List<Part>> results = new HashMap<>();
-        // part count and total data caps: the per-field cap was bypassable
-        // by splitting into many parts (100 x 1MB fields OOM'd a 64MB heap)
-        int maxParts = MAX_PARTS;
-        long maxTotal = MAX_TOTAL_BYTES;
-        long totalBytes = 0;
-        int partCount = 0;
+      Runnable addToResults;
+      OutputStream os;
+      // an empty filename is what browsers send for a file input that was
+      // left empty: treat it as a plain field instead of crashing the
+      // whole upload in sanitizeFilename
+      if (meta.filename == null || meta.filename.isEmpty()) {
+        var bos = new BoundedOutputStream(MAX_FIELD_SIZE);
+        os = bos;
+        addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>())
+            .add(new Part(meta.contentType, null, bos.toString(charset), null));
+      } else {
+        File file = uniqueTarget(storage, meta.filename);
+        trackForExitCleanup(file);
+        os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
+        addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>())
+            .add(new Part(meta.contentType, meta.filename, null, file));
+      }
 
-        // the CRLF is considered part of the boundary
-        byte[] boundaryCheck = ("\r\n--" + boundary).getBytes(charset);
+      partCount++;
 
-        List<String> headers = new LinkedList<>();
-
-        logger.finer(() -> "reading multipart form data with boundary '%s'".formatted(boundary));
-
-        // read until boundary found
-        int matchCount = 2; // starting at 2 allows matching non-compliant senders. rfc says CRLF is part of
-                            // boundary marker
+      try (os) {
+        matchCount = 0;
         while (true) {
-            int c = is.read();
-            if (c == -1) {
-                // EOF before the first boundary: the body is truncated (a
-                // multipart body MUST contain the first boundary)
-                throw new IOException("truncated multipart body: no boundary found");
+          int c = is.read();
+          if (c == -1) {
+            throw new IOException("truncated multipart body: EOF in part data");
+          }
+          if (maxTotal != 0 && ++totalBytes > maxTotal) {
+            throw new IOException("multipart body exceeds the configured maximum of " + maxTotal + " bytes");
+          }
+          if (c == boundaryCheck[matchCount]) {
+            matchCount++;
+            if (matchCount == boundaryCheck.length) {
+              break;
+            }
+          } else {
+            if (matchCount > 0) {
+              os.write(boundaryCheck, 0, matchCount);
+              matchCount = 0;
             }
             if (c == boundaryCheck[matchCount]) {
-                matchCount++;
-                if (matchCount == boundaryCheck.length) {
-                    break;
-                }
+              matchCount++;
             } else {
-                matchCount = 0;
-                if (c == boundaryCheck[matchCount]) {
-                    matchCount++;
-                }
+              os.write(c);
             }
+          }
         }
+      }
 
-        // read to end of line
-        String s = readLine(charset, is);
-        if (s == null || "--".equals(s)) {
-            return results;
-        }
+      addToResults.run();
 
-        while (true) {
-            if (maxParts != 0 && partCount >= maxParts) {
-                // checked BEFORE the FileOutputStream below: the old
-                // placement threw after opening it, leaking one fd and an
-                // orphan file per abusive request
-                throw new IOException("multipart part count exceeds the maximum of " + maxParts);
-            }
-
-            // read part headers until blank line
-            headers.clear();
-
-            int headerLineCount = 0;
-            while (true) {
-                s = readLine(charset, is);
-                if (s == null) {
-                    // EOF mid-part: returning the partial map silently
-                    // mispresented a cut-off upload as a valid smaller one
-                    throw new IOException("truncated multipart body: EOF in part headers");
-                }
-                if ("".equals(s)) {
-                    break;
-                }
-                // line COUNT cap: the per-line length cap alone left an OOM
-                // via millions of small header lines for one part
-                if (++headerLineCount > 100) {
-                    throw new IOException("multipart part header count exceeds 100");
-                }
-                headers.add(s);
-            }
-
-            // read part data - need to detect end of part
-            PartMetadata meta = parseHeaders(headers);
-
-            Runnable addToResults;
-            OutputStream os;
-            // an empty filename is what browsers send for a file input that was
-            // left empty: treat it as a plain field instead of crashing the
-            // whole upload in sanitizeFilename
-            if (meta.filename == null || meta.filename.isEmpty()) {
-                var bos = new BoundedOutputStream(MAX_FIELD_SIZE);
-                os = bos;
-                addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, null, bos.toString(charset), null));
-            } else {
-                File file = uniqueTarget(storage, meta.filename);
-                trackForExitCleanup(file);
-                os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
-                addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>()).add(new Part(meta.contentType, meta.filename, null, file));
-            }
-
-            partCount++;
-
-            try (os) {
-                matchCount = 0;
-                while (true) {
-                    int c = is.read();
-                    if (c == -1) {
-                        throw new IOException("truncated multipart body: EOF in part data");
-                    }
-                    if (maxTotal != 0 && ++totalBytes > maxTotal) {
-                        throw new IOException("multipart body exceeds the configured maximum of " + maxTotal + " bytes");
-                    }
-                    if (c == boundaryCheck[matchCount]) {
-                        matchCount++;
-                        if (matchCount == boundaryCheck.length) {
-                            break;
-                        }
-                    } else {
-                        if (matchCount > 0) {
-                            os.write(boundaryCheck, 0, matchCount);
-                            matchCount = 0;
-                        }
-                        if (c == boundaryCheck[matchCount]) {
-                            matchCount++;
-                        } else {
-                            os.write(c);
-                        }
-                    }
-                }
-            }
-
-            addToResults.run();
-
-            // read to end of line
-            s = readLine(charset, is);
-            if ("--".equals(s)) {
-                return results;
-            }
-        }
+      // read to end of line
+      s = readLine(charset, is);
+      if ("--".equals(s)) {
+        return results;
+      }
     }
+  }
 
-    /** part header line cap: unbounded lines OOM'd the JVM (64MB heap died
-     * to one 64MB header line). mirrors the h1 header line cap */
-    private static final int MAX_PART_HEADER_LINE = 64 * 1024;
+  /**
+   * part header line cap: unbounded lines OOM'd the JVM (64MB heap died
+   * to one 64MB header line). mirrors the h1 header line cap
+   */
+  private static final int MAX_PART_HEADER_LINE = 64 * 1024;
 
-    /** part count / total data caps: the same properties FormParser uses,
-     * closing the split-into-many-parts bypass of the per-field cap */
-    private static final int MAX_PARTS = Integer.getInteger("robaho.net.httpserver.max_form_params", 1000); // 0 == no limit
-    private static final long MAX_TOTAL_BYTES = Long.getLong("robaho.net.httpserver.max_form_bytes", 10L * 1024 * 1024); // 0 == no limit
+  /**
+   * part count / total data caps: the same properties FormParser uses,
+   * closing the split-into-many-parts bypass of the per-field cap
+   */
+  private static final int MAX_PARTS = Integer.getInteger("robaho.net.httpserver.max_form_params", 1000); // 0 == no limit
 
-    // leading \s* (not \s): "form-data;name=\"f\"" (no space after the
-    // semicolon, legal per RFC 6266) must still match
-    private static final Pattern optionPattern = Pattern.compile("\\s*(?<key>[^=\\s\"]+)\\s*=\\s*\"(?<value>.*)\"");
+  private static final long MAX_TOTAL_BYTES = Long.getLong("robaho.net.httpserver.max_form_bytes", 10L * 1024 * 1024); // 0 == no limit
 
-    /** split Content-Disposition options on ';', respecting quoted values */
-    private static String[] splitOptions(String s) {
-        List<String> out = new LinkedList<>();
-        StringBuilder cur = new StringBuilder();
-        boolean quoted = false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == '"') {
-                quoted = !quoted;
-                cur.append(c);
-            } else if (c == ';' && !quoted) {
-                out.add(cur.toString());
-                cur.setLength(0);
-            } else {
-                cur.append(c);
-            }
-        }
+  // leading \s* (not \s): "form-data;name=\"f\"" (no space after the
+  // semicolon, legal per RFC 6266) must still match
+  private static final Pattern optionPattern = Pattern.compile("\\s*(?<key>[^=\\s\"]+)\\s*=\\s*\"(?<value>.*)\"");
+
+  /** split Content-Disposition options on ';', respecting quoted values */
+  private static String[] splitOptions(String s) {
+    List<String> out = new LinkedList<>();
+    StringBuilder cur = new StringBuilder();
+    boolean quoted = false;
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c == '"') {
+        quoted = !quoted;
+        cur.append(c);
+      } else if (c == ';' && !quoted) {
         out.add(cur.toString());
-        return out.toArray(new String[0]);
+        cur.setLength(0);
+      } else {
+        cur.append(c);
+      }
+    }
+    out.add(cur.toString());
+    return out.toArray(new String[0]);
+  }
+
+  /**
+   * a storage target that does not clobber an earlier part's file with
+   * the same (sanitized) filename: browsers send duplicate names whenever
+   * two file inputs hold same-named files
+   */
+  private static File uniqueTarget(Path storage, String filename) {
+    String safe = sanitizeFilename(filename);
+    File file = Path.of(storage.toString(), safe).toFile();
+    if (!file.exists()) {
+      return file;
+    }
+    int dot = safe.lastIndexOf('.');
+    String base = dot < 0 ? safe : safe.substring(0, dot);
+    String ext = dot < 0 ? "" : safe.substring(dot);
+    for (int i = 1; file.exists(); i++) {
+      file = Path.of(storage.toString(), base + "-" + i + ext).toFile();
+    }
+    return file;
+  }
+
+  /**
+   * extract the boundary parameter from a Content-Type header value,
+   * handling quoted values and parameters following it
+   * (RFC 2046 section 5.1.1)
+   */
+  private static String parseBoundary(String contentType) {
+    // case-insensitive parameter name with a word boundary: the old
+    // indexOf matched "xboundary=" (grabbing the wrong value) and missed
+    // "BOUNDARY=" (RFC 2045 parameter names are case-insensitive)
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?i)(?:^|[;\\s])boundary=").matcher(contentType);
+    if (!m.find()) {
+      throw new IllegalStateException("content type does not contain boundary");
+    }
+    int idx = m.end() - "boundary=".length();
+    if (idx < 0) {
+      throw new IllegalStateException("content type does not contain boundary");
+    }
+    int start = idx + "boundary=".length();
+    boolean quoted = start < contentType.length() && contentType.charAt(start) == '"';
+    if (quoted) {
+      start++;
+    }
+    int end = start;
+    while (end < contentType.length()) {
+      char c = contentType.charAt(end);
+      if (quoted) {
+        if (c == '"') {
+          break;
+        }
+      } else if (c == ';' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+        break;
+      }
+      end++;
+    }
+    String boundary = contentType.substring(start, end);
+    if (boundary.isEmpty()) {
+      throw new IllegalStateException("empty boundary parameter in content type");
+    }
+    return boundary;
+  }
+
+  /**
+   * sanitize a client provided filename: the stored file uses only the final
+   * path component, so a malicious Content-Disposition cannot write outside
+   * the storage directory. The original filename is still reported in
+   * {@link Part#filename}.
+   */
+  private static String sanitizeFilename(String filename) {
+    if (filename == null) {
+      throw new IllegalArgumentException("null filename in content-disposition");
+    }
+    // normalize separators so both unix and windows style paths are handled
+    String name = filename.replace('\\', '/');
+    int slash = name.lastIndexOf('/');
+    if (slash >= 0) {
+      name = name.substring(slash + 1);
+    }
+    if (name.isEmpty() || name.equals(".") || name.equals("..")) {
+      throw new IllegalArgumentException("illegal filename in content-disposition: " + filename);
+    }
+    return name;
+  }
+
+  private static PartMetadata parseHeaders(List<String> headers) {
+    String name = null;
+    String filename = null;
+    String contentType = null;
+    for (var header : headers) {
+      String[] parts = header.split(":", 2);
+      if (parts.length < 2) {
+        // malformed part header line without a colon: skip it rather
+        // than failing the whole upload with an ArrayIndexOutOfBoundsException
+        logger.finer(() -> "ignoring malformed multipart part header '%s'".formatted(header));
+        continue;
+      }
+      if ("content-disposition".equalsIgnoreCase(parts[0])) {
+        // quote-aware split: a plain split(";") cut values containing
+        // ';' (filename="a;b.txt") mid-value, so the filename was
+        // never extracted and the part was misclassified
+        String[] options = splitOptions(parts[1]);
+        for (var option : options) {
+          Matcher m = optionPattern.matcher(option);
+          if (m.matches()) {
+            String key = m.group("key");
+            String value = m.group("value");
+            if ("name".equals(key)) {
+              name = value;
+            }
+            if ("filename".equals(key)) {
+              filename = value;
+            }
+          }
+        }
+
+      } else if ("content-type".equalsIgnoreCase(parts[0])) {
+        contentType = parts[1].trim();
+      }
+    }
+    return new PartMetadata(contentType, name, filename);
+  }
+
+  /** an OutputStream that fails once more than limit bytes have been written */
+  private static final class BoundedOutputStream extends OutputStream {
+
+    private final ByteArrayOutputStream delegate = new ByteArrayOutputStream();
+
+    private final long limit;
+
+    private long count;
+
+    BoundedOutputStream(long limit) {
+      this.limit = limit;
     }
 
-    /** a storage target that does not clobber an earlier part's file with
-     * the same (sanitized) filename: browsers send duplicate names whenever
-     * two file inputs hold same-named files */
-    private static File uniqueTarget(Path storage, String filename) {
-        String safe = sanitizeFilename(filename);
-        File file = Path.of(storage.toString(), safe).toFile();
-        if (!file.exists()) {
-            return file;
-        }
-        int dot = safe.lastIndexOf('.');
-        String base = dot < 0 ? safe : safe.substring(0, dot);
-        String ext = dot < 0 ? "" : safe.substring(dot);
-        for (int i = 1; file.exists(); i++) {
-            file = Path.of(storage.toString(), base + "-" + i + ext).toFile();
-        }
-        return file;
+    /** {@inheritDoc} - writes into the part's backing file */
+    @Override
+    public void write(int b) throws IOException {
+      check(1);
+      delegate.write(b);
     }
 
-    /**
-     * extract the boundary parameter from a Content-Type header value,
-     * handling quoted values and parameters following it
-     * (RFC 2046 section 5.1.1)
-     */
-    private static String parseBoundary(String contentType) {
-        // case-insensitive parameter name with a word boundary: the old
-        // indexOf matched "xboundary=" (grabbing the wrong value) and missed
-        // "BOUNDARY=" (RFC 2045 parameter names are case-insensitive)
-        java.util.regex.Matcher m = java.util.regex.Pattern
-            .compile("(?i)(?:^|[;\\s])boundary=").matcher(contentType);
-        if (!m.find()) {
-            throw new IllegalStateException("content type does not contain boundary");
-        }
-        int idx = m.end() - "boundary=".length();
-        if (idx < 0) {
-            throw new IllegalStateException("content type does not contain boundary");
-        }
-        int start = idx + "boundary=".length();
-        boolean quoted = start < contentType.length() && contentType.charAt(start) == '"';
-        if (quoted) {
-            start++;
-        }
-        int end = start;
-        while (end < contentType.length()) {
-            char c = contentType.charAt(end);
-            if (quoted) {
-                if (c == '"') {
-                    break;
-                }
-            } else if (c == ';' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
-                break;
-            }
-            end++;
-        }
-        String boundary = contentType.substring(start, end);
-        if (boundary.isEmpty()) {
-            throw new IllegalStateException("empty boundary parameter in content type");
-        }
-        return boundary;
+    /** {@inheritDoc} - writes into the part's backing file */
+    @Override
+    public void write(byte[] b, int off, int len) throws IOException {
+      check(len);
+      delegate.write(b, off, len);
     }
 
-    /**
-     * sanitize a client provided filename: the stored file uses only the final
-     * path component, so a malicious Content-Disposition cannot write outside
-     * the storage directory. The original filename is still reported in
-     * {@link Part#filename}.
-     */
-    private static String sanitizeFilename(String filename) {
-        if (filename == null) {
-            throw new IllegalArgumentException("null filename in content-disposition");
-        }
-        // normalize separators so both unix and windows style paths are handled
-        String name = filename.replace('\\', '/');
-        int slash = name.lastIndexOf('/');
-        if (slash >= 0) {
-            name = name.substring(slash + 1);
-        }
-        if (name.isEmpty() || name.equals(".") || name.equals("..")) {
-            throw new IllegalArgumentException("illegal filename in content-disposition: " + filename);
-        }
-        return name;
+    private void check(int n) throws IOException {
+      count += n;
+      if (limit != 0 && count > limit) {
+        throw new IOException("non-file form field exceeds the limit of " + limit + " bytes");
+      }
     }
 
-    private static PartMetadata parseHeaders(List<String> headers) {
-        String name = null;
-        String filename = null;
-        String contentType = null;
-        for (var header : headers) {
-            String[] parts = header.split(":", 2);
-            if (parts.length < 2) {
-                // malformed part header line without a colon: skip it rather
-                // than failing the whole upload with an ArrayIndexOutOfBoundsException
-                logger.finer(() -> "ignoring malformed multipart part header '%s'".formatted(header));
-                continue;
-            }
-            if ("content-disposition".equalsIgnoreCase(parts[0])) {
-                // quote-aware split: a plain split(";") cut values containing
-                // ';' (filename="a;b.txt") mid-value, so the filename was
-                // never extracted and the part was misclassified
-                String[] options = splitOptions(parts[1]);
-                for (var option : options) {
-                    Matcher m = optionPattern.matcher(option);
-                    if (m.matches()) {
-                        String key = m.group("key");
-                        String value = m.group("value");
-                        if ("name".equals(key)) {
-                            name = value;
-                        }
-                        if ("filename".equals(key)) {
-                            filename = value;
-                        }
-                    }
-                }
-
-            } else if ("content-type".equalsIgnoreCase(parts[0])) {
-                contentType = parts[1].trim();
-            }
-        }
-        return new PartMetadata(contentType, name, filename);
+    String toString(Charset charset) {
+      return delegate.toString(charset);
     }
 
-    /** an OutputStream that fails once more than limit bytes have been written */
-    private static final class BoundedOutputStream extends OutputStream {
-        private final ByteArrayOutputStream delegate = new ByteArrayOutputStream();
-        private final long limit;
-        private long count;
+  }
 
-        BoundedOutputStream(long limit) {
-            this.limit = limit;
+  private static String readLine(Charset charset, InputStream is) throws IOException {
+    // per-line cap: part header lines were unbounded, so a client
+    // streaming an endless line (no LF) OOM'd the JVM (the per-field
+    // byte cap only guards part DATA)
+    int maxLine = MAX_PART_HEADER_LINE;
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    boolean prevCR = false;
+    while (true) {
+      if (bos.size() > maxLine) {
+        throw new IOException("multipart part header line too long (limit " + maxLine + " bytes)");
+      }
+      int c = is.read();
+      if (c == -1) {
+        if (bos.size() > 0) {
+          return bos.toString(charset);
         }
-
-        /** {@inheritDoc} - writes into the part's backing file */
-        @Override
-        public void write(int b) throws IOException {
-            check(1);
-            delegate.write(b);
+        return null;
+      }
+      if (c == '\r') {
+        prevCR = true;
+      } else if (c == '\n') {
+        if (prevCR) {
+          return bos.toString(charset);
+        } else {
+          bos.write(c);
         }
-
-        /** {@inheritDoc} - writes into the part's backing file */
-        @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            check(len);
-            delegate.write(b, off, len);
+      } else {
+        if (prevCR) {
+          bos.write('\r');
+          prevCR = false;
         }
-
-        private void check(int n) throws IOException {
-            count += n;
-            if (limit != 0 && count > limit) {
-                throw new IOException("non-file form field exceeds the limit of " + limit + " bytes");
-            }
-        }
-
-        String toString(Charset charset) {
-            return delegate.toString(charset);
-        }
+        bos.write(c);
+      }
     }
+  }
 
-    private static String readLine(Charset charset, InputStream is) throws IOException {
-        // per-line cap: part header lines were unbounded, so a client
-        // streaming an endless line (no LF) OOM'd the JVM (the per-field
-        // byte cap only guards part DATA)
-        int maxLine = MAX_PART_HEADER_LINE;
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        boolean prevCR = false;
-        while (true) {
-            if (bos.size() > maxLine) {
-                throw new IOException("multipart part header line too long (limit " + maxLine + " bytes)");
-            }
-            int c = is.read();
-            if (c == -1) {
-                if (bos.size() > 0) {
-                    return bos.toString(charset);
-                }
-                return null;
-            }
-            if (c == '\r') {
-                prevCR = true;
-            } else if (c == '\n') {
-                if (prevCR) {
-                    return bos.toString(charset);
-                } else {
-                    bos.write(c);
-                }
-            } else {
-                if (prevCR) {
-                    bos.write('\r');
-                    prevCR = false;
-                }
-                bos.write(c);
-            }
-        }
-    }
 }

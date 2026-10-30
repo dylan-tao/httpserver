@@ -21,53 +21,54 @@ import static org.testng.Assert.fail;
 
 public class WebSocketTest {
 
-    static {
-        // System.setProperty("jdk.httpclient.HttpClient.log", "all");
-        // System.setProperty("jdk.internal.httpclient.websocket.debug", "true");
+  static {
+    // System.setProperty("jdk.httpclient.HttpClient.log", "all");
+    // System.setProperty("jdk.internal.httpclient.websocket.debug", "true");
+  }
+
+  private static final int port = 9000;
+
+  private static final String path = "/ws";
+
+  HttpServer server;
+
+  @BeforeMethod
+  public void setUp() throws IOException {
+    Logger logger = Logger.getLogger(WebSocketTest.class.getName());
+    ConsoleHandler ch = new ConsoleHandler();
+    logger.setLevel(Level.ALL);
+    ch.setLevel(Level.ALL);
+    logger.addHandler(ch);
+
+    server = HttpServer.create(new InetSocketAddress(port), 0);
+    HttpHandler h = new EchoWebSocketHandler();
+    HttpContext c = server.createContext(path, h);
+    c.getFilters().add(new LoggingFilter(logger));
+    server.setExecutor(Executors.newCachedThreadPool());
+    server.start();
+  }
+
+  @AfterMethod
+  public void tearDown() {
+    server.stop(0);
+  }
+
+  @Test
+  public void testEcho() throws InterruptedException {
+    CountDownLatch latch = new CountDownLatch(1);
+    var client = WebSocketClientUtil.createWSC(9000, path, s -> {
+      if ("a_message".equals(s)) {
+        latch.countDown();
+      } else {
+        fail("received wrong message");
+      }
+    }, null);
+
+    client.sendText("a_message", true);
+
+    if (!latch.await(5, TimeUnit.SECONDS)) {
+      fail("did not receive message");
     }
-
-    private static final int port = 9000;
-    private static final String path = "/ws";
-
-    HttpServer server;
-
-    @BeforeMethod
-    public void setUp() throws IOException {
-        Logger logger = Logger.getLogger(WebSocketTest.class.getName());
-        ConsoleHandler ch = new ConsoleHandler();
-        logger.setLevel(Level.ALL);
-        ch.setLevel(Level.ALL);
-        logger.addHandler(ch);
-
-        server = HttpServer.create(new InetSocketAddress(port), 0);
-        HttpHandler h = new EchoWebSocketHandler();
-        HttpContext c = server.createContext(path, h);
-        c.getFilters().add(new LoggingFilter(logger));
-        server.setExecutor(Executors.newCachedThreadPool());
-        server.start();
-    }
-
-    @AfterMethod
-    public void tearDown() {
-        server.stop(0);
-    }
-
-    @Test
-    public void testEcho() throws InterruptedException {
-        CountDownLatch latch = new CountDownLatch(1);
-        var client = WebSocketClientUtil.createWSC(9000, path, s -> {
-            if ("a_message".equals(s)) {
-                latch.countDown();
-            } else {
-                fail("received wrong message");
-            }
-        }, null);
-
-        client.sendText("a_message", true);
-
-        if (!latch.await(5, TimeUnit.SECONDS)) {
-            fail("did not receive message");
-        }
-    }
+  }
 
 }

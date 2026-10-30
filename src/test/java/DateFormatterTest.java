@@ -58,66 +58,63 @@ import static org.testng.Assert.fail;
  */
 public class DateFormatterTest {
 
-    private HttpServer server;
+  private HttpServer server;
 
-    static URI httpURI;
-    static final Integer ITERATIONS = 10;
-    static String format;
-    static Pattern pattern;
+  static URI httpURI;
 
-    @BeforeTest
-    public void setUp() throws IOException, URISyntaxException {
-        String days = "(Mon|Tue|Wed|Thu|Fri|Sat|Sun)(,)";
-        String dayNo = "(\\s\\d\\d\\s)";
-        String month = "(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)";
-        String hour = "(\\s\\d\\d\\d\\d\\s\\d\\d)(:)(\\d\\d)(:)(\\d\\d\\s)";
-        String zone = "(GMT)";
-        format = days + dayNo + month + hour + zone;
-        pattern = Pattern.compile(format);
-        server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 10);
-        server.createContext("/server", new DateFormatHandler());
-        server.setExecutor(Executors.newCachedThreadPool());
-        httpURI = URIBuilder.newBuilder()
-                .host(server.getAddress().getAddress())
-                .port(server.getAddress().getPort())
-                .scheme("http")
-                .path("/server")
-                .build();
-        server.start();
+  static final Integer ITERATIONS = 10;
+
+  static String format;
+
+  static Pattern pattern;
+
+  @BeforeTest
+  public void setUp() throws IOException, URISyntaxException {
+    String days = "(Mon|Tue|Wed|Thu|Fri|Sat|Sun)(,)";
+    String dayNo = "(\\s\\d\\d\\s)";
+    String month = "(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)";
+    String hour = "(\\s\\d\\d\\d\\d\\s\\d\\d)(:)(\\d\\d)(:)(\\d\\d\\s)";
+    String zone = "(GMT)";
+    format = days + dayNo + month + hour + zone;
+    pattern = Pattern.compile(format);
+    server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 10);
+    server.createContext("/server", new DateFormatHandler());
+    server.setExecutor(Executors.newCachedThreadPool());
+    httpURI = URIBuilder.newBuilder().host(server.getAddress().getAddress()).port(server.getAddress().getPort()).scheme("http")
+        .path("/server").build();
+    server.start();
+  }
+
+  @AfterTest
+  public void cleanUp() {
+    server.stop(0);
+  }
+
+  @Test
+  public void testDateFormat() throws Exception {
+    HttpClient client = HttpClient.newBuilder().build();
+    HttpRequest request = HttpRequest.newBuilder(httpURI).GET().build();
+    for (int i = 0; i < ITERATIONS; i++) {
+      HttpResponse<String> response = client.send(request, ofString());
+      String date = response.headers().firstValue("Date").orElse("null");
+      if (date.equals("null"))
+        fail("Date not present");
+      Matcher matcher = pattern.matcher(date);
+      assertTrue(matcher.matches(), date);
+    }
+  }
+
+  public static class DateFormatHandler implements HttpHandler {
+
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+      try (InputStream is = exchange.getRequestBody(); OutputStream os = exchange.getResponseBody()) {
+        byte[] bytes = is.readAllBytes();
+        exchange.sendResponseHeaders(200, bytes.length);
+        os.write(bytes);
+      }
     }
 
-    @AfterTest
-    public void cleanUp() {
-        server.stop(0);
-    }
+  }
 
-    @Test
-    public void testDateFormat() throws Exception {
-        HttpClient client = HttpClient.newBuilder()
-                .build();
-        HttpRequest request = HttpRequest.newBuilder(httpURI)
-                .GET()
-                .build();
-        for (int i = 0; i < ITERATIONS; i++) {
-            HttpResponse<String> response = client.send(request, ofString());
-            String date = response.headers().firstValue("Date").orElse("null");
-            if (date.equals("null"))
-                fail("Date not present");
-            Matcher matcher = pattern.matcher(date);
-            assertTrue(matcher.matches(),date);
-        }
-    }
-
-    public static class DateFormatHandler implements HttpHandler {
-
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            try (InputStream is = exchange.getRequestBody();
-                    OutputStream os = exchange.getResponseBody()) {
-                byte[] bytes = is.readAllBytes();
-                exchange.sendResponseHeaders(200, bytes.length);
-                os.write(bytes);
-            }
-        }
-    }
 }

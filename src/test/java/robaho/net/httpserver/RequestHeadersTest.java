@@ -13,233 +13,241 @@ import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
 public class RequestHeadersTest {
-    @Test
-    public void TestHeaderParse() throws IOException {
-        String request = "GET blah\r\nKEY:VALUE\r\n\r\n";
-        var is = new ByteArrayInputStream(request.getBytes());
-        var os = new ByteArrayOutputStream();
 
-        Request r = new Request(is,os);
-        assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertEquals(r.headers().getFirst("KEY"),"VALUE");
-    }
-    @Test
-    public void TestNormalizeUnicodeFallback() {
-        // the normalize() fast path folds ASCII in one byte[] pass; names
-        // containing >0xFF chars must fall back to the unicode-aware
-        // slowFold with identical results
-        var h = new robaho.net.httpserver.internal.OptimizedHeaders();
-        // 'ž' (0x17E) exceeds one byte: a fix-path name carrying it takes
-        // the slowFold branch (fix triggered by the lowercase first char)
-        h.add("x-ž", "v");
-        assertEquals(h.getFirst("X-ž"), "v");
-        assertEquals(h.getFirst("x-ž"), "v");
-        // non-ASCII first char is NOT case-folded (ASCII-only rule): the
-        // name stores as-is and lookups with the exact form hit
-        h.add("ünicode-key", "u");
-        assertEquals(h.getFirst("ünicode-key"), "u");
-        // REGRESSION: a first char whose Unicode uppercase exceeds one byte
-        // ('ÿ' U+00FF -> U+0178) used to truncate in the byte cast, storing
-        // "xx" instead of the old fold's "Ÿx". the fix restores the exact
-        // pre-fold expression's behavior (unicode-aware, lookup by the
-        // stored normalized form)
-        h.add("ÿX", "y");
-        assertEquals(h.getFirst("Ÿx"), "y");
-        // and the truncation is gone: the stored key is no longer "xx"
-        assertEquals(h.keySet().stream().filter(k -> k.equals("xx")).count(), 0);
-        // pure ASCII mixed case: the fast fold, one slot per name
-        h.add("set-cookie", "c1");
-        assertEquals(h.getFirst("Set-Cookie"), "c1");
-        assertEquals(h.getFirst("set-cookie"), "c1");
-        assertEquals(h.mapSizeForTest(), 4);
-    }
-    @Test
-    public void TestNormalizeCRLFRejection() {
-        var h = new robaho.net.httpserver.internal.OptimizedHeaders();
-        // a lowercase-first name with a hidden CR in the tail passed the
-        // old scan loop; the fold must reject it like the JDK does.
-        // (VALUE bytes are validated on the write path, not here)
-        assertThrows(IllegalArgumentException.class, () -> h.add("bad\rname", "v"));
-        h.add("good", "v\rvalue"); // stored; getTotal rejects it at write time
-    }
-    @Test
-    public void TestMultiLineHeaderParse() throws IOException {
-        String request = "GET blah\r\nKEY:VAL\r\n 2\r\n\r\n";
-        var is = new ByteArrayInputStream(request.getBytes());
-        var os = new ByteArrayOutputStream();
+  @Test
+  public void TestHeaderParse() throws IOException {
+    String request = "GET blah\r\nKEY:VALUE\r\n\r\n";
+    var is = new ByteArrayInputStream(request.getBytes());
+    var os = new ByteArrayOutputStream();
 
-        Request r = new Request(is,os);
-        assertTrue("GET blah".contentEquals(r.requestLine()));
-        // RFC 9112 5.2: obs-fold is replaced by a single SP
-        assertEquals(r.headers().getFirst("KEY"),"VAL 2");
+    Request r = new Request(is, os);
+    assertTrue("GET blah".contentEquals(r.requestLine()));
+    assertEquals(r.headers().getFirst("KEY"), "VALUE");
+  }
+
+  @Test
+  public void TestNormalizeUnicodeFallback() {
+    // the normalize() fast path folds ASCII in one byte[] pass; names
+    // containing >0xFF chars must fall back to the unicode-aware
+    // slowFold with identical results
+    var h = new robaho.net.httpserver.internal.OptimizedHeaders();
+    // 'ž' (0x17E) exceeds one byte: a fix-path name carrying it takes
+    // the slowFold branch (fix triggered by the lowercase first char)
+    h.add("x-ž", "v");
+    assertEquals(h.getFirst("X-ž"), "v");
+    assertEquals(h.getFirst("x-ž"), "v");
+    // non-ASCII first char is NOT case-folded (ASCII-only rule): the
+    // name stores as-is and lookups with the exact form hit
+    h.add("ünicode-key", "u");
+    assertEquals(h.getFirst("ünicode-key"), "u");
+    // REGRESSION: a first char whose Unicode uppercase exceeds one byte
+    // ('ÿ' U+00FF -> U+0178) used to truncate in the byte cast, storing
+    // "xx" instead of the old fold's "Ÿx". the fix restores the exact
+    // pre-fold expression's behavior (unicode-aware, lookup by the
+    // stored normalized form)
+    h.add("ÿX", "y");
+    assertEquals(h.getFirst("Ÿx"), "y");
+    // and the truncation is gone: the stored key is no longer "xx"
+    assertEquals(h.keySet().stream().filter(k -> k.equals("xx")).count(), 0);
+    // pure ASCII mixed case: the fast fold, one slot per name
+    h.add("set-cookie", "c1");
+    assertEquals(h.getFirst("Set-Cookie"), "c1");
+    assertEquals(h.getFirst("set-cookie"), "c1");
+    assertEquals(h.mapSizeForTest(), 4);
+  }
+
+  @Test
+  public void TestNormalizeCRLFRejection() {
+    var h = new robaho.net.httpserver.internal.OptimizedHeaders();
+    // a lowercase-first name with a hidden CR in the tail passed the
+    // old scan loop; the fold must reject it like the JDK does.
+    // (VALUE bytes are validated on the write path, not here)
+    assertThrows(IllegalArgumentException.class, () -> h.add("bad\rname", "v"));
+    h.add("good", "v\rvalue"); // stored; getTotal rejects it at write time
+  }
+
+  @Test
+  public void TestMultiLineHeaderParse() throws IOException {
+    String request = "GET blah\r\nKEY:VAL\r\n 2\r\n\r\n";
+    var is = new ByteArrayInputStream(request.getBytes());
+    var os = new ByteArrayOutputStream();
+
+    Request r = new Request(is, os);
+    assertTrue("GET blah".contentEquals(r.requestLine()));
+    // RFC 9112 5.2: obs-fold is replaced by a single SP
+    assertEquals(r.headers().getFirst("KEY"), "VAL 2");
+  }
+
+  @Test
+  public void TestMultipleHeaders() throws IOException {
+    String request = "GET blah\r\nKEY:VAL\r\nKEY2:VAL2\r\n\r\n";
+    var is = new ByteArrayInputStream(request.getBytes());
+    var os = new ByteArrayOutputStream();
+
+    Request r = new Request(is, os);
+    assertTrue("GET blah".contentEquals(r.requestLine()));
+    assertEquals(r.headers().getFirst("KEY"), "VAL");
+    assertEquals(r.headers().getFirst("KEY2"), "VAL2");
+  }
+
+  @Test
+  public void TestMultipleHeadersThenBody() throws IOException {
+    String request = "GET blah\r\nKEY:VAL\r\nKEY2:VAL2\r\n\r\nSome Body Data";
+    var is = new ByteArrayInputStream(request.getBytes());
+    var os = new ByteArrayOutputStream();
+
+    Request r = new Request(is, os);
+    assertTrue("GET blah".contentEquals(r.requestLine()));
+    assertEquals(r.headers().getFirst("KEY"), "VAL");
+    assertEquals(r.headers().getFirst("KEY2"), "VAL2");
+  }
+
+  @Test
+  public void TestWhitespace() throws IOException {
+    // RFC 9112 5.1: whitespace between the field name and colon MUST be
+    // rejected with 400 (a request-smuggling differential against
+    // RFC-compliant proxies; the JDK 400s it). the old lenient trim
+    // ("KEY : VAL" accepted) was removed
+    String request = "GET blah\r\nKEY : VAL\r\nKEY2:VAL2 \r\n\r\nSome Body Data";
+    var is = new ByteArrayInputStream(request.getBytes());
+    var os = new ByteArrayOutputStream();
+
+    var r = new Request(is, os);
+    assertTrue("GET blah".contentEquals(r.requestLine()));
+    assertThrows(IOException.class, () -> r.headers());
+    // the legal whitespace cases still work: trailing space in the VALUE
+    String ok = "GET blah\r\nKEY2:VAL2 \r\n\r\n";
+    var r2 = new Request(new ByteArrayInputStream(ok.getBytes()), new ByteArrayOutputStream());
+    assertEquals("VAL2", r2.headers().getFirst("KEY2"));
+  }
+
+  @Test
+  public void TestDuplicateHeaders() throws IOException {
+    String request = "GET blah\r\nKEY:VAL\r\nKEY:VAL2\r\nKEY:VAL3 \r\n\r\nSome Body Data";
+    var is = new ByteArrayInputStream(request.getBytes());
+    var os = new ByteArrayOutputStream();
+
+    Request r = new Request(is, os);
+    assertTrue("GET blah".contentEquals(r.requestLine()));
+    assertEquals(r.headers().get("KEY"), List.of("VAL", "VAL2", "VAL3"));
+  }
+
+  // ---- bulk line reader rewrite: pin the preserved CR quirks and edges ----
+
+  @Test
+  public void TestBareLfLines() throws IOException {
+    // bare LF terminates both the request line and headers (RFC 9112 2.2)
+    String request = "GET blah\nKEY:VAL\n\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET blah", r.requestLine());
+    assertEquals("VAL", r.headers().getFirst("KEY"));
+  }
+
+  @Test
+  public void TestRequestLineTrailingCrQuirk() throws IOException {
+    // a trailing CR run of exactly 1 is the CRLF terminator...
+    var r1 = new Request(new ByteArrayInputStream("GET a\r\n\r\n".getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET a", r1.requestLine());
+    // ... a run of 2+ is all CONTENT (the LF then terminated the line bare)
+    var r2 = new Request(new ByteArrayInputStream("GET a\r\r\n\r\n".getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET a\r\r", r2.requestLine());
+  }
+
+  @Test
+  public void TestHeaderTrailingCrSwallowed() throws IOException {
+    // ALL trailing CRs before the LF are swallowed in header lines
+    String request = "GET blah\r\nKEY:VAL\r\r\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("VAL", r.headers().getFirst("KEY"));
+  }
+
+  @Test
+  public void TestHeaderBareCrRejected() throws IOException {
+    // a CR followed by a non-CR/non-LF byte inside a header line is an error
+    String request = "GET blah\r\nKE\rY:VAL\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET blah", r.requestLine());
+    assertThrows(IOException.class, () -> r.headers());
+  }
+
+  @Test
+  public void TestObsFoldTabInsertsSpace() throws IOException {
+    // a tab-led line folds into the value; the obs-fold is replaced by
+    // a single SP (RFC 9112 5.2)
+    String request = "GET blah\r\nKEY:VAL\r\n\tEXT\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("VAL EXT", r.headers().getFirst("KEY"));
+  }
+
+  @Test
+  public void TestWhitespaceOnlyLineIsNoOpFold() throws IOException {
+    // a whitespace-only line is an obs-fold that appends nothing: the
+    // header block continues after it
+    String request = "GET blah\r\nKEY:VAL\r\n \r\nOTHER:V2\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("VAL", r.headers().getFirst("KEY"));
+    assertEquals("V2", r.headers().getFirst("OTHER"));
+  }
+
+  @Test
+  public void TestNoColonHeaderRejected() throws IOException {
+    // a header line without a colon is a malformed field-line
+    // (RFC 9112 5) and is rejected, matching the JDK
+    String request = "GET blah\r\nKEYNOOLON\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertThrows(IOException.class, () -> r.headers());
+  }
+
+  @Test
+  public void TestIllegalHeaderNameRejected() throws IOException {
+    // a space inside the field-name is not an RFC 7230 tchar
+    String request = "GET blah\r\nFoo Bar: 1\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertThrows(IOException.class, () -> r.headers());
+  }
+
+  @Test
+  public void TestHeaderBlockBudgetExceeded() throws IOException {
+    // the total header block budget (default 380KB) bounds the worst
+    // case that the per-line and count limits alone allow (~25MB)
+    byte[] bigValue = new byte[60 * 1024];
+    java.util.Arrays.fill(bigValue, (byte) 'v');
+    StringBuilder sb = new StringBuilder("GET blah\r\n");
+    for (int i = 0; i < 8; i++) { // 8 x ~60KB = ~480KB > 380KB
+      sb.append("X-Big-").append(i).append(':').append(new String(bigValue)).append("\r\n");
     }
-    @Test
-    public void TestMultipleHeaders() throws IOException {
-        String request = "GET blah\r\nKEY:VAL\r\nKEY2:VAL2\r\n\r\n";
-        var is = new ByteArrayInputStream(request.getBytes());
-        var os = new ByteArrayOutputStream();
+    sb.append("\r\n");
+    var r = new Request(new ByteArrayInputStream(sb.toString().getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET blah", r.requestLine());
+    assertThrows(IOException.class, () -> r.headers());
+  }
 
-        Request r = new Request(is,os);
-        assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertEquals(r.headers().getFirst("KEY"),"VAL");
-        assertEquals(r.headers().getFirst("KEY2"),"VAL2");
-    }
-    @Test
-    public void TestMultipleHeadersThenBody() throws IOException {
-        String request = "GET blah\r\nKEY:VAL\r\nKEY2:VAL2\r\n\r\nSome Body Data";
-        var is = new ByteArrayInputStream(request.getBytes());
-        var os = new ByteArrayOutputStream();
+  @Test
+  public void TestEofDropsPendingHeader() throws IOException {
+    // headers without the terminating blank line are dropped at EOF
+    String request = "GET blah\r\nKEY:VAL\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET blah", r.requestLine());
+    assertNull(r.headers().getFirst("KEY"));
+  }
 
-        Request r = new Request(is,os);
-        assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertEquals(r.headers().getFirst("KEY"),"VAL");
-        assertEquals(r.headers().getFirst("KEY2"),"VAL2");
-    }
-    @Test
-    public void TestWhitespace() throws IOException {
-        // RFC 9112 5.1: whitespace between the field name and colon MUST be
-        // rejected with 400 (a request-smuggling differential against
-        // RFC-compliant proxies; the JDK 400s it). the old lenient trim
-        // ("KEY : VAL" accepted) was removed
-        String request = "GET blah\r\nKEY : VAL\r\nKEY2:VAL2 \r\n\r\nSome Body Data";
-        var is = new ByteArrayInputStream(request.getBytes());
-        var os = new ByteArrayOutputStream();
+  @Test
+  public void TestLeadingEmptyLinesSkipped() throws IOException {
+    String request = "\r\n\r\nGET blah\r\nKEY:VAL\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET blah", r.requestLine());
+    assertEquals("VAL", r.headers().getFirst("KEY"));
+  }
 
-        var r = new Request(is,os);
-        assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertThrows(IOException.class, () -> r.headers());
-        // the legal whitespace cases still work: trailing space in the VALUE
-        String ok = "GET blah\r\nKEY2:VAL2 \r\n\r\n";
-        var r2 = new Request(new ByteArrayInputStream(ok.getBytes()), new ByteArrayOutputStream());
-        assertEquals("VAL2", r2.headers().getFirst("KEY2"));
-    }
+  @Test
+  public void TestHeaderLineTooLong() throws IOException {
+    // the per-builder limit: a value pushing past maxReqLineSize throws
+    byte[] longValue = new byte[70 * 1024];
+    java.util.Arrays.fill(longValue, (byte) 'v');
+    String request = "GET blah\r\nKEY:" + new String(longValue) + "\r\n\r\n";
+    var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
+    assertEquals("GET blah", r.requestLine());
+    assertThrows(IOException.class, () -> r.headers());
+  }
 
-    @Test
-    public void TestDuplicateHeaders() throws IOException {
-        String request = "GET blah\r\nKEY:VAL\r\nKEY:VAL2\r\nKEY:VAL3 \r\n\r\nSome Body Data";
-        var is = new ByteArrayInputStream(request.getBytes());
-        var os = new ByteArrayOutputStream();
-
-        Request r = new Request(is,os);
-        assertTrue("GET blah".contentEquals(r.requestLine()));
-        assertEquals(r.headers().get("KEY"), List.of("VAL", "VAL2", "VAL3"));
-    }
-
-    // ---- bulk line reader rewrite: pin the preserved CR quirks and edges ----
-
-    @Test
-    public void TestBareLfLines() throws IOException {
-        // bare LF terminates both the request line and headers (RFC 9112 2.2)
-        String request = "GET blah\nKEY:VAL\n\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET blah", r.requestLine());
-        assertEquals("VAL", r.headers().getFirst("KEY"));
-    }
-
-    @Test
-    public void TestRequestLineTrailingCrQuirk() throws IOException {
-        // a trailing CR run of exactly 1 is the CRLF terminator...
-        var r1 = new Request(new ByteArrayInputStream("GET a\r\n\r\n".getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET a", r1.requestLine());
-        // ... a run of 2+ is all CONTENT (the LF then terminated the line bare)
-        var r2 = new Request(new ByteArrayInputStream("GET a\r\r\n\r\n".getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET a\r\r", r2.requestLine());
-    }
-
-    @Test
-    public void TestHeaderTrailingCrSwallowed() throws IOException {
-        // ALL trailing CRs before the LF are swallowed in header lines
-        String request = "GET blah\r\nKEY:VAL\r\r\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("VAL", r.headers().getFirst("KEY"));
-    }
-
-    @Test
-    public void TestHeaderBareCrRejected() throws IOException {
-        // a CR followed by a non-CR/non-LF byte inside a header line is an error
-        String request = "GET blah\r\nKE\rY:VAL\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET blah", r.requestLine());
-        assertThrows(IOException.class, () -> r.headers());
-    }
-
-    @Test
-    public void TestObsFoldTabInsertsSpace() throws IOException {
-        // a tab-led line folds into the value; the obs-fold is replaced by
-        // a single SP (RFC 9112 5.2)
-        String request = "GET blah\r\nKEY:VAL\r\n\tEXT\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("VAL EXT", r.headers().getFirst("KEY"));
-    }
-
-    @Test
-    public void TestWhitespaceOnlyLineIsNoOpFold() throws IOException {
-        // a whitespace-only line is an obs-fold that appends nothing: the
-        // header block continues after it
-        String request = "GET blah\r\nKEY:VAL\r\n \r\nOTHER:V2\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("VAL", r.headers().getFirst("KEY"));
-        assertEquals("V2", r.headers().getFirst("OTHER"));
-    }
-
-    @Test
-    public void TestNoColonHeaderRejected() throws IOException {
-        // a header line without a colon is a malformed field-line
-        // (RFC 9112 5) and is rejected, matching the JDK
-        String request = "GET blah\r\nKEYNOOLON\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertThrows(IOException.class, () -> r.headers());
-    }
-
-    @Test
-    public void TestIllegalHeaderNameRejected() throws IOException {
-        // a space inside the field-name is not an RFC 7230 tchar
-        String request = "GET blah\r\nFoo Bar: 1\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertThrows(IOException.class, () -> r.headers());
-    }
-
-    @Test
-    public void TestHeaderBlockBudgetExceeded() throws IOException {
-        // the total header block budget (default 380KB) bounds the worst
-        // case that the per-line and count limits alone allow (~25MB)
-        byte[] bigValue = new byte[60 * 1024];
-        java.util.Arrays.fill(bigValue, (byte) 'v');
-        StringBuilder sb = new StringBuilder("GET blah\r\n");
-        for (int i = 0; i < 8; i++) { // 8 x ~60KB = ~480KB > 380KB
-            sb.append("X-Big-").append(i).append(':').append(new String(bigValue)).append("\r\n");
-        }
-        sb.append("\r\n");
-        var r = new Request(new ByteArrayInputStream(sb.toString().getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET blah", r.requestLine());
-        assertThrows(IOException.class, () -> r.headers());
-    }
-
-    @Test
-    public void TestEofDropsPendingHeader() throws IOException {
-        // headers without the terminating blank line are dropped at EOF
-        String request = "GET blah\r\nKEY:VAL\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET blah", r.requestLine());
-        assertNull(r.headers().getFirst("KEY"));
-    }
-
-    @Test
-    public void TestLeadingEmptyLinesSkipped() throws IOException {
-        String request = "\r\n\r\nGET blah\r\nKEY:VAL\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET blah", r.requestLine());
-        assertEquals("VAL", r.headers().getFirst("KEY"));
-    }
-
-    @Test
-    public void TestHeaderLineTooLong() throws IOException {
-        // the per-builder limit: a value pushing past maxReqLineSize throws
-        byte[] longValue = new byte[70 * 1024];
-        java.util.Arrays.fill(longValue, (byte) 'v');
-        String request = "GET blah\r\nKEY:" + new String(longValue) + "\r\n\r\n";
-        var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
-        assertEquals("GET blah", r.requestLine());
-        assertThrows(IOException.class, () -> r.headers());
-    }
 }

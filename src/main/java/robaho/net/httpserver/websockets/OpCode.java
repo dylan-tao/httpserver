@@ -38,40 +38,42 @@ package robaho.net.httpserver.websockets;
  * the control frames Close, Ping, Pong.
  */
 public enum OpCode {
-    Continuation(0),
-    Text(1),
-    Binary(2),
-    Close(8),
-    Ping(9),
-    Pong(10);
 
-    // cached: values() clones the array, and find() runs per received frame
-    private static final OpCode[] _values = OpCode.values();
+  Continuation(0),
+  Text(1),
+  Binary(2),
+  Close(8),
+  Ping(9),
+  Pong(10);
 
-    /** the opcode for a wire value, or null for reserved/unknown values */
-    public static OpCode find(byte value) {
-        for (OpCode opcode : _values) {
-            if (opcode.getValue() == value) {
-                return opcode;
-            }
-        }
-        return null;
+  // cached: values() clones the array, and find() runs per received frame
+  private static final OpCode[] _values = OpCode.values();
+
+  /** the opcode for a wire value, or null for reserved/unknown values */
+  public static OpCode find(byte value) {
+    for (OpCode opcode : _values) {
+      if (opcode.getValue() == value) {
+        return opcode;
+      }
     }
+    return null;
+  }
 
-    private final byte code;
+  private final byte code;
 
-    OpCode(int code) {
-        this.code = (byte) code;
-    }
+  OpCode(int code) {
+    this.code = (byte) code;
+  }
 
-    /** the 4-bit wire value of this opcode */
-    public byte getValue() {
-        return this.code;
-    }
+  /** the 4-bit wire value of this opcode */
+  public byte getValue() { return this.code; }
 
-    /** true for Close/Ping/Pong: control frames must not be fragmented and
-     *  their payload is capped at 125 bytes (RFC 6455 5.5) */
-    public boolean isControlFrame() {
-        return this == Close || this == Ping || this == Pong;
-    }
+  /**
+   * true for Close/Ping/Pong: control frames must not be fragmented and
+   * their payload is capped at 125 bytes (RFC 6455 5.5)
+   */
+  public boolean isControlFrame() {
+    return this == Close || this == Ping || this == Pong;
+  }
+
 }

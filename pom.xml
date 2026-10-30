@@ -44,6 +44,9 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- javadoc fork reads this (it does not follow release=25):
+             ScopedValue & friends are JDK 25 APIs -->
+        <maven.compiler.source>25</maven.compiler.source>
         <!-- JDK 25 target: unlocks ScopedValue (JEP 506, final in 25) and the
              compact object headers flag in the test JVM -->
         <maven.compiler.release>25</maven.compiler.release>
@@ -160,6 +163,67 @@
                 </configuration>
             </plugin>
 
+            <!-- static analysis + formatting: the quality gates.
+                 pmd/spotbugs run on every verify (P1-P4 gate, ruleset
+                 excludes document the intentional patterns); formatter
+                 is the mechanical codestyle layer so PMD can stay lean -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-pmd-plugin</artifactId>
+                <!-- latest; bundles PMD engine 7.17.0 (the 7.28.0-engine CLI
+                     sweep lives in the triage history; the ruleset is engine-
+                     compatible across 7.x) -->
+                <version>3.28.0</version>
+                <configuration>
+                    <rulesets>
+                        <ruleset>${project.basedir}/config/pmd-ruleset.xml</ruleset>
+                    </rulesets>
+                    <minimumPriority>4</minimumPriority>
+                    <failOnViolation>true</failOnViolation>
+                    <printFailingErrors>true</printFailingErrors>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>pmd-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>4.10.5.0</version>
+                <configuration>
+                    <effort>Max</effort>
+                    <threshold>Medium</threshold>
+                    <excludeFilterFile>${project.basedir}/config/spotbugs-exclude.xml</excludeFilterFile>
+                    <failOnError>true</failOnError>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotbugs-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>net.revelc.code.formatter</groupId>
+                <artifactId>formatter-maven-plugin</artifactId>
+                <version>2.29.0</version>
+                <configuration>
+                    <lineEnding>LF</lineEnding>
+                    <configFile>${project.basedir}/config/formatter-eclipse.xml</configFile>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>format-sources</id>
+                        <goals><goal>format</goal></goals>
+                        <phase>process-sources</phase>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
@@ -219,6 +283,12 @@
                          so missing/syntax/reference problems fail the build
                          instead of silently regressing -->
                     <doclint>missing,syntax,reference</doclint>
+                    <!-- the javadoc fork does NOT inherit the compiler's
+                         release under maven 3.9: it defaulted to 17, where
+                         ScopedValue and other JDK 25 APIs do not resolve.
+                         pin it explicitly -->
+                    <source>25</source>
+                    <release>25</release>
                 </configuration>
                 <executions>
                     <execution>

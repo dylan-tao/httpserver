@@ -38,15 +38,18 @@ import java.net.InetSocketAddress;
 import static org.testng.Assert.assertTrue;
 
 public class CreateHttpServerTest {
-    @Test
-    public void TestCreate() throws IOException {
-        var server = HttpServer.create();
-        assertTrue(server instanceof HttpServer);
-    }
-    @Test
-    public void TestCreateWithParameters() throws IOException {
-        var addr = new InetSocketAddress(InetAddress.getLoopbackAddress(), 0);
-        var server = HttpServer.create(addr, 123);
-        assertTrue(server instanceof HttpServer);
-    }
+
+  @Test
+  public void TestCreate() throws IOException {
+    var server = HttpServer.create();
+    assertTrue(server instanceof HttpServer);
+  }
+
+  @Test
+  public void TestCreateWithParameters() throws IOException {
+    var addr = new InetSocketAddress(InetAddress.getLoopbackAddress(), 0);
+    var server = HttpServer.create(addr, 123);
+    assertTrue(server instanceof HttpServer);
+  }
+
 }

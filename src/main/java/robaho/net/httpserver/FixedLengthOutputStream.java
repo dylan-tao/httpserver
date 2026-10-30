@@ -39,69 +39,73 @@ import java.util.Objects;
  */
 
 class FixedLengthOutputStream extends FilterOutputStream {
-    private long remaining;
-    private boolean closed = false;
-    ExchangeImpl t;
 
-    FixedLengthOutputStream(ExchangeImpl t, OutputStream src, long len) {
-        if (len < 0) {
-            throw new IllegalArgumentException("Content-length: " + len);
-        }
-        super(src);
-        this.t = t;
-        this.remaining = len;
+  private long remaining;
+
+  private boolean closed = false;
+
+  ExchangeImpl t;
+
+  FixedLengthOutputStream(ExchangeImpl t, OutputStream src, long len) {
+    if (len < 0) {
+      throw new IllegalArgumentException("Content-length: " + len);
+    }
+    super(src);
+    this.t = t;
+    this.remaining = len;
+  }
+
+  @Override
+  public void write(int b) throws IOException {
+    if (closed) {
+      throw new IOException("stream closed");
+    }
+    if (remaining == 0) {
+      throw new StreamClosedException();
+    }
+    out.write(b);
+    remaining--;
+  }
+
+  @Override
+  public void write(byte[] b, int off, int len) throws IOException {
+    Objects.checkFromIndexSize(off, len, b.length);
+    if (len == 0) {
+      return;
+    }
+    if (closed) {
+      throw new IOException("stream closed");
+    }
+    if (len > remaining) {
+      // stream is still open, caller can retry
+      throw new IOException("too many bytes to write to stream");
+    }
+    out.write(b, off, len);
+    remaining -= len;
+  }
+
+  @Override
+  public void close() throws IOException {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    if (remaining > 0) {
+      t.close();
+      throw new IOException("insufficient bytes written to stream");
     }
 
-    @Override
-    public void write(int b) throws IOException {
-        if (closed) {
-            throw new IOException("stream closed");
-        }
-        if (remaining == 0) {
-            throw new StreamClosedException();
-        }
-        out.write(b);
-        remaining--;
+    // flush the response before draining, but only when no pipelined
+    // request is already waiting in the input buffer: with one waiting,
+    // this response coalesces with the rest of the batch (flushed when
+    // the input drains, or right before the next blocking read). the
+    // drain case is unaffected: a client trickling its remaining body
+    // has nothing buffered, so the flush fires and unblocks it
+    if (!t.getConnection().hasBufferedInput()) {
+      flush();
     }
 
-    @Override
-    public void write(byte[] b, int off, int len) throws IOException {
-        Objects.checkFromIndexSize(off, len, b.length);
-        if (len == 0) {
-            return;
-        }
-        if (closed) {
-            throw new IOException("stream closed");
-        }
-        if (len > remaining) {
-            // stream is still open, caller can retry
-            throw new IOException("too many bytes to write to stream");
-        }
-        out.write(b, off, len);
-        remaining -= len;
-    }
+    t.drainOriginalInputStream();
+  }
 
-    @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        closed = true;
-        if (remaining > 0) {
-            t.close();
-            throw new IOException("insufficient bytes written to stream");
-        }
-
-        // flush the response before draining, but only when no pipelined
-        // request is already waiting in the input buffer: with one waiting,
-        // this response coalesces with the rest of the batch (flushed when
-        // the input drains, or right before the next blocking read). the
-        // drain case is unaffected: a client trickling its remaining body
-        // has nothing buffered, so the flush fires and unblocks it
-        if (!t.getConnection().hasBufferedInput()) {
-            flush();
-        }
-
-        t.drainOriginalInputStream();
-    }
 }

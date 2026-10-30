@@ -8,18 +8,18 @@ package robaho.net.httpserver.websockets;
  * %%
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright notice, this
  *    list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the nanohttpd nor the names of its contributors
  *    may be used to endorse or promote products derived from this software without
  *    specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -41,33 +41,30 @@ import java.io.IOException;
  */
 public class WebSocketException extends IOException {
 
-    private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 1L;
 
-    private final CloseCode code;
+  private final CloseCode code;
 
-    private final String reason;
+  private final String reason;
 
-    public WebSocketException(CloseCode code, String reason) {
-        this(code, reason, null);
-    }
+  public WebSocketException(CloseCode code, String reason) {
+    this(code, reason, null);
+  }
 
-    public WebSocketException(CloseCode code, String reason, Exception cause) {
-        super(code + ": " + reason, cause);
-        this.code = code;
-        this.reason = reason;
-    }
+  public WebSocketException(CloseCode code, String reason, Exception cause) {
+    super(code + ": " + reason, cause);
+    this.code = code;
+    this.reason = reason;
+  }
 
-    public WebSocketException(Exception cause) {
-        this(CloseCode.InternalServerError, cause.toString(), cause);
-    }
+  public WebSocketException(Exception cause) {
+    this(CloseCode.InternalServerError, cause.toString(), cause);
+  }
 
-    /** the close code the connection should be closed with */
-    public CloseCode getCode() {
-        return this.code;
-    }
+  /** the close code the connection should be closed with */
+  public CloseCode getCode() { return this.code; }
 
-    /** the human-readable close reason */
-    public String getReason() {
-        return this.reason;
-    }
+  /** the human-readable close reason */
+  public String getReason() { return this.reason; }
+
 }

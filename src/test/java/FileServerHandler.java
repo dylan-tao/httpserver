@@ -38,112 +38,110 @@ import java.nio.file.Path;
 /**
  * Implements a basic static content HTTP file server handler
  * which understands text/html, text/plain content types
- *
  * Must be given an abs pathname to the document root.
  * Directory listings together with text + html files
  * can be served.
- *
  */
 public class FileServerHandler implements HttpHandler {
 
-    String docroot;
+  String docroot;
 
-    public FileServerHandler (String docroot) {
-        this.docroot = docroot;
+  public FileServerHandler(String docroot) {
+    this.docroot = docroot;
+  }
+
+  int invocation = 1;
+
+  public void handle(HttpExchange t) throws IOException {
+    InputStream is = t.getRequestBody();
+    Headers map = t.getRequestHeaders();
+    Headers rmap = t.getResponseHeaders();
+    URI uri = t.getRequestURI();
+    String path = uri.getPath();
+
+    is.readAllBytes();
+    is.close();
+
+    File f = new File(docroot, path);
+    Path filepath = Files.isSymbolicLink(f.toPath()) ? Files.readSymbolicLink(f.toPath()) : f.toPath();
+    f = filepath.toFile();
+
+    if (!f.exists()) {
+      notfound(t, path);
+      return;
     }
 
-    int invocation = 1;
-    public void handle (HttpExchange t)
-        throws IOException
-    {
-        InputStream is = t.getRequestBody();
-        Headers map = t.getRequestHeaders();
-        Headers rmap = t.getResponseHeaders();
-        URI uri = t.getRequestURI();
-        String path = uri.getPath();
+    String fixedrequest = map.getFirst("XFixed");
 
-        is.readAllBytes();
-        is.close();
-
-        File f = new File (docroot, path);
-        Path filepath = Files.isSymbolicLink(f.toPath()) ? Files.readSymbolicLink(f.toPath()) : f.toPath();
-        f = filepath.toFile();
-
-        if (!f.exists()) {
-            notfound (t, path);
-            return;
-        }
-
-        String fixedrequest = map.getFirst ("XFixed");
-
-        String method = t.getRequestMethod();
-        if (method.equals ("HEAD")) {
-            rmap.set ("Content-length", Long.toString (f.length()));
-            t.sendResponseHeaders (200, -1);
-            t.close();
-        } else if (!method.equals("GET")) {
-            t.sendResponseHeaders (405, -1);
-            t.close();
-            return;
-        }
-
-        if (path.endsWith (".html") || path.endsWith (".htm")) {
-            rmap.set ("Content-type", "text/html");
-        } else {
-            rmap.set ("Content-type", "text/plain");
-        }
-        if (f.isDirectory()) {
-            if (!path.endsWith ("/")) {
-                moved (t);
-                return;
-            }
-            rmap.set ("Content-Type", "text/html");
-            t.sendResponseHeaders (200, 0);
-            String[] list = f.list();
-            OutputStream os = t.getResponseBody();
-            PrintStream p = new PrintStream (os);
-            p.println ("<h2>Directory listing for: " + path+ "</h2>");
-            p.println ("<ul>");
-            for (int i=0; i<list.length; i++) {
-                p.println ("<li><a href=\""+list[i]+"\">"+list[i]+"</a></li>");
-            }
-            p.println ("</ul><p><hr>");
-            p.flush();
-            p.close();
-        } else {
-            int clen;
-            if (fixedrequest != null) {
-                clen = (int) f.length();
-            } else {
-                clen = 0;
-            }
-            t.sendResponseHeaders (200, clen);
-            try (OutputStream os = t.getResponseBody(); FileInputStream fis = new FileInputStream (f)) {
-                fis.transferTo(os);
-            }
-        }
+    String method = t.getRequestMethod();
+    if (method.equals("HEAD")) {
+      rmap.set("Content-length", Long.toString(f.length()));
+      t.sendResponseHeaders(200, -1);
+      t.close();
+    } else if (!method.equals("GET")) {
+      t.sendResponseHeaders(405, -1);
+      t.close();
+      return;
     }
 
-    void moved (HttpExchange t) throws IOException {
-        Headers req = t.getRequestHeaders();
-        Headers map = t.getResponseHeaders();
-        URI uri = t.getRequestURI();
-        String host = req.getFirst ("Host");
-        String location = "http://"+host+uri.getPath() + "/";
-        map.set ("Content-Type", "text/html");
-        map.set ("Location", location);
-        t.sendResponseHeaders (301, -1);
-        t.close();
+    if (path.endsWith(".html") || path.endsWith(".htm")) {
+      rmap.set("Content-type", "text/html");
+    } else {
+      rmap.set("Content-type", "text/plain");
     }
+    if (f.isDirectory()) {
+      if (!path.endsWith("/")) {
+        moved(t);
+        return;
+      }
+      rmap.set("Content-Type", "text/html");
+      t.sendResponseHeaders(200, 0);
+      String[] list = f.list();
+      OutputStream os = t.getResponseBody();
+      PrintStream p = new PrintStream(os);
+      p.println("<h2>Directory listing for: " + path + "</h2>");
+      p.println("<ul>");
+      for (int i = 0; i < list.length; i++) {
+        p.println("<li><a href=\"" + list[i] + "\">" + list[i] + "</a></li>");
+      }
+      p.println("</ul><p><hr>");
+      p.flush();
+      p.close();
+    } else {
+      int clen;
+      if (fixedrequest != null) {
+        clen = (int) f.length();
+      } else {
+        clen = 0;
+      }
+      t.sendResponseHeaders(200, clen);
+      try (OutputStream os = t.getResponseBody(); FileInputStream fis = new FileInputStream(f)) {
+        fis.transferTo(os);
+      }
+    }
+  }
 
-    void notfound (HttpExchange t, String p) throws IOException {
-        t.getResponseHeaders().set ("Content-Type", "text/html");
-        t.sendResponseHeaders (404, 0);
-        OutputStream os = t.getResponseBody();
-        String s = "<h2>File not found</h2>";
-        s = s + p + "<p>";
-        os.write (s.getBytes());
-        os.close();
-        t.close();
-    }
+  void moved(HttpExchange t) throws IOException {
+    Headers req = t.getRequestHeaders();
+    Headers map = t.getResponseHeaders();
+    URI uri = t.getRequestURI();
+    String host = req.getFirst("Host");
+    String location = "http://" + host + uri.getPath() + "/";
+    map.set("Content-Type", "text/html");
+    map.set("Location", location);
+    t.sendResponseHeaders(301, -1);
+    t.close();
+  }
+
+  void notfound(HttpExchange t, String p) throws IOException {
+    t.getResponseHeaders().set("Content-Type", "text/html");
+    t.sendResponseHeaders(404, 0);
+    OutputStream os = t.getResponseBody();
+    String s = "<h2>File not found</h2>";
+    s = s + p + "<p>";
+    os.write(s.getBytes());
+    os.close();
+    t.close();
+  }
+
 }

@@ -23,59 +23,61 @@ import java.util.concurrent.atomic.AtomicInteger;
  * test will fail.
  */
 public class ContextListCacheTest {
-    private HttpServer server;
-    private HttpClient client;
 
-    @BeforeMethod
-    void setUp() throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        client = HttpClient.newHttpClient();
+  private HttpServer server;
+
+  private HttpClient client;
+
+  @BeforeMethod
+  void setUp() throws IOException {
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    client = HttpClient.newHttpClient();
+  }
+
+  @AfterMethod
+  void tearDown() {
+    server.stop(0);
+  }
+
+  @Test
+  public void addAfterLookupNotShadowedByCache() throws Exception {
+    AtomicInteger rootHits = new AtomicInteger();
+    AtomicInteger fooHits = new AtomicInteger();
+    server.createContext("/", ex -> {
+      rootHits.incrementAndGet();
+      respond(ex, "root");
+    });
+    server.start();
+    int port = server.getAddress().getPort();
+    URI foo = URI.create("http://127.0.0.1:" + port + "/foo");
+
+    // prime the lookup path before /foo exists: the prefix match "/"
+    // must not be cached for /foo (only exact matches are cached)
+    Assert.assertEquals(get(foo), "root");
+
+    // register the more specific context; subsequent lookups must see it
+    server.createContext("/foo", ex -> {
+      fooHits.incrementAndGet();
+      respond(ex, "foo");
+    });
+
+    Assert.assertEquals(get(foo), "foo");
+    Assert.assertEquals(get(foo), "foo");
+    Assert.assertEquals(rootHits.get(), 1, "the priming request is the only one hitting /");
+    Assert.assertEquals(fooHits.get(), 2, "both post-add requests must hit the new context");
+  }
+
+  static void respond(HttpExchange ex, String body) throws IOException {
+    ex.sendResponseHeaders(200, body.getBytes().length);
+    try (var os = ex.getResponseBody()) {
+      os.write(body.getBytes());
     }
+  }
 
-    @AfterMethod
-    void tearDown() {
-        server.stop(0);
-    }
+  String get(URI uri) throws Exception {
+    HttpResponse<String> r = client.send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofString());
+    Assert.assertEquals(r.statusCode(), 200);
+    return r.body();
+  }
 
-    @Test
-    public void addAfterLookupNotShadowedByCache() throws Exception {
-        AtomicInteger rootHits = new AtomicInteger();
-        AtomicInteger fooHits = new AtomicInteger();
-        server.createContext("/", ex -> {
-            rootHits.incrementAndGet();
-            respond(ex, "root");
-        });
-        server.start();
-        int port = server.getAddress().getPort();
-        URI foo = URI.create("http://127.0.0.1:" + port + "/foo");
-
-        // prime the lookup path before /foo exists: the prefix match "/"
-        // must not be cached for /foo (only exact matches are cached)
-        Assert.assertEquals(get(foo), "root");
-
-        // register the more specific context; subsequent lookups must see it
-        server.createContext("/foo", ex -> {
-            fooHits.incrementAndGet();
-            respond(ex, "foo");
-        });
-
-        Assert.assertEquals(get(foo), "foo");
-        Assert.assertEquals(get(foo), "foo");
-        Assert.assertEquals(rootHits.get(), 1, "the priming request is the only one hitting /");
-        Assert.assertEquals(fooHits.get(), 2, "both post-add requests must hit the new context");
-    }
-
-    static void respond(HttpExchange ex, String body) throws IOException {
-        ex.sendResponseHeaders(200, body.getBytes().length);
-        try (var os = ex.getResponseBody()) {
-            os.write(body.getBytes());
-        }
-    }
-
-    String get(URI uri) throws Exception {
-        HttpResponse<String> r = client.send(HttpRequest.newBuilder(uri).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
-        Assert.assertEquals(r.statusCode(), 200);
-        return r.body();
-    }
 }

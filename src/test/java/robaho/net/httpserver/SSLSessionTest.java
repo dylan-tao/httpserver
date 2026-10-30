@@ -23,55 +23,59 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 public class SSLSessionTest {
-    volatile boolean hasSslSession = false;
-    @Test
-    public void TestHasSslSession() throws IOException, URISyntaxException {
-        int port = 8443;
 
-        var httpsServer = HttpsServer.create(new InetSocketAddress(port), 8192);
-        var ctx = new SimpleSSLContext().get();
-        httpsServer.setHttpsConfigurator(new MyHttpsConfigurator (ctx));
-        httpsServer.createContext("/test", (HttpExchange he) -> {
-            var sslSession = ((HttpsExchange)he).getSSLSession();
-            hasSslSession = sslSession!=null;
-            he.sendResponseHeaders(200,0);
-            try (var os = he.getResponseBody()) {
-                os.write("Hello".getBytes());
-            }
-        });
-        httpsServer.start();
-        try {
-            URL url = URIBuilder.newBuilder()
-                .scheme("https")
-                .loopback()
-                .port(httpsServer.getAddress().getPort())
-                .path("/test")
-                .toURL();
-            HttpsURLConnection urlc = (HttpsURLConnection)url.openConnection(Proxy.NO_PROXY);
-            urlc.setSSLSocketFactory (ctx.getSocketFactory());
-            urlc.setHostnameVerifier (new DummyVerifier());
-            urlc.getInputStream().readAllBytes();
-            assertEquals(urlc.getResponseCode(), 200);
-        } finally {
-            httpsServer.stop(0);
-        }
-        assertTrue(hasSslSession);
+  volatile boolean hasSslSession = false;
+
+  @Test
+  public void TestHasSslSession() throws IOException, URISyntaxException {
+    int port = 8443;
+
+    var httpsServer = HttpsServer.create(new InetSocketAddress(port), 8192);
+    var ctx = new SimpleSSLContext().get();
+    httpsServer.setHttpsConfigurator(new MyHttpsConfigurator(ctx));
+    httpsServer.createContext("/test", (HttpExchange he) -> {
+      var sslSession = ((HttpsExchange) he).getSSLSession();
+      hasSslSession = sslSession != null;
+      he.sendResponseHeaders(200, 0);
+      try (var os = he.getResponseBody()) {
+        os.write("Hello".getBytes());
+      }
+    });
+    httpsServer.start();
+    try {
+      URL url =
+          URIBuilder.newBuilder().scheme("https").loopback().port(httpsServer.getAddress().getPort()).path("/test").toURL();
+      HttpsURLConnection urlc = (HttpsURLConnection) url.openConnection(Proxy.NO_PROXY);
+      urlc.setSSLSocketFactory(ctx.getSocketFactory());
+      urlc.setHostnameVerifier(new DummyVerifier());
+      urlc.getInputStream().readAllBytes();
+      assertEquals(urlc.getResponseCode(), 200);
+    } finally {
+      httpsServer.stop(0);
+    }
+    assertTrue(hasSslSession);
+  }
+
+  class MyHttpsConfigurator extends HttpsConfigurator {
+
+    public MyHttpsConfigurator(SSLContext context) {
+      super(context);
     }
 
-    class MyHttpsConfigurator extends HttpsConfigurator {
-        public MyHttpsConfigurator(SSLContext context) {
-            super(context);
-        }
+    @Override
+    public void configure(HttpsParameters params) {
+      super.configure(params);
+    }
 
-        @Override
-        public void configure(HttpsParameters params) {
-            super.configure(params);
-        }
+  }
+
+  public class DummyVerifier implements HostnameVerifier {
+
+    @Override
+    public boolean verify(String s, SSLSession s1) {
+      return true;
     }
-    public class DummyVerifier implements HostnameVerifier {
-        @Override
-        public boolean verify(String s, SSLSession s1) {
-            return true;
-        }
-    }
+
+  }
+
 }
