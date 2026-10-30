@@ -72,6 +72,18 @@ public final class LazyRequestHeaders extends Headers {
    * retained past response completion, so the table's clear() must
    * force-materialize it
    */
+  @Override
+  public boolean equals(Object o) {
+    materialize();
+    return super.equals(o);
+  }
+
+  @Override
+  public int hashCode() {
+    materialize();
+    return super.hashCode();
+  }
+
   public void markExposed() {
     exposed = true;
   }

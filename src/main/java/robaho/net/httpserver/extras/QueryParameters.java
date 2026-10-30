@@ -8,6 +8,8 @@ import java.util.List;
 
 public class QueryParameters extends LinkedHashMap<String, List<String>> {
 
+  private static final long serialVersionUID = 1L;
+
   /**
    * @param encoding a valid java character set name
    * @param query the query string
@@ -43,7 +45,7 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
   /** the first value of a query parameter, or null when absent */
   public String getFirst(String key) {
     List<String> values = get(key);
-    return values == null || values.size() == 0 ? null : values.get(0);
+    return values == null || values.isEmpty() ? null : values.get(0);
   }
 
 }

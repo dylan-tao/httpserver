@@ -1121,7 +1121,7 @@ class ServerImpl {
         // long" (the differential harness hit it on the blank-line
         // cap)
         throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, "-",
-            e.getMessage() == null ? "malformed request" : e.getMessage());
+            e.getMessage() == null ? "malformed request" : e.getMessage(), e);
       }
 
       if ("PRI * HTTP/2.0".equals(requestLine) && ServerConfig.http2OverNonSSL()) {
@@ -1183,7 +1183,7 @@ class ServerImpl {
       try {
         uri = new URI(uriStr);
       } catch (URISyntaxException e3) {
-        throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown");
+        throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown", e3);
       }
       start = space + 1;
       String version = requestLine.substring(start);
@@ -1196,7 +1196,7 @@ class ServerImpl {
       try {
         headers = req.headers();
       } catch (IOException e) {
-        throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Malformed header line");
+        throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Malformed header line", e);
       }
 
       long clen = resolveBodyLength(requestLine, headers);
@@ -1322,7 +1322,7 @@ class ServerImpl {
         try {
           return Long.parseLong(headerValue);
         } catch (NumberFormatException e2) {
-          throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "NumberFormatException thrown");
+          throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "NumberFormatException thrown", e2);
         }
       }
       return 0L;
@@ -1335,12 +1335,20 @@ class ServerImpl {
      */
     private static class RequestRejectedException extends IOException {
 
+      private static final long serialVersionUID = 1L;
+
       final int code;
 
       final String requestLine;
 
       RequestRejectedException(int code, String requestLine, String message) {
         super(message);
+        this.code = code;
+        this.requestLine = requestLine;
+      }
+
+      RequestRejectedException(int code, String requestLine, String message, Throwable cause) {
+        super(message, cause);
         this.code = code;
         this.requestLine = requestLine;
       }

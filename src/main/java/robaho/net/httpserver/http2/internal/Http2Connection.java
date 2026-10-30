@@ -158,8 +158,7 @@ public class Http2Connection {
     // concurrent offer (the count would be wiped while the buffer is in
     // the pool, letting it exceed the cap) or a poll (the count would go
     // negative). draining keeps count == pool size at every interleaving
-    byte[] buffer;
-    while ((buffer = streamBufferPool.poll()) != null) {
+    while (streamBufferPool.poll() != null) {
       pooledBufferCount.decrementAndGet();
     }
   }
@@ -732,18 +731,16 @@ public class Http2Connection {
         // streamID is not present and has to be greater than all
         // the stream IDs present
         fields.validate();
-        Headers requestHeaders = new OptimizedHeaders(fields.size() * 2);
+        OptimizedHeaders requestHeaders = new OptimizedHeaders(fields.size() * 2);
         for (Http2HeaderField field : fields) {
           if (field.value == null) {
             logger.log(Level.TRACE, () -> "ignoring null header for " + field.getName());
-          } else if (requestHeaders instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
+          } else {
             // normalizedName is ALREADY the normalized shape
             // (Http2HeaderField.normalize), so the redundant
             // rescan in add() is skipped - same fast path as
             // the h1 parser
-            optimized.addNormalized(field.normalizedName, field.value);
-          } else {
-            requestHeaders.add(field.normalizedName, field.value);
+            requestHeaders.addNormalized(field.normalizedName, field.value);
           }
         }
         headerBlockFragments.clear();
@@ -792,7 +789,7 @@ public class Http2Connection {
     // RFC 7540 6.5: duplicate identifiers in one SETTINGS frame MUST be
     // treated as a connection error (the old code applied them blindly -
     // last-wins, no error)
-    java.util.Set<SettingIdentifier> seen = new java.util.HashSet<>();
+    java.util.Set<SettingIdentifier> seen = java.util.EnumSet.noneOf(SettingIdentifier.class);
     for (SettingParameter parameter : remoteSettingFrame.getSettingParameters()) {
       if (!seen.add(parameter.identifier)) {
         throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "duplicate SETTINGS identifier " + parameter.identifier);

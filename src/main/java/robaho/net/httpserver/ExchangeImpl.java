@@ -45,7 +45,9 @@ import java.util.Objects;
 
 class ExchangeImpl {
 
-  Headers reqHdrs, rspHdrs;
+  Headers reqHdrs;
+
+  Headers rspHdrs;
 
   Request req;
 

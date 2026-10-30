@@ -176,7 +176,7 @@ public class WebSocketFrame {
     for (WebSocketFrame inter : fragments) {
       _payloadLength += inter.getBinaryPayload().length;
     }
-    if (_payloadLength < 0 || _payloadLength > Integer.MAX_VALUE) {
+    if (_payloadLength > Integer.MAX_VALUE) {
       throw new WebSocketException(CloseCode.MessageTooBig, "Max frame length has been exceeded.");
     }
     this._payloadLength = (int) _payloadLength;
@@ -299,7 +299,7 @@ public class WebSocketFrame {
         throw new WebSocketException(CloseCode.ProtocolError,
             "Invalid data frame 4byte length. (not using minimal length encoding)");
       }
-      if (_payloadLength < 0 || _payloadLength > Integer.MAX_VALUE) {
+      if (_payloadLength > Integer.MAX_VALUE) {
         throw new WebSocketException(CloseCode.MessageTooBig, "Max frame length has been exceeded.");
       }
       this._payloadLength = (int) _payloadLength;

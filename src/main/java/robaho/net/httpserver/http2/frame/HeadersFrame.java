@@ -18,11 +18,7 @@ public class HeadersFrame extends BaseFrame {
 
   private int padLength;
 
-  private boolean isExclusive;
-
   private long dependentStreamId;
-
-  private int weight;
 
   private byte[] headerBlock;
 
@@ -38,11 +34,7 @@ public class HeadersFrame extends BaseFrame {
 
   public void setPadLength(int padLength) { this.padLength = padLength; }
 
-  public void setIsExclusive(boolean isExclusive) { this.isExclusive = isExclusive; }
-
   public void setDependentStream(long streamIdentifier) { this.dependentStreamId = streamIdentifier; }
-
-  public void setWeight(int weight) { this.weight = weight; }
 
   /**
    * A header block fragment (Section 4.3).
@@ -58,7 +50,6 @@ public class HeadersFrame extends BaseFrame {
    *          FrameHeader
    * @return HeadersFrame object
    * @throws Http2Exception
-   * @throws Exception
    */
   public static HeadersFrame parse(byte[] frameBody, FrameHeader header) throws Http2Exception, java.io.IOException {
 
@@ -105,16 +96,13 @@ public class HeadersFrame extends BaseFrame {
       var streamId = BinaryCodec.readInt(frameBody, paramIndex, 4);
       paramIndex += 4;
 
-      if ((streamId & 0x80000000L) == 0x80000000L) {
-        headersFrame.setIsExclusive(true);
-      }
       headersFrame.setDependentStream(streamId & 0x7FFFFFFFL);
       if (headersFrame.dependentStreamId == header.streamIdentifier()) {
         // cannot depend on itself
         throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
       }
 
-      headersFrame.setWeight((frameBody[paramIndex] & 0xFF) + 1);
+      // RFC 7540 6.2: weight byte is consumed; nothing downstream uses it
       paramIndex += 1;
     }
 

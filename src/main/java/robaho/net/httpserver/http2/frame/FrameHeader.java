@@ -35,34 +35,22 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
    * ordering in Http2Connection.processFrames
    * @param tmpBuffer 9 bytes frame header
    * @return
-   * @throws Exception
    */
   public static FrameHeader parse(byte[] tmpBuffer) throws Http2Exception, java.io.IOException {
-    FrameHeader frameHeader = null;
-
-    FrameType type = null;
-    FlagSet flag = null;
-    int streamIdentifier = 0;
-    int length = 0;
     int readIndex = 0;
-
-    length = BinaryCodec.readInt(tmpBuffer, readIndex, 3);
+    int length = BinaryCodec.readInt(tmpBuffer, readIndex, 3);
     readIndex += 3;
 
-    type = FrameType.getEnum(tmpBuffer[readIndex]);
+    FrameType type = FrameType.getEnum(tmpBuffer[readIndex]);
     readIndex++;
 
-    flag = FrameFlag.getEnumSet(tmpBuffer[readIndex], type);
+    FlagSet flag = FrameFlag.getEnumSet(tmpBuffer[readIndex], type);
     readIndex++;
 
-    streamIdentifier = BinaryCodec.readInt(tmpBuffer, readIndex);
-    readIndex += 4;
+    // RFC 7540 4.1: the reserved high bit must be ignored
+    int streamIdentifier = BinaryCodec.readInt(tmpBuffer, readIndex) & 0x7FFFFFFF;
 
-    streamIdentifier = streamIdentifier & 0x7FFFFFFF;
-
-    frameHeader = new FrameHeader(length, type, flag, streamIdentifier);
-
-    return frameHeader;
+    return new FrameHeader(length, type, flag, streamIdentifier);
   }
 
   public static String debug(byte[] header) {
@@ -71,6 +59,9 @@ public record FrameHeader(int length, FrameType type, FlagSet flags, int streamI
       return "length=" + BinaryCodec.readInt(header, 0, 3) + ", type " + type + ", flags "
           + FrameFlag.getEnumSet(header[4], type) + ", stream " + BinaryCodec.readInt(header, 5);
     } catch (Exception ex) {
+      // debug/toString helper: any parse failure renders as this stub.
+      // readInt throws IOException, so the catch must stay broad (the
+      // REC_CATCH_EXCEPTION exclusion in the PMD ruleset documents this)
       return "<unable to parse>";
     }
   }

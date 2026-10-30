@@ -9,11 +9,7 @@ import java.io.OutputStream;
 
 public class PriorityFrame extends BaseFrame {
 
-  public int streamDependency;
-
-  public int weight;
-
-  public boolean exclusive;
+  private int streamDependency;
 
   public PriorityFrame(FrameHeader header) {
     super(header);
@@ -31,12 +27,12 @@ public class PriorityFrame extends BaseFrame {
       throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
     }
     var tmp = BinaryCodec.readInt(body, 0, 4);
-    frame.exclusive = (tmp & 0x80000000) != 0;
+    // the exclusive bit (0x80000000) and the weight byte below are consumed
+    // per RFC 7540 6.3 but nothing downstream uses them
     frame.streamDependency = tmp & 0x7FFFFFFF;
     if (frame.streamDependency == frameHeader.streamIdentifier()) {
       throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
     }
-    frame.weight = (body[4] & 0xFF) + 1;
     return frame;
   }
 

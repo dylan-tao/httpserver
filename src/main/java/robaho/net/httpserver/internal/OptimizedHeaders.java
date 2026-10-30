@@ -371,7 +371,7 @@ public class OptimizedHeaders extends Headers {
    * CR/LF validation
    */
   private static String slowFold(String key) {
-    String fixed = Character.toUpperCase(key.charAt(0)) + key.substring(1).toLowerCase();
+    String fixed = Character.toUpperCase(key.charAt(0)) + key.substring(1).toLowerCase(java.util.Locale.ROOT);
     for (int j = 0; j < fixed.length(); j++) {
       char c = fixed.charAt(j);
       if (c == '\r' || c == '\n') {

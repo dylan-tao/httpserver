@@ -308,7 +308,7 @@ class Request {
       if (end == off) {
         // blank line: end of headers, flushing a pending header first
         if (!key.isEmpty() || !value.isEmpty()) {
-          addHeader(key, value, ++headerCount);
+          addHeader(table, key, value, ++headerCount);
         }
         break;
       }
@@ -333,7 +333,7 @@ class Request {
       }
       // a new header line: flush the pending one
       if (!key.isEmpty() || !value.isEmpty()) {
-        addHeader(key, value, ++headerCount);
+        addHeader(table, key, value, ++headerCount);
       }
       consumed += 32; // per-pair overhead, RFC 9113 accounting
       // name up to the FIRST colon (first char upper, rest lower, as
@@ -395,15 +395,11 @@ class Request {
    * validating TCHAR (first char upper, rest lower), so the redundant
    * normalize scan in add() is skipped (addNormalized)
    */
-  private void addHeader(BufferedBuilder key, BufferedBuilder value, int count) throws IOException {
+  private void addHeader(OptimizedHeaders table, BufferedBuilder key, BufferedBuilder value, int count) throws IOException {
     if (count > ServerConfig.getMaxReqHeaders()) {
       throw new IOException("too many request headers (limit " + ServerConfig.getMaxReqHeaders() + ")");
     }
-    if (hdrs instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
-      optimized.addNormalized(key.trimmed(), value.trimmed());
-    } else {
-      hdrs.add(key.trimmed(), value.trimmed());
-    }
+    table.addNormalized(key.trimmed(), value.trimmed());
   }
 
 }

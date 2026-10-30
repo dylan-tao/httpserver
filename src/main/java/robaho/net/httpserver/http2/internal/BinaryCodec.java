@@ -41,14 +41,17 @@ public class BinaryCodec {
       case 1 -> {
         return bytes[off] & 0xff;
       }
+      default -> {
+        // HPACK-style variable-width integers keep the per-byte loop
+        int result = 0;
+        int counter = 0;
+        for (int i = off + length - 1; i >= off; i--) {
+          result |= (bytes[i] & 0x00ff) << (8 * counter);
+          counter++;
+        }
+        return result;
+      }
     }
-    int result = 0;
-    int counter = 0;
-    for (int i = off + length - 1; i >= off; i--) {
-      result |= (bytes[i] & 0x00ff) << (8 * counter);
-      counter++;
-    }
-    return result;
   }
 
   /** read a length-byte big-endian long */

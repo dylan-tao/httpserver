@@ -57,7 +57,7 @@ public class Http2Stream {
 
   private final Headers requestHeaders;
 
-  private final Headers responseHeaders = new OptimizedHeaders(16);
+  private final OptimizedHeaders responseHeaders = new OptimizedHeaders(16);
 
   private final AtomicBoolean headersSent = new AtomicBoolean(false);
 
@@ -451,9 +451,7 @@ public class Http2Stream {
     // the reflective HeadersTest contract (see OptimizedHeaders):
     // merge entries swapped into the PARENT map field after handlers
     // ran; a no-op compiled out on production JVMs
-    if (responseHeaders instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
-      optimized.mergeReflectivelySwappedEntries();
-    }
+    responseHeaders.mergeReflectivelySwappedEntries();
     var block = HPackContext.encodeHeaderBlock(responseHeaders);
     connection.lock();
     try {
@@ -481,9 +479,7 @@ public class Http2Stream {
     if (headersSent.compareAndSet(false, true)) {
       try {
         // same reflective-parent-map merge as the interim path
-        if (responseHeaders instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
-          optimized.mergeReflectivelySwappedEntries();
-        }
+        responseHeaders.mergeReflectivelySwappedEntries();
         // encode OUTSIDE the connection lock: the encoding is
         // stream-local, only the frame writes need mutual exclusion.
         // this shrinks the per-response critical section ~10x so

@@ -180,9 +180,8 @@ public final class ServerConfig {
   private static long sslHandshakeTimeoutMillis;
 
   static {
+    final String pkg = "robaho.net.httpserver";
     java.security.AccessController.doPrivileged(new PrivilegedAction<Void>() {
-
-      final String pkg = "robaho.net.httpserver";
 
       @Override
       public Void run() {

@@ -5,11 +5,9 @@ import java.io.OutputStream;
 
 class UnknownFrame extends BaseFrame {
 
-  private final byte[] body;
-
+  /** the parsed body is intentionally dropped: unknown frames are ignored per RFC 7540 4.1 */
   public UnknownFrame(FrameHeader header, byte[] body) {
     super(header);
-    this.body = body;
   }
 
   @Override
