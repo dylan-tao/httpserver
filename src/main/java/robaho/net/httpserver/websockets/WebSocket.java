@@ -457,8 +457,11 @@ public abstract class WebSocket {
       onOpen();
       while (this.state == WebSocketLifecycle.OPEN) {
         WebSocketFrame frame = WebSocketFrame.read(in);
-        if (!frame.isMasked()) {
-          // all client-to-server frames must be masked (RFC 6455 5.1)
+        if (!frame.wasClientMasked()) {
+          // all client-to-server frames must be masked (RFC 6455 5.1).
+          // wasClientMasked, not isMasked: a received frame's key is
+          // cleared after unmasking so an echoing handler cannot
+          // re-mask the payload, but the wire fact must stay
           throw new WebSocketException(CloseCode.ProtocolError, "client frames must be masked");
         }
         handleWebsocketFrame(frame);

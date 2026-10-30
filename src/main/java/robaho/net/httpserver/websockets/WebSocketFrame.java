@@ -131,6 +131,15 @@ public class WebSocketFrame {
 
   private byte[] maskingKey;
 
+  /**
+   * the mask bit as it arrived on the wire. kept separately from
+   * {@code maskingKey} (the WRITE-side mask state): a received frame's
+   * payload is plaintext and {@code maskingKey} is nulled so an echoing
+   * handler cannot re-mask it, but the read loop still needs the wire
+   * fact to enforce client masking (RFC 6455 5.1)
+   */
+  private boolean clientMasked;
+
   private byte[] payload;
 
   // --------------------------------GETTERS---------------------------------
@@ -195,6 +204,10 @@ public class WebSocketFrame {
     setFin(clone.isFin());
     setBinaryPayload(clone.getBinaryPayload());
     setMaskingKey(clone.getMaskingKey());
+    // the wire fact survives the wrapping (e.g. read() returns received
+    // close frames as CloseFrame): the read loop's client-mask check
+    // runs on the wrapped object
+    this.clientMasked = clone.wasClientMasked();
   }
 
   /** the (unmasked) payload bytes; null for a frame without payload */
@@ -229,6 +242,11 @@ public class WebSocketFrame {
   /** true when the frame carries a 4-byte masking key */
   public boolean isMasked() {
     return this.maskingKey != null && this.maskingKey.length == 4;
+  }
+
+  /** whether the frame arrived masked on the wire (read-side fact) */
+  public boolean wasClientMasked() {
+    return this.clientMasked;
   }
 
   private String payloadToString() {
@@ -266,6 +284,12 @@ public class WebSocketFrame {
 
     if (isMasked()) {
       unmask(this.payload, this.maskingKey);
+      // the payload is now plaintext: keep the key and a handler echoing
+      // this frame back would mask it AGAIN (the server never masks
+      // outbound frames, RFC 6455 5.1). the wire fact lives on in
+      // clientMasked for the read loop's protocol enforcement
+      this.clientMasked = true;
+      this.maskingKey = null;
     }
 
     // Test for Unicode errors - only for a COMPLETE unfragmented text
