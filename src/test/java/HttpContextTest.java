@@ -42,52 +42,55 @@ import static org.testng.Assert.assertThrows;
 
 public class HttpContextTest {
 
-    static final Class<IllegalArgumentException> IAE = IllegalArgumentException.class;
+  static final Class<IllegalArgumentException> IAE = IllegalArgumentException.class;
 
-    @Test
-    public static void test() throws IOException {
-        final var server = HttpServer.create(null, 0);
-        final var path = "/foo/";
+  @Test
+  public static void test() throws IOException {
+    final var server = HttpServer.create(null, 0);
+    final var path = "/foo/";
 
-        assertThrows(IAE, () -> server.removeContext(path));
-        HttpContext context = server.createContext(path);
-        assertEquals(context.getPath(), path);
-        assertThrows(IAE, () -> server.createContext(path));
-        assertThrows(IAE, () -> server.createContext(path, new Handler()));
+    assertThrows(IAE, () -> server.removeContext(path));
+    HttpContext context = server.createContext(path);
+    assertEquals(context.getPath(), path);
+    assertThrows(IAE, () -> server.createContext(path));
+    assertThrows(IAE, () -> server.createContext(path, new Handler()));
 
-        context.setHandler(new Handler());
-        assertThrows(IAE, () -> server.createContext(path));
-        assertThrows(IAE, () -> server.createContext(path, new Handler()));
-        server.removeContext(context);
-        assertThrows(IAE, () -> server.removeContext(path));
+    context.setHandler(new Handler());
+    assertThrows(IAE, () -> server.createContext(path));
+    assertThrows(IAE, () -> server.createContext(path, new Handler()));
+    server.removeContext(context);
+    assertThrows(IAE, () -> server.removeContext(path));
 
-        context = server.createContext(path, new Handler());
-        assertEquals(context.getPath(), path);
-        assertThrows(IAE, () -> server.createContext(path));
-        assertThrows(IAE, () -> server.createContext(path, new Handler()));
-        server.removeContext(path);
-        assertThrows(IAE, () -> server.removeContext(path));
-    }
+    context = server.createContext(path, new Handler());
+    assertEquals(context.getPath(), path);
+    assertThrows(IAE, () -> server.createContext(path));
+    assertThrows(IAE, () -> server.createContext(path, new Handler()));
+    server.removeContext(path);
+    assertThrows(IAE, () -> server.removeContext(path));
+  }
 
-    /**
-     * Confirms that it is possible to create a subcontext, a context whose path
-     * shares the prefix of an existing context.
-     */
-    @Test
-    public static void testSubcontext() throws IOException {
-        final var server = HttpServer.create(null, 0);
-        server.createContext("/foo/bar/");
-        server.createContext("/foo/");
+  /**
+   * Confirms that it is possible to create a subcontext, a context whose path shares the prefix of an existing
+   * context.
+   */
+  @Test
+  public static void testSubcontext() throws IOException {
+    final var server = HttpServer.create(null, 0);
+    server.createContext("/foo/bar/");
+    server.createContext("/foo/");
 
-        server.createContext("/foo");
-        server.createContext("/foo/bar");
-    }
+    server.createContext("/foo");
+    server.createContext("/foo/bar");
+  }
 
-    /**
-     * A no-op handler
-     */
-    static class Handler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException { }
-    }
+  /**
+   * A no-op handler
+   */
+  static class Handler implements HttpHandler {
+
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {}
+
+  }
+
 }

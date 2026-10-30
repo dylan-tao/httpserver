@@ -8,41 +8,46 @@ import java.util.List;
 
 public class QueryParameters extends LinkedHashMap<String, List<String>> {
 
-    /**
-     * @param encoding a valid java character set name
-     * @param query the query string
-     * @return an insertion-ordered map preserving the parameter order
-     * @throws UnsupportedEncodingException if the encoding or query is not
-     * valid
-     */
-    public static QueryParameters decode(String encoding, String query) throws UnsupportedEncodingException {
-        if (query == null || "".equals(query)) {
-            return new QueryParameters();
-        }
-        QueryParameters qp = new QueryParameters();
-        for (var entry : query.split("&")) {
-            String[] parts = entry.split("=", 2);
-            if (parts.length == 0 || parts[0].length() == 0) {
-                continue;
-            }
-            // decode the key as well as the value, so "%61=1" and "a=1" group together.
-            // URLDecoder throws an UNCHECKED IllegalArgumentException on
-            // malformed escapes ("a=%zz") - declared only the checked
-            // UnsupportedEncodingException, so callers of the declared type
-            // got an uncaught runtime exception
-            try {
-                String key = URLDecoder.decode(parts[0], encoding);
-                qp.computeIfAbsent(key, k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
-            } catch (IllegalArgumentException e) {
-                throw new UnsupportedEncodingException("malformed percent escape in query: " + e.getMessage());
-            }
-        }
-        return qp;
-    }
+  private static final long serialVersionUID = 1L;
 
-    /** the first value of a query parameter, or null when absent */
-    public String getFirst(String key) {
-        List<String> values = get(key);
-        return values == null || values.size() == 0 ? null : values.get(0);
+  /**
+   * @param encoding
+   *          a valid java character set name
+   * @param query
+   *          the query string
+   * @return an insertion-ordered map preserving the parameter order
+   * @throws UnsupportedEncodingException
+   *           if the encoding or query is not valid
+   */
+  public static QueryParameters decode(String encoding, String query) throws UnsupportedEncodingException {
+    if (query == null || "".equals(query)) {
+      return new QueryParameters();
     }
+    QueryParameters qp = new QueryParameters();
+    for (var entry : query.split("&")) {
+      String[] parts = entry.split("=", 2);
+      if (parts.length == 0 || parts[0].length() == 0) {
+        continue;
+      }
+      // decode the key as well as the value, so "%61=1" and "a=1" group together.
+      // URLDecoder throws an UNCHECKED IllegalArgumentException on
+      // malformed escapes ("a=%zz") - declared only the checked
+      // UnsupportedEncodingException, so callers of the declared type
+      // got an uncaught runtime exception
+      try {
+        String key = URLDecoder.decode(parts[0], encoding);
+        qp.computeIfAbsent(key, k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
+      } catch (IllegalArgumentException e) {
+        throw new UnsupportedEncodingException("malformed percent escape in query: " + e.getMessage());
+      }
+    }
+    return qp;
+  }
+
+  /** the first value of a query parameter, or null when absent */
+  public String getFirst(String key) {
+    List<String> values = get(key);
+    return values == null || values.isEmpty() ? null : values.get(0);
+  }
+
 }

@@ -36,39 +36,39 @@ import java.time.format.DateTimeFormatter;
 
 public class LogFilter extends Filter {
 
-    PrintStream ps;
-    DateTimeFormatter df;
+  PrintStream ps;
 
-    public LogFilter(File file) throws IOException {
-        ps = new PrintStream(new BufferedOutputStream(new FileOutputStream(file)));
-        df = DateTimeFormatter.ISO_DATE_TIME;
-    }
+  DateTimeFormatter df;
 
-    /**
-     * The filter's implementation, which is invoked by the serve r
-     */
-    public void doFilter(HttpExchange t, Filter.Chain chain) throws IOException {
-        chain.doFilter(t);
-        StringBuilder sb = new StringBuilder();
-        df.formatTo(LocalDateTime.now(),sb);
-        sb.append(" ");
-        sb.append(t.getRequestMethod());
-        sb.append(" ");
-        sb.append(t.getRequestURI());
-        sb.append(" ");
-        sb.append(t.getResponseCode());
-        sb.append(" ");
-        sb.append(t.getRemoteAddress());
-        ps.println(sb);
-    }
+  public LogFilter(File file) throws IOException {
+    ps = new PrintStream(new BufferedOutputStream(new FileOutputStream(file)));
+    df = DateTimeFormatter.ISO_DATE_TIME;
+  }
 
-    public void init(HttpContext ctx) {
-    }
+  /**
+   * The filter's implementation, which is invoked by the serve r
+   */
+  public void doFilter(HttpExchange t, Filter.Chain chain) throws IOException {
+    chain.doFilter(t);
+    StringBuilder sb = new StringBuilder();
+    df.formatTo(LocalDateTime.now(), sb);
+    sb.append(" ");
+    sb.append(t.getRequestMethod());
+    sb.append(" ");
+    sb.append(t.getRequestURI());
+    sb.append(" ");
+    sb.append(t.getResponseCode());
+    sb.append(" ");
+    sb.append(t.getRemoteAddress());
+    ps.println(sb);
+  }
 
-    public String description() {
-        return "Request logger";
-    }
+  public void init(HttpContext ctx) {}
 
-    public void destroy(HttpContext c) {
-    }
+  public String description() {
+    return "Request logger";
+  }
+
+  public void destroy(HttpContext c) {}
+
 }

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="robaho-httpserver"
+    xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+    <description>
+        errorprone + bestpractices; every exclusion is a triaged intentional
+        pattern from the static-analysis sweeps (commits 74d68ff and this
+        gate's own triage). design/codestyle categories are not referenced:
+        the formatter-maven-plugin is the mechanical style layer.
+    </description>
+    <rule ref="category/java/errorprone.xml">
+        <!-- boundary dispatchers catch Exception/Throwable by design:
+             client code must not kill the accept/parse/dispatch loops -->
+        <exclude name="AvoidCatchingGenericException"/>
+        <exclude name="AvoidCatchingThrowable"/>
+        <!-- JDK-parity cleanup idiom (tx = null) and the OpenAddressMap
+             tombstone protocol use null writes deliberately -->
+        <exclude name="NullAssignment"/>
+        <!-- inner-class wiring in constructors; the "overridable" methods
+             are final in practice (dispatch loop, handler setup) -->
+        <exclude name="ConstructorCallsOverridableMethod"/>
+        <!-- socket-close/accept noise paths: the comments live in source,
+             PMD only accepts specific empty-block forms -->
+        <exclude name="EmptyCatchBlock"/>
+        <!-- identity comparisons are the intended semantics (thread
+             identity, stream identity, reflection baseline, cache
+             sentinels) -->
+        <exclude name="CompareObjectsWithEquals"/>
+        <!-- the JDK Headers.get() contract returns null for absent keys;
+             empty collections would break API parity -->
+        <exclude name="ReturnEmptyCollectionRatherThanNull"/>
+        <!-- connection lifecycle manages sockets/streams manually by
+             design (drain-before-close ordering) -->
+        <exclude name="CloseResource"/>
+        <!-- protocol parsers compare byte literals (0x0D/0x0A) and case on
+             fixed protocol constants -->
+        <exclude name="AvoidLiteralsInIfCondition"/>
+        <!-- repeated wire-format literals ('0','1',error codes) on frame
+             paths are protocol constants, not copy-paste -->
+        <exclude name="AvoidDuplicateLiterals"/>
+        <!-- while ((line = read()) != null) parser idiom -->
+        <exclude name="AssignmentInOperand"/>
+        <!-- Request.requestLine()/protocol() pair with same-named fields -->
+        <exclude name="AvoidFieldNameMatchingMethodName"/>
+        <!-- accept-loop severity routing inspects the throwable type to
+             keep client noise out of the WARNING stream -->
+        <exclude name="AvoidInstanceofChecksInCatchClause"/>
+        <!-- the HeadersTest reflection contract (parent map swap) sets
+             accessible deliberately, behind a production-null field -->
+        <exclude name="AvoidAccessibilityAlteration"/>
+        <!-- resource loading handles the null context-classloader case
+             explicitly (module-path embedding) -->
+        <exclude name="UseProperClassLoader"/>
+        <!-- the instance initializer captures the reflective parent-map
+             baseline per instance, before the constructor body runs -->
+        <exclude name="NonStaticInitializer"/>
+    </rule>
+    <rule ref="category/java/bestpractices.xml">
+        <!-- h2 frames and HPACK buffers are zero-copy by design:
+             ownership transfers with the frame, no defensive copies on
+             the hot path -->
+        <exclude name="ArrayIsStoredDirectly"/>
+        <!-- OpenAddressMap iterators / zero-copy caches: same rationale -->
+        <exclude name="MethodReturnsInternalArray"/>
+        <!-- System.Logger with lambda suppliers / pre-checked isLoggable
+             on hot paths -->
+        <exclude name="GuardLogStatement"/>
+        <!-- reject() paths convert to 400s: the message carries the
+             diagnostic; the valuable cause chains were fixed -->
+        <exclude name="PreserveStackTrace"/>
+        <!-- Headers IS the JDK API type here, not an implementation
+             detail -->
+        <exclude name="LooseCoupling"/>
+        <!-- byte-offset parsing loops adjust offsets in place -->
+        <exclude name="AvoidReassigningParameters"/>
+        <!-- protocol constants on the left reads clearer in equals
+             guards -->
+        <exclude name="LiteralsFirstInComparisons"/>
+        <!-- the formatter plugin enforces style going forward -->
+        <exclude name="MissingOverride"/>
+        <!-- indexed loops over Lists are the zero-iterator-allocation
+             choice on the response hot path -->
+        <exclude name="ForLoopCanBeForeach"/>
+        <!-- connection/socket lifecycle is manual by design
+             (drain-before-close ordering) -->
+        <exclude name="UseTryWithResources"/>
+        <!-- array parameters mirror the internal table shapes (called
+             once at class-init); varargs would copy on every call -->
+        <exclude name="UseVarargs"/>
+        <!-- the formatter plugin enforces style going forward -->
+        <exclude name="OneDeclarationPerLine"/>
+        <!-- cross-call dataflow PMD cannot model: the chunk state machine
+             (ChunkedInputStream.needToReadHeader) and the reflective
+             baseline capture (OptimizedHeaders) read/write across
+             method invocations -->
+        <exclude name="UnusedAssignment"/>
+    </rule>
+</ruleset>

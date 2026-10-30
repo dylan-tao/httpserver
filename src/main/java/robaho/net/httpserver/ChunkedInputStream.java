@@ -29,188 +29,187 @@ import java.io.IOException;
 import java.io.InputStream;
 
 class ChunkedInputStream extends LeftOverInputStream {
-    ChunkedInputStream(ExchangeImpl t, InputStream src) {
-        super(t, src);
+
+  ChunkedInputStream(ExchangeImpl t, InputStream src) {
+    super(t, src);
+  }
+
+  private int remaining;
+
+  /* true when a chunk header needs to be read */
+
+  private boolean needToReadHeader = true;
+
+  static final char CR = '\r';
+
+  static final char LF = '\n';
+
+  /*
+   * Maximum chunk header size of 2KB + 2 bytes for CRLF
+   */
+  private static final int MAX_CHUNK_HEADER_SIZE = 2050;
+
+  private int numeric(char[] arr, int nchars) throws IOException {
+    assert arr.length >= nchars;
+    // accumulate in a long and reject overflow: without this, a 15 digit
+    // hex chunk length silently overflows int and produces a negative
+    // remaining count (IndexOutOfBoundsException instead of a clean error)
+    long len = 0;
+    for (int i = 0; i < nchars; i++) {
+      char c = arr[i];
+      int val;
+      if (c >= '0' && c <= '9') {
+        val = c - '0';
+      } else if (c >= 'a' && c <= 'f') {
+        val = c - 'a' + 10;
+      } else if (c >= 'A' && c <= 'F') {
+        val = c - 'A' + 10;
+      } else {
+        throw new IOException("invalid chunk length");
+      }
+      len = len * 16 + val;
+      if (len > Integer.MAX_VALUE) {
+        throw new IOException("invalid chunk length (overflow)");
+      }
     }
+    return (int) len;
+  }
 
-    private int remaining;
+  /*
+   * read the chunk header line and return the chunk length any chunk extensions are ignored
+   */
+  private int readChunkHeader() throws IOException {
+    boolean gotCR = false;
+    int c;
+    char[] lenArr = new char[16];
+    int lenSize = 0;
+    boolean endOfLen = false;
+    int read = 0;
 
-    /* true when a chunk header needs to be read */
-
-    private boolean needToReadHeader = true;
-
-    static final char CR = '\r';
-    static final char LF = '\n';
-    /*
-     * Maximum chunk header size of 2KB + 2 bytes for CRLF
-     */
-    private static final int MAX_CHUNK_HEADER_SIZE = 2050;
-
-    private int numeric(char[] arr, int nchars) throws IOException {
-        assert arr.length >= nchars;
-        // accumulate in a long and reject overflow: without this, a 15 digit
-        // hex chunk length silently overflows int and produces a negative
-        // remaining count (IndexOutOfBoundsException instead of a clean error)
-        long len = 0;
-        for (int i = 0; i < nchars; i++) {
-            char c = arr[i];
-            int val;
-            if (c >= '0' && c <= '9') {
-                val = c - '0';
-            } else if (c >= 'a' && c <= 'f') {
-                val = c - 'a' + 10;
-            } else if (c >= 'A' && c <= 'F') {
-                val = c - 'A' + 10;
-            } else {
-                throw new IOException("invalid chunk length");
-            }
-            len = len * 16 + val;
-            if (len > Integer.MAX_VALUE) {
-                throw new IOException("invalid chunk length (overflow)");
-            }
+    while ((c = in.read()) != -1) {
+      char ch = (char) c;
+      read++;
+      if ((lenSize == lenArr.length - 1) || (read > MAX_CHUNK_HEADER_SIZE)) {
+        throw new IOException("invalid chunk header");
+      }
+      if (gotCR) {
+        if (ch == LF) {
+          return numeric(lenArr, lenSize);
         }
-        return (int) len;
+        // a bare CR inside the chunk-size field: RFC 9112 4.1 allows
+        // only hex digits, extensions and CRLF. the old lenient
+        // parse (inherited from the JDK) glued the bytes around the
+        // CR into one size ("1\r2" parsed as 0x12), desyncing from
+        // strict intermediaries
+        throw new IOException("bare CR in chunk header");
+      } else {
+        if (ch == CR) {
+          gotCR = true;
+        } else if (ch == ';') {
+          endOfLen = true;
+        } else if (!endOfLen) {
+          lenArr[lenSize++] = ch;
+        }
+      }
     }
+    throw new IOException("end of stream reading chunk header");
+  }
 
-    /*
-     * read the chunk header line and return the chunk length
-     * any chunk extensions are ignored
-     */
-    private int readChunkHeader() throws IOException {
-        boolean gotCR = false;
-        int c;
-        char[] lenArr = new char[16];
-        int lenSize = 0;
-        boolean endOfLen = false;
-        int read = 0;
-
-        while ((c = in.read()) != -1) {
-            char ch = (char) c;
-            read++;
-            if ((lenSize == lenArr.length - 1) ||
-                    (read > MAX_CHUNK_HEADER_SIZE)) {
-                throw new IOException("invalid chunk header");
-            }
-            if (gotCR) {
-                if (ch == LF) {
-                    return numeric(lenArr, lenSize);
-                }
-                // a bare CR inside the chunk-size field: RFC 9112 4.1 allows
-                // only hex digits, extensions and CRLF. the old lenient
-                // parse (inherited from the JDK) glued the bytes around the
-                // CR into one size ("1\r2" parsed as 0x12), desyncing from
-                // strict intermediaries
-                throw new IOException("bare CR in chunk header");
-            } else {
-                if (ch == CR) {
-                    gotCR = true;
-                } else if (ch == ';') {
-                    endOfLen = true;
-                } else if (!endOfLen) {
-                    lenArr[lenSize++] = ch;
-                }
-            }
-        }
-        throw new IOException("end of stream reading chunk header");
+  protected int readImpl(byte[] b, int off, int len) throws IOException {
+    if (eof) {
+      return -1;
     }
-
-    protected int readImpl(byte[] b, int off, int len) throws IOException {
-        if (eof) {
-            return -1;
-        }
-        if (needToReadHeader) {
-            remaining = readChunkHeader();
-            if (remaining == 0) {
-                eof = true;
-                consumeTrailer();
-                return -1;
-            }
-            needToReadHeader = false;
-        }
-        if (len > remaining) {
-            len = remaining;
-        }
-        int n = in.read(b, off, len);
-        if (n > -1) {
-            remaining -= n;
-        }
-        if (remaining == 0) {
-            needToReadHeader = true;
-            consumeCRLF();
-        }
-        if (n < 0)
-            throw new IOException("connection closed before all data received");
-        return n;
+    if (needToReadHeader) {
+      remaining = readChunkHeader();
+      if (remaining == 0) {
+        eof = true;
+        consumeTrailer();
+        return -1;
+      }
+      needToReadHeader = false;
     }
-
-    private void consumeCRLF() throws IOException {
-        char c;
-        c = (char) in.read(); /* CR */
-        if (c != CR) {
-            throw new IOException("invalid chunk end");
-        }
-        c = (char) in.read(); /* LF */
-        if (c != LF) {
-            throw new IOException("invalid chunk end");
-        }
+    if (len > remaining) {
+      len = remaining;
     }
-
-    /**
-     * consume the line following the final zero-length chunk: either a plain
-     * CRLF, or trailer field lines terminated by an empty line
-     * (RFC 7230 section 4.1.2). The trailer contents are discarded.
-     */
-    private void consumeTrailer() throws IOException {
-        int maxTrailerLines = 100;
-        // per-line length cap: the line COUNT was bounded but each line's
-        // length was not, so a client streaming an endless trailer line
-        // (no LF) pinned the connection VT on an already-completed response
-        int maxLineLength = ServerConfig.getMaxReqLineSize();
-        while (maxTrailerLines-- > 0) {
-            boolean sawCR = false;
-            boolean emptyLine = true;
-            int lineLength = 0;
-            int c;
-            while ((c = in.read()) != -1) {
-                if (++lineLength > maxLineLength) {
-                    throw new IOException("chunk trailer line too long (limit " + maxLineLength + " bytes)");
-                }
-                if (sawCR) {
-                    if (c == LF) {
-                        break; /* end of line */
-                    }
-                    throw new IOException("bare CR in chunk trailer");
-                }
-                if (c == CR) {
-                    sawCR = true;
-                } else if (c == LF) {
-                    break; /* bare LF accepted as line terminator */
-                } else {
-                    emptyLine = false;
-                }
-            }
-            if (c == -1) {
-                throw new IOException("end of stream reading chunk trailer");
-            }
-            if (emptyLine) {
-                return; /* end of trailers (covers the plain CRLF case) */
-            }
-        }
-        throw new IOException("too many chunk trailer lines");
+    int n = in.read(b, off, len);
+    if (n > -1) {
+      remaining -= n;
     }
-
-    /**
-     * returns the number of bytes available to read in the current chunk
-     * which may be less than the real amount, but we'll live with that
-     * limitation for the moment. It only affects potential efficiency
-     * rather than correctness.
-     */
-    @Override
-    public int available() throws IOException {
-        if (eof || closed) {
-            return 0;
-        }
-        int n = in.available();
-        return n > remaining ? remaining : n;
+    if (remaining == 0) {
+      needToReadHeader = true;
+      consumeCRLF();
     }
+    if (n < 0)
+      throw new IOException("connection closed before all data received");
+    return n;
+  }
+
+  private void consumeCRLF() throws IOException {
+    char c;
+    c = (char) in.read(); /* CR */
+    if (c != CR) {
+      throw new IOException("invalid chunk end");
+    }
+    c = (char) in.read(); /* LF */
+    if (c != LF) {
+      throw new IOException("invalid chunk end");
+    }
+  }
+
+  /**
+   * consume the line following the final zero-length chunk: either a plain CRLF, or trailer field lines terminated by
+   * an empty line (RFC 7230 section 4.1.2). The trailer contents are discarded.
+   */
+  private void consumeTrailer() throws IOException {
+    int maxTrailerLines = 100;
+    // per-line length cap: the line COUNT was bounded but each line's
+    // length was not, so a client streaming an endless trailer line
+    // (no LF) pinned the connection VT on an already-completed response
+    int maxLineLength = ServerConfig.getMaxReqLineSize();
+    while (maxTrailerLines-- > 0) {
+      boolean sawCR = false;
+      boolean emptyLine = true;
+      int lineLength = 0;
+      int c;
+      while ((c = in.read()) != -1) {
+        if (++lineLength > maxLineLength) {
+          throw new IOException("chunk trailer line too long (limit " + maxLineLength + " bytes)");
+        }
+        if (sawCR) {
+          if (c == LF) {
+            break; /* end of line */
+          }
+          throw new IOException("bare CR in chunk trailer");
+        }
+        if (c == CR) {
+          sawCR = true;
+        } else if (c == LF) {
+          break; /* bare LF accepted as line terminator */
+        } else {
+          emptyLine = false;
+        }
+      }
+      if (c == -1) {
+        throw new IOException("end of stream reading chunk trailer");
+      }
+      if (emptyLine) {
+        return; /* end of trailers (covers the plain CRLF case) */
+      }
+    }
+    throw new IOException("too many chunk trailer lines");
+  }
+
+  /**
+   * returns the number of bytes available to read in the current chunk which may be less than the real amount, but
+   * we'll live with that limitation for the moment. It only affects potential efficiency rather than correctness.
+   */
+  @Override
+  public int available() throws IOException {
+    if (eof || closed) {
+      return 0;
+    }
+    int n = in.available();
+    return n > remaining ? remaining : n;
+  }
+
 }

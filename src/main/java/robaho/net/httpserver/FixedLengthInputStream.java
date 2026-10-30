@@ -29,52 +29,53 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * a class which allows the caller to read up to a defined
- * number of bytes off an underlying stream
- * close() does not close the underlying stream
+ * a class which allows the caller to read up to a defined number of bytes off an underlying stream close() does not
+ * close the underlying stream
  */
 
 class FixedLengthInputStream extends LeftOverInputStream {
-    private long remaining;
 
-    FixedLengthInputStream(ExchangeImpl t, InputStream src, long len) {
-        if (len < 0) {
-            throw new IllegalArgumentException("Content-length: " + len);
-        }
-        super(t, src);
-        this.remaining = len;
+  private long remaining;
+
+  FixedLengthInputStream(ExchangeImpl t, InputStream src, long len) {
+    if (len < 0) {
+      throw new IllegalArgumentException("Content-length: " + len);
     }
+    super(t, src);
+    this.remaining = len;
+  }
 
-    protected int readImpl(byte[] b, int off, int len) throws IOException {
+  protected int readImpl(byte[] b, int off, int len) throws IOException {
 
-        eof = (remaining == 0L);
-        if (eof) {
-            return -1;
-        }
-        if (len > remaining) {
-            len = (int) remaining;
-        }
-        int n = in.read(b, off, len);
-        if (n > -1) {
-            remaining -= n;
-        }
-        if (n < 0)
-            throw new IOException("connection closed before all data received");
-        return n;
+    eof = (remaining == 0L);
+    if (eof) {
+      return -1;
     }
-
-    @Override
-    protected boolean atEof() {
-        // a fully known length that has been consumed is eof without a read
-        return remaining == 0;
+    if (len > remaining) {
+      len = (int) remaining;
     }
-
-    @Override
-    public int available() throws IOException {
-        if (eof) {
-            return 0;
-        }
-        int n = in.available();
-        return n < remaining ? n : (int) remaining;
+    int n = in.read(b, off, len);
+    if (n > -1) {
+      remaining -= n;
     }
+    if (n < 0)
+      throw new IOException("connection closed before all data received");
+    return n;
+  }
+
+  @Override
+  protected boolean atEof() {
+    // a fully known length that has been consumed is eof without a read
+    return remaining == 0;
+  }
+
+  @Override
+  public int available() throws IOException {
+    if (eof) {
+      return 0;
+    }
+    int n = in.available();
+    return n < remaining ? n : (int) remaining;
+  }
+
 }

@@ -36,42 +36,40 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 public interface OutputBuffer {
+
   class OutputBufferException extends RuntimeException {
+
     private static final long serialVersionUID = 8528687792643129571L;
 
     public OutputBufferException(Throwable cause) {
       super(cause);
     }
+
   }
 
   /**
    * Returns the stdout result
-   *
    * @return stdout result
    */
   String getStdout();
 
   /**
-   * Returns the stdout as a list.
-   * Empty List if application produced no output.
+   * Returns the stdout as a list. Empty List if application produced no output.
    */
   default List<String> getStdoutAsList() {
-    return new BufferedReader(new StringReader(getStdout()))
-            .lines()
-            .collect(Collectors.toList());
+    return new BufferedReader(new StringReader(getStdout())).lines().collect(Collectors.toList());
   }
 
   /**
    * Returns the stderr result
-   *
    * @return stderr result
    */
   String getStderr();
+
   int getExitValue();
 
   /**
    * Returns the pid if available
-   *
    * @return pid
    */
   long pid();
@@ -93,9 +91,13 @@ public interface OutputBuffer {
   }
 
   class LazyOutputBuffer implements OutputBuffer {
+
     private static class StreamTask {
+
       private final ByteArrayOutputStream buffer;
+
       private final Future<Void> future;
+
       private final Charset cs;
 
       private StreamTask(InputStream stream, Charset cs) {
@@ -115,16 +117,18 @@ public interface OutputBuffer {
           throw new OutputBufferException(e);
         }
       }
+
     }
 
     private final StreamTask outTask;
+
     private final StreamTask errTask;
+
     private final Process p;
 
     private final void logProgress(String state) {
-        System.out.println("[" + Instant.now().toString() + "] " + state
-                           + " for process " + p.pid());
-        System.out.flush();
+      System.out.println("[" + Instant.now().toString() + "] " + state + " for process " + p.pid());
+      System.out.flush();
     }
 
     private LazyOutputBuffer(Process p, Charset cs) {
@@ -135,30 +139,26 @@ public interface OutputBuffer {
     }
 
     @Override
-    public String getStdout() {
-      return outTask.get();
-    }
+    public String getStdout() { return outTask.get(); }
 
     @Override
-    public String getStderr() {
-      return errTask.get();
-    }
+    public String getStderr() { return errTask.get(); }
 
     @Override
     public int getExitValue() {
       try {
-          logProgress("Waiting for completion");
-          boolean aborted = true;
-          try {
-              int result = p.waitFor();
-              logProgress("Waiting for completion finished");
-              aborted = false;
-              return result;
-          } finally {
-              if (aborted) {
-                  logProgress("Waiting for completion FAILED");
-              }
+        logProgress("Waiting for completion");
+        boolean aborted = true;
+        try {
+          int result = p.waitFor();
+          logProgress("Waiting for completion finished");
+          aborted = false;
+          return result;
+        } finally {
+          if (aborted) {
+            logProgress("Waiting for completion FAILED");
           }
+        }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new OutputBufferException(e);
@@ -169,11 +169,15 @@ public interface OutputBuffer {
     public long pid() {
       return p.pid();
     }
+
   }
 
   class EagerOutputBuffer implements OutputBuffer {
+
     private final String stdout;
+
     private final String stderr;
+
     private final int exitValue;
 
     private EagerOutputBuffer(String stdout, String stderr, int exitValue) {
@@ -183,23 +187,19 @@ public interface OutputBuffer {
     }
 
     @Override
-    public String getStdout() {
-      return stdout;
-    }
+    public String getStdout() { return stdout; }
 
     @Override
-    public String getStderr() {
-      return stderr;
-    }
+    public String getStderr() { return stderr; }
 
     @Override
-    public int getExitValue() {
-      return exitValue;
-    }
+    public int getExitValue() { return exitValue; }
 
     @Override
     public long pid() {
       throw new RuntimeException("no process");
     }
+
   }
+
 }

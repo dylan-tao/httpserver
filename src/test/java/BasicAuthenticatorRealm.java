@@ -55,124 +55,123 @@ import static org.testng.Assert.assertEquals;
 
 public class BasicAuthenticatorRealm {
 
-    static final String REALM = "U\u00ffU@realm";  // non-ASCII char
-    static final String EXPECTED_AUTH_HEADER_VALUE = "Basic realm=\"U\u00ffU@realm\", charset=\"UTF-8\"";
+  static final String REALM = "U\u00ffU@realm"; // non-ASCII char
 
-    static final InetAddress LOOPBACK_ADDR = InetAddress.getLoopbackAddress();
+  static final String EXPECTED_AUTH_HEADER_VALUE = "Basic realm=\"U\u00ffU@realm\", charset=\"UTF-8\"";
 
-    @Test
-    public static void testURLConnection() throws Exception {
-        var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
-        var handler = HttpHandlers.of(200, Headers.of(), "");
-        var context = server.createContext("/test", handler);
-        var auth = new ServerAuthenticator(REALM);
+  static final InetAddress LOOPBACK_ADDR = InetAddress.getLoopbackAddress();
 
-        context.setAuthenticator(auth);
+  @Test
+  public static void testURLConnection() throws Exception {
+    var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
+    var handler = HttpHandlers.of(200, Headers.of(), "");
+    var context = server.createContext("/test", handler);
+    var auth = new ServerAuthenticator(REALM);
 
-        try {
-            server.start();
-            var url = uri(server).toURL();
-            var connection = (HttpURLConnection)url.openConnection(Proxy.NO_PROXY);
-            assertEquals(connection.getResponseCode(), 401);
-            assertEquals(connection.getHeaderField("WWW-Authenticate"), EXPECTED_AUTH_HEADER_VALUE);
-        } finally {
-            server.stop(0);
-        }
+    context.setAuthenticator(auth);
+
+    try {
+      server.start();
+      var url = uri(server).toURL();
+      var connection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
+      assertEquals(connection.getResponseCode(), 401);
+      assertEquals(connection.getHeaderField("WWW-Authenticate"), EXPECTED_AUTH_HEADER_VALUE);
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  public static void testURLConnectionAuthenticated() throws Exception {
+    var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
+    var handler = HttpHandlers.of(200, Headers.of(), "foo");
+    var context = server.createContext("/test", handler);
+    var auth = new ServerAuthenticator(REALM);
+
+    context.setAuthenticator(auth);
+    Authenticator.setDefault(new ClientAuthenticator());
+
+    try {
+      server.start();
+      var url = uri(server).toURL();
+      var connection = (HttpURLConnection) url.openConnection(Proxy.NO_PROXY);
+      assertEquals(connection.getResponseCode(), 200);
+      assertEquals(connection.getInputStream().readAllBytes(), "foo".getBytes(UTF_8));
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  public static void testHttpClient() throws Exception {
+    var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
+    var client = HttpClient.newBuilder().proxy(NO_PROXY).build();
+    var request = HttpRequest.newBuilder(uri(server)).build();
+    var handler = HttpHandlers.of(200, Headers.of(), "foo");
+    var context = server.createContext("/test", handler);
+    var authenticator = new ServerAuthenticator(REALM);
+
+    context.setAuthenticator(authenticator);
+
+    try {
+      server.start();
+      var response = client.send(request, BodyHandlers.ofString(UTF_8));
+      assertEquals(response.statusCode(), 401);
+      assertEquals(response.headers().firstValue("WWW-Authenticate").orElseThrow(), EXPECTED_AUTH_HEADER_VALUE);
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  public static void testHttpClientAuthenticated() throws Exception {
+    var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
+    var request = HttpRequest.newBuilder(uri(server)).build();
+    var handler = HttpHandlers.of(200, Headers.of(), "foo");
+    var context = server.createContext("/test", handler);
+    var auth = new ServerAuthenticator(REALM);
+    var client = HttpClient.newBuilder().proxy(NO_PROXY).authenticator(new ClientAuthenticator()).build();
+
+    context.setAuthenticator(auth);
+
+    try {
+      server.start();
+      var response = client.send(request, BodyHandlers.ofString(UTF_8));
+      assertEquals(response.statusCode(), 200);
+      assertEquals(response.body(), "foo");
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  static class ServerAuthenticator extends BasicAuthenticator {
+
+    ServerAuthenticator(String realm) {
+      super(realm);
     }
 
-    @Test
-    public static void testURLConnectionAuthenticated() throws Exception {
-        var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
-        var handler = HttpHandlers.of(200, Headers.of(), "foo");
-        var context = server.createContext("/test", handler);
-        var auth = new ServerAuthenticator(REALM);
-
-        context.setAuthenticator(auth);
-        Authenticator.setDefault(new ClientAuthenticator());
-
-        try {
-            server.start();
-            var url = uri(server).toURL();
-            var connection = (HttpURLConnection)url.openConnection(Proxy.NO_PROXY);
-            assertEquals(connection.getResponseCode(), 200);
-            assertEquals(connection.getInputStream().readAllBytes(), "foo".getBytes(UTF_8));
-        } finally {
-            server.stop(0);
-        }
+    @Override
+    public boolean checkCredentials(String username, String password) {
+      return getRealm().equals(realm);
     }
 
-    @Test
-    public static void testHttpClient() throws Exception {
-        var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
-        var client = HttpClient.newBuilder().proxy(NO_PROXY).build();
-        var request = HttpRequest.newBuilder(uri(server)).build();
-        var handler = HttpHandlers.of(200, Headers.of(), "foo");
-        var context = server.createContext("/test", handler);
-        var authenticator = new ServerAuthenticator(REALM);
+  }
 
-        context.setAuthenticator(authenticator);
+  static class ClientAuthenticator extends java.net.Authenticator {
 
-        try {
-            server.start();
-            var response = client.send(request, BodyHandlers.ofString(UTF_8));
-            assertEquals(response.statusCode(), 401);
-            assertEquals(response.headers().firstValue("WWW-Authenticate").orElseThrow(), EXPECTED_AUTH_HEADER_VALUE);
-        } finally {
-            server.stop(0);
-        }
+    @Override
+    public PasswordAuthentication getPasswordAuthentication() {
+      if (!getRequestingPrompt().equals(REALM)) {
+        throw new RuntimeException("realm does not match");
+      }
+      return new PasswordAuthentication("username", "password".toCharArray());
     }
 
-    @Test
-    public static void testHttpClientAuthenticated() throws Exception {
-        var server = HttpServer.create(new InetSocketAddress(LOOPBACK_ADDR, 0), 0);
-        var request = HttpRequest.newBuilder(uri(server)).build();
-        var handler = HttpHandlers.of(200, Headers.of(), "foo");
-        var context = server.createContext("/test", handler);
-        var auth = new ServerAuthenticator(REALM);
-        var client = HttpClient.newBuilder()
-                .proxy(NO_PROXY)
-                .authenticator(new ClientAuthenticator())
-                .build();
+  }
 
-        context.setAuthenticator(auth);
+  public static URI uri(HttpServer server) {
+    return URIBuilder.newBuilder().scheme("http").host(server.getAddress().getAddress()).port(server.getAddress().getPort())
+        .path("/test/").buildUnchecked();
+  }
 
-        try {
-            server.start();
-            var response = client.send(request, BodyHandlers.ofString(UTF_8));
-            assertEquals(response.statusCode(), 200);
-            assertEquals(response.body(), "foo");
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    static class ServerAuthenticator extends BasicAuthenticator {
-        ServerAuthenticator(String realm) {
-            super(realm);
-        }
-
-        @Override
-        public boolean checkCredentials(String username, String password) {
-            return getRealm().equals(realm);
-        }
-    }
-
-    static class ClientAuthenticator extends java.net.Authenticator {
-        @Override
-        public PasswordAuthentication getPasswordAuthentication() {
-            if (!getRequestingPrompt().equals(REALM)) {
-                throw new RuntimeException("realm does not match");
-            }
-            return new PasswordAuthentication("username", "password".toCharArray());
-        }
-    }
-
-    public static URI uri(HttpServer server) {
-        return URIBuilder.newBuilder()
-                .scheme("http")
-                .host(server.getAddress().getAddress())
-                .port(server.getAddress().getPort())
-                .path("/test/")
-                .buildUnchecked();
-    }
 }

@@ -40,98 +40,96 @@ import java.security.cert.CertificateException;
 import java.util.function.Supplier;
 
 /**
- * Creates a simple usable SSLContext for SSLSocketFactory or a HttpsServer
- * using either a given keystore or a default one in the test tree.
- *
- * Using this class with a security manager requires the following permissions
- * to be granted:
- *
- * permission "java.util.PropertyPermission" "test.src.path", "read"; permission
- * java.io.FilePermission "/path/to/test/lib/jdk/test/lib/testkeys", "read"; The
- * exact path above depends on the location of the test.
+ * Creates a simple usable SSLContext for SSLSocketFactory or a HttpsServer using either a given keystore or a default
+ * one in the test tree.
+ * Using this class with a security manager requires the following permissions to be granted:
+ * permission "java.util.PropertyPermission" "test.src.path", "read"; permission java.io.FilePermission
+ * "/path/to/test/lib/jdk/test/lib/testkeys", "read"; The exact path above depends on the location of the test.
  */
 public class SimpleSSLContext {
 
-    SSLContext ssl;
+  SSLContext ssl;
 
-    /**
-     * loads default keystore from SimpleSSLContext source directory
-     */
-    public SimpleSSLContext() throws IOException {
-        this(() -> "TLS");
-    }
+  /**
+   * loads default keystore from SimpleSSLContext source directory
+   */
+  public SimpleSSLContext() throws IOException {
+    this(() -> "TLS");
+  }
 
-    @SuppressWarnings("removal")
-    private SimpleSSLContext(Supplier<String> protocols) throws IOException {
-        try {
-            final String proto = protocols.get();
-            AccessController.doPrivileged(new PrivilegedExceptionAction<Void>() {
-                @Override
-                public Void run() throws Exception {
-                    try (InputStream is = SimpleSSLContext.class.getResourceAsStream("/testkeys")) {
-                        if (is == null) {
-                            throw new IOException("unable to open testkeys");
-                        }
-                        init(is, proto);
-                        return null;
-                    }
-                }
-            });
-        } catch (PrivilegedActionException pae) {
-            Throwable t = pae.getCause() != null ? pae.getCause() : pae;
-            if (t instanceof IOException) {
-                throw (IOException) t;
+  @SuppressWarnings("removal")
+  private SimpleSSLContext(Supplier<String> protocols) throws IOException {
+    try {
+      final String proto = protocols.get();
+      AccessController.doPrivileged(new PrivilegedExceptionAction<Void>() {
+
+        @Override
+        public Void run() throws Exception {
+          try (InputStream is = SimpleSSLContext.class.getResourceAsStream("/testkeys")) {
+            if (is == null) {
+              throw new IOException("unable to open testkeys");
             }
-            if (t instanceof RuntimeException) {
-                throw (RuntimeException) t;
-            }
-            if (t instanceof Error) {
-                throw (Error) t;
-            }
-            throw new RuntimeException(t);
+            init(is, proto);
+            return null;
+          }
         }
+
+      });
+    } catch (PrivilegedActionException pae) {
+      Throwable t = pae.getCause() != null ? pae.getCause() : pae;
+      if (t instanceof IOException) {
+        throw (IOException) t;
+      }
+      if (t instanceof RuntimeException) {
+        throw (RuntimeException) t;
+      }
+      if (t instanceof Error) {
+        throw (Error) t;
+      }
+      throw new RuntimeException(t);
     }
+  }
 
-    /**
-     * loads default keystore from given directory
-     */
-    public SimpleSSLContext(String dir) throws IOException {
-        String file = dir + "/testkeys";
-        try (FileInputStream fis = new FileInputStream(file)) {
-            init(fis, "TLS");
-        }
+  /**
+   * loads default keystore from given directory
+   */
+  public SimpleSSLContext(String dir) throws IOException {
+    String file = dir + "/testkeys";
+    try (FileInputStream fis = new FileInputStream(file)) {
+      init(fis, "TLS");
     }
+  }
 
-    private void init(InputStream i, String protocol) throws IOException {
-        try {
-            char[] passphrase = "passphrase".toCharArray();
-            KeyStore ks = KeyStore.getInstance("PKCS12");
-            ks.load(i, passphrase);
+  private void init(InputStream i, String protocol) throws IOException {
+    try {
+      char[] passphrase = "passphrase".toCharArray();
+      KeyStore ks = KeyStore.getInstance("PKCS12");
+      ks.load(i, passphrase);
 
-            KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
-            kmf.init(ks, passphrase);
+      KeyManagerFactory kmf = KeyManagerFactory.getInstance("PKIX");
+      kmf.init(ks, passphrase);
 
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
-            tmf.init(ks);
+      TrustManagerFactory tmf = TrustManagerFactory.getInstance("PKIX");
+      tmf.init(ks);
 
-            ssl = SSLContext.getInstance(protocol);
-            ssl.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
-        } catch (KeyManagementException | KeyStoreException
-                | UnrecoverableKeyException | CertificateException
-                | NoSuchAlgorithmException e) {
-            throw new RuntimeException(e.getMessage());
-        }
+      ssl = SSLContext.getInstance(protocol);
+      ssl.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+    } catch (KeyManagementException | KeyStoreException | UnrecoverableKeyException | CertificateException
+        | NoSuchAlgorithmException e) {
+      throw new RuntimeException(e.getMessage());
     }
+  }
 
-    public static SSLContext getContext(String protocol) throws IOException {
-        if (protocol == null || protocol.isEmpty()) {
-            return new SimpleSSLContext().get();
-        } else {
-            return new SimpleSSLContext(() -> protocol).get();
-        }
+  public static SSLContext getContext(String protocol) throws IOException {
+    if (protocol == null || protocol.isEmpty()) {
+      return new SimpleSSLContext().get();
+    } else {
+      return new SimpleSSLContext(() -> protocol).get();
     }
+  }
 
-    public SSLContext get() {
-        return ssl;
-    }
+  public SSLContext get() {
+    return ssl;
+  }
+
 }

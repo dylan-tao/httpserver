@@ -31,48 +31,49 @@ import java.io.OutputStream;
 import java.util.Objects;
 
 /**
- * a class which allows the caller to write an indefinite
- * number of bytes to an underlying stream , but without using
- * chunked encoding. Used for http/1.0 clients only
- * The underlying connection needs to be closed afterwards.
+ * a class which allows the caller to write an indefinite number of bytes to an underlying stream , but without using
+ * chunked encoding. Used for http/1.0 clients only The underlying connection needs to be closed afterwards.
  */
 
 class UndefinedLengthOutputStream extends FilterOutputStream {
-    private boolean closed = false;
-    ExchangeImpl t;
 
-    UndefinedLengthOutputStream(ExchangeImpl t, OutputStream src) {
-        super(src);
-        this.t = t;
-    }
+  private boolean closed = false;
 
-    @Override
-    public void write(int b) throws IOException {
-        if (closed) {
-            throw new IOException("stream closed");
-        }
-        out.write(b);
-    }
+  ExchangeImpl t;
 
-    @Override
-    public void write(byte[] b, int off, int len) throws IOException {
-        Objects.checkFromIndexSize(off, len, b.length);
-        if (len == 0) {
-            return;
-        }
-        if (closed) {
-            throw new IOException("stream closed");
-        }
-        out.write(b, off, len);
-    }
+  UndefinedLengthOutputStream(ExchangeImpl t, OutputStream src) {
+    super(src);
+    this.t = t;
+  }
 
-    @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        closed = true;
-        flush();
-        t.drainOriginalInputStream();
+  @Override
+  public void write(int b) throws IOException {
+    if (closed) {
+      throw new IOException("stream closed");
     }
+    out.write(b);
+  }
+
+  @Override
+  public void write(byte[] b, int off, int len) throws IOException {
+    Objects.checkFromIndexSize(off, len, b.length);
+    if (len == 0) {
+      return;
+    }
+    if (closed) {
+      throw new IOException("stream closed");
+    }
+    out.write(b, off, len);
+  }
+
+  @Override
+  public void close() throws IOException {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    flush();
+    t.drainOriginalInputStream();
+  }
+
 }
