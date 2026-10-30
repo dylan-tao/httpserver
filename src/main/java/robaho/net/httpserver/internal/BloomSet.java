@@ -1,5 +1,4 @@
 package robaho.net.httpserver.internal;
-import robaho.net.httpserver.internal.OpenAddressMap;
 
 /** small set designed for efficient negative contains */
 public class BloomSet {

@@ -2,8 +2,8 @@ package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
-import robaho.net.httpserver.http2.internal.BinaryCodec;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
+import robaho.net.httpserver.http2.internal.BinaryCodec;
 
 import java.io.IOException;
 import java.io.OutputStream;

@@ -228,8 +228,8 @@ public final class ServerConfig {
                         // every h2 connection at the peer with no warning
                         // (the inbound validation exists, the outbound
                         // advertisement did not)
-                        http2MaxFrameSize = (int) Math.min(Math.max(http2MaxFrameSize, 16384), 16_777_215);
-                        http2InitialWindowSize = (int) Math.min(Math.max(http2InitialWindowSize, 0), Integer.MAX_VALUE);
+                        http2MaxFrameSize = Math.min(Math.max(http2MaxFrameSize, 16384), 16_777_215);
+                        http2InitialWindowSize = Math.min(Math.max(http2InitialWindowSize, 0), Integer.MAX_VALUE);
                         http2ConnectionWindowSize = Math.max(http2ConnectionWindowSize, 65535);
                         http2MaxConcurrentStreams = Integer.getInteger(pkg + ".http2MaxConcurrentStreams", DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS);
                         http2MaxConcurrentStreams = Math.max(http2MaxConcurrentStreams, -1);

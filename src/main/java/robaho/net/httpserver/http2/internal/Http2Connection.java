@@ -1,16 +1,12 @@
 package robaho.net.httpserver.http2.internal;
-import robaho.net.httpserver.http2.Http2ErrorCode;
-import robaho.net.httpserver.http2.Http2Exception;
-import robaho.net.httpserver.http2.Http2Stats;
-import robaho.net.httpserver.internal.Http2ConnectionHandle;
-import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
-import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
 import robaho.net.httpserver.ServerConfig;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.http2.Http2Stats;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.ContinuationFrame;
-import robaho.net.httpserver.http2.frame.DataFrame;
 import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameHeader;
@@ -26,8 +22,10 @@ import robaho.net.httpserver.http2.frame.SettingsFrame;
 import robaho.net.httpserver.http2.frame.SettingsMap;
 import robaho.net.httpserver.http2.frame.WindowUpdateFrame;
 import robaho.net.httpserver.http2.hpack.HPackContext;
-import robaho.net.httpserver.http2.hpack.Http2HeaderField;
 import robaho.net.httpserver.http2.hpack.HeaderFieldList;
+import robaho.net.httpserver.http2.hpack.Http2HeaderField;
+import robaho.net.httpserver.internal.Http2ConnectionHandle;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -41,7 +39,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class Http2Connection {

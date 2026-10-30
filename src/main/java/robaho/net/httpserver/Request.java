@@ -24,10 +24,10 @@
  */
 
 package robaho.net.httpserver;
-import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
-import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
+import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import java.io.IOException;
 import java.io.InputStream;

@@ -1,12 +1,10 @@
 package robaho.net.httpserver.http2.internal;
-import robaho.net.httpserver.http2.Http2ErrorCode;
-import robaho.net.httpserver.http2.Http2Exception;
-import robaho.net.httpserver.http2.Http2Stats;
-import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
-import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
 import robaho.net.httpserver.ServerConfig;
+import robaho.net.httpserver.http2.Http2ErrorCode;
+import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.http2.Http2Stats;
 import robaho.net.httpserver.http2.frame.BaseFrame;
 import robaho.net.httpserver.http2.frame.DataFrame;
 import robaho.net.httpserver.http2.frame.DataFrameBodyPool;
@@ -19,6 +17,8 @@ import robaho.net.httpserver.http2.frame.SettingIdentifier;
 import robaho.net.httpserver.http2.frame.SettingParameter;
 import robaho.net.httpserver.http2.frame.WindowUpdateFrame;
 import robaho.net.httpserver.http2.hpack.HPackContext;
+import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
+import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import javax.net.ssl.SSLSession;
 import java.io.IOException;

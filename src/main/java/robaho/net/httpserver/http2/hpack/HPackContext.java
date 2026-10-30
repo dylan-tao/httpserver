@@ -1,6 +1,4 @@
 package robaho.net.httpserver.http2.hpack;
-import robaho.net.httpserver.internal.OpenAddressMap;
-import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
 import robaho.net.httpserver.http2.Http2ErrorCode;
@@ -9,6 +7,7 @@ import robaho.net.httpserver.http2.frame.FrameFlag;
 import robaho.net.httpserver.http2.frame.FrameFlag.FlagSet;
 import robaho.net.httpserver.http2.frame.FrameHeader;
 import robaho.net.httpserver.http2.frame.FrameType;
+import robaho.net.httpserver.internal.OpenAddressMap;
 
 import java.io.IOException;
 import java.util.ArrayDeque;

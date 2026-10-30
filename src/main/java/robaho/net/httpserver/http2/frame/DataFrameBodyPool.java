@@ -1,5 +1,4 @@
 package robaho.net.httpserver.http2.frame;
-import robaho.net.httpserver.http2.internal.Http2Stream;
 
 import robaho.net.httpserver.ServerConfig;
 

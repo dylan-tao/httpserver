@@ -1,9 +1,9 @@
 package robaho.net.httpserver.http2.hpack;
-import robaho.net.httpserver.internal.BloomSet;
-import robaho.net.httpserver.internal.OpenAddressMap;
 
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.internal.BloomSet;
+import robaho.net.httpserver.internal.OpenAddressMap;
 
 import java.util.ArrayList;
 import java.util.Iterator;

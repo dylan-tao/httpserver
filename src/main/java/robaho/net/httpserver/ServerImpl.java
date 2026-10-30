@@ -23,7 +23,6 @@
  * questions.
  */
 package robaho.net.httpserver;
-import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
 
 import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.Headers;
@@ -32,11 +31,12 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
-import robaho.net.httpserver.http2.internal.Http2Connection;
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
 import robaho.net.httpserver.http2.Http2Stats;
+import robaho.net.httpserver.http2.internal.Http2Connection;
 import robaho.net.httpserver.http2.internal.Http2Stream;
+import robaho.net.httpserver.internal.NoSyncBufferedInputStream;
 
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
@@ -61,7 +61,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
 
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
@@ -201,7 +200,7 @@ class ServerImpl {
             StringBuilder sb = new StringBuilder(4096);
             for(var connection : allConnections) {
                 connection.debug();
-                sb.append(connection.toString()).append('\n');
+                sb.append(connection).append('\n');
             }
             // per-instance registry (was static): dump only THIS server's
             // h2 connections

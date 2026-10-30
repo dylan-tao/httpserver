@@ -1,6 +1,4 @@
 package robaho.net.httpserver.internal;
-import robaho.net.httpserver.internal.OpenAddressMap;
-
 
 import com.sun.net.httpserver.Headers;
 
@@ -401,11 +399,7 @@ public class OptimizedHeaders extends Headers {
                 map.put(normalized, new ArrayList(List.of(s, value)));
             }
         } else {
-            if (value == null) {
-                ((List<String>) o).add(null);
-            } else {
-                ((List<String>) o).add(value);
-            }
+            ((List<String>) o).add(value);
         }
     }
 

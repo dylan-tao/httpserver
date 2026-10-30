@@ -1,9 +1,9 @@
 package robaho.net.httpserver.http2.frame;
 
 import robaho.net.httpserver.ServerConfig;
-import robaho.net.httpserver.http2.internal.Http2Connection;
 import robaho.net.httpserver.http2.Http2ErrorCode;
 import robaho.net.httpserver.http2.Http2Exception;
+import robaho.net.httpserver.http2.internal.Http2Connection;
 
 import java.io.InputStream;
 

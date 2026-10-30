@@ -43,9 +43,8 @@ import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.CharacterCodingException;
 import java.util.LinkedList;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.List;
+import java.util.TimerTask;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 

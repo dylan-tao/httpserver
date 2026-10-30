@@ -24,7 +24,6 @@
  */
 
 package robaho.net.httpserver;
-import robaho.net.httpserver.internal.OptimizedHeaders;
 
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpPrincipal;

@@ -7,7 +7,6 @@ import jdk.test.lib.net.SimpleSSLContext;
 import org.testng.annotations.Test;
 
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;

@@ -1,11 +1,10 @@
 package robaho.net.httpserver;
 
+import com.sun.net.httpserver.Headers;
+import org.testng.annotations.Test;
 import robaho.net.httpserver.internal.OptimizedHeaders;
 
-import com.sun.net.httpserver.Headers;
-
-import org.testng.annotations.Test;
-
+import java.util.Collections;
 import java.util.List;
 
 import static org.testng.Assert.assertEquals;
@@ -50,7 +49,7 @@ public class OptimizedHeadersNullTest {
         h.add("Foo", "x");
         assertEquals(h.size(), 1);
         assertNull(h.getFirst("Foo"));
-        assertEquals(h.get("Foo"), java.util.Arrays.asList((String) null, "x"));
+        assertEquals(h.get("Foo"), java.util.Arrays.asList(null, "x"));
     }
 
     @Test
@@ -60,7 +59,7 @@ public class OptimizedHeadersNullTest {
         h.add("Foo", null);
         assertEquals(h.size(), 1);
         assertEquals(h.getFirst("Foo"), "x");
-        assertEquals(h.get("Foo"), java.util.Arrays.asList("x", (String) null));
+        assertEquals(h.get("Foo"), java.util.Arrays.asList("x", null));
     }
 
     @Test
@@ -69,7 +68,7 @@ public class OptimizedHeadersNullTest {
         h.add("Foo", null);
         h.add("Foo", null);
         assertEquals(h.size(), 1);
-        assertEquals(h.get("Foo"), java.util.Arrays.asList((String) null, (String) null));
+        assertEquals(h.get("Foo"), java.util.Arrays.asList(null, (String) null));
     }
 
     @Test
@@ -102,17 +101,17 @@ public class OptimizedHeadersNullTest {
         assertTrue(it.hasNext());
         var e = it.next();
         assertEquals(e.getKey(), "Foo");
-        assertEquals(e.getValue(), java.util.Arrays.asList((String) null));
+        assertEquals(e.getValue(), Collections.singletonList((String) null));
         // the unwrapped list is a mutable copy (the Headers entrySet
         // contract): mutating it must not throw, and - as with single
         // String values, which unwrap the same way - writes do not
         // propagate back into the map
         e.getValue().add("y");
-        assertEquals(h.get("Foo"), java.util.Arrays.asList((String) null));
+        assertEquals(h.get("Foo"), Collections.singletonList((String) null));
 
         var seen = new java.util.ArrayList<List<String>>();
         h.forEach((k, v) -> seen.add(v));
-        assertEquals(seen, java.util.List.of(java.util.Arrays.asList((String) null)));
+        assertEquals(seen, java.util.List.of(Collections.singletonList((String) null)));
     }
 
     @Test
