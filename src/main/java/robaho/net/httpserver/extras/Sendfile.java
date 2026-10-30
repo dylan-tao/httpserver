@@ -42,8 +42,11 @@ public final class Sendfile {
       ex.getResponseHeaders().set("Content-Type", contentType);
     }
     if ("HEAD".equals(ex.getRequestMethod())) {
-      // no body path: the attribute would never be claimed
-      ex.sendResponseHeaders(200, len);
+      // per the HttpExchange contract a HEAD response must set
+      // Content-Length manually: sendResponseHeaders ignores the
+      // length for HEAD (no body path, the attribute is never claimed)
+      ex.getResponseHeaders().set("Content-Length", Long.toString(len));
+      ex.sendResponseHeaders(200, -1);
       try (OutputStream os = ex.getResponseBody()) {
         os.flush();
       }
