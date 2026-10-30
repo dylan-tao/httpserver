@@ -16,7 +16,6 @@ public class PriorityFrame extends BaseFrame {
   }
 
   /** dead code, kept to satisfy the abstract base: priority is never emitted by this server; a revival must serialize the full 5-byte payload this stub drops */
-
   @Override
   public void writeTo(OutputStream os) throws IOException {
     getHeader().writeTo(os);
