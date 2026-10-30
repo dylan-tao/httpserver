@@ -18,8 +18,8 @@ public class FormParser {
 
   // Sets the maximum count of accepted POST params - protection against Hash collision DOS attacks
   private static final int MAX_PARAMS = Integer.getInteger("robaho.net.httpserver.max_form_params", 1000); // 0 == no limit
-  // Sets the maximum accepted request body size in bytes - protection against memory exhaustion
 
+  // Sets the maximum accepted request body size in bytes - protection against memory exhaustion
   private static final int MAX_CONTENT_LENGTH = Integer.getInteger("robaho.net.httpserver.max_form_bytes", 10 * 1024 * 1024); // 0 == no limit
 
   /**

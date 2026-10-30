@@ -46,10 +46,10 @@ public final class ServerConfig {
   private static final int DEFAULT_MAX_IDLE_CONNECTIONS = 200;
 
   private static final long DEFAULT_MAX_REQ_TIME = -1; // default: forever
+
   // default timer schedule, in milli seconds, for the timer task that's
   // responsible for
   // timing out request/response if max request/response time is configured
-
   private static final int DEFAULT_MAX_REQ_HEADERS = 200;
 
   // maximum total size of a received HTTP/1.1 header block (request line +
