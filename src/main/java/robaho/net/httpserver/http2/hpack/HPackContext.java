@@ -18,6 +18,34 @@ import java.util.Map;
 public class HPackContext {
 
   /**
+   * interning table for literal header NAME strings: client libraries
+   * that do not index (e.g. simple writers) resend the same names
+   * every request, and each decode materialized a fresh String -
+   * JFR showed 28MB/30k requests here. the map is bounded: novel names
+   * (scanners, fuzzers) cannot grow it beyond cap entries, common names
+   * hit the resident copy and the transient String dies young
+   */
+  private static final int NAME_INTERN_CAP = 256;
+
+  private static final java.util.concurrent.ConcurrentHashMap<String, String> NAME_INTERN =
+      new java.util.concurrent.ConcurrentHashMap<>(256);
+
+  private static String intern(String s) {
+    // single-put: absent -> put and use the canonical; present -> use it
+    String canonical = NAME_INTERN.putIfAbsent(s, s);
+    if (canonical != null) {
+      return canonical;
+    }
+    if (NAME_INTERN.size() > NAME_INTERN_CAP && NAME_INTERN.remove(s, s)) {
+      // over cap and we were the last writer: drop ourselves, fall back
+      // to the transient string. a benign race keeps an extra entry in
+      // flight; the bound is approximate by design
+      return s;
+    }
+    return s;
+  }
+
+  /**
    * deque: addFirst (newest, lowest index) and evict-pollLast (oldest)
    * are both O(1), unlike an ArrayList where add(0,..) shifts the table
    */
@@ -174,9 +202,9 @@ public class HPackContext {
       // copyOfRange allocated a duplicate of every name for nothing
       String value;
       if (huffmanCode) {
-        value = Huffman.decode(buffer, index, length);
+        value = intern(Huffman.decode(buffer, index, length));
       } else {
-        value = new String(buffer, index, length, java.nio.charset.StandardCharsets.UTF_8);
+        value = intern(new String(buffer, index, length, java.nio.charset.StandardCharsets.UTF_8));
       }
       index += length;
       // zero-allocation lowercase check: toLowerCase() copied the whole

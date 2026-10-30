@@ -25,13 +25,31 @@ public enum FrameFlag {
 
   public static final FlagSet NONE = new FlagSet(0, false);
 
+  /**
+   * the whole FlagSet space pre-materialized: MASK bits (up to 0x2D) x 2
+   * ack states = 128 canonical slots, indexed (ack << 6) | (value & MASK).
+   * JFR showed the per-frame FlagSet allocation - getEnumSet is now a
+   * table lookup and the transient FlagSet never exists (the zero-flags
+   * fast path stays)
+   */
+  private static final FlagSet[] TABLE = new FlagSet[128];
+
+  static {
+    for (int v = 0; v < 64; v++) {
+      TABLE[v] = new FlagSet(v, false);
+      TABLE[64 + v] = new FlagSet(v, true);
+    }
+    TABLE[0] = NONE;
+  }
+
   public byte getValue() { return value; }
 
   public static FlagSet getEnumSet(byte value, FrameType type) throws Http2Exception {
     if (value == 0) {
       return NONE;
     }
-    return new FlagSet(value & MASK, type == FrameType.SETTINGS || type == FrameType.PING);
+    boolean ack = type == FrameType.SETTINGS || type == FrameType.PING;
+    return TABLE[(ack ? 64 : 0) | (value & MASK)];
   }
 
   public static class FlagSet {

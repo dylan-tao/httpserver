@@ -831,6 +831,35 @@ class ServerImpl {
 
     final String protocol;
 
+    /**
+     * one-entry URI memo (Netty-style decode caching, zero-dependency):
+     * h2 multiplexes many requests over one connection and workloads
+     * overwhelmingly repeat the same :path - the multi-arg URI
+     * constructor (quote + re-parse + StringBuilder, JFR: 29.8MB/30k
+     * requests) is skipped entirely on a hit. a single immutable record
+     * published via one volatile reference: concurrent stream handlers
+     * can race the memo, but each miss builds its own correct URI and
+     * the published one always matches its recorded components
+     */
+    private volatile UriMemo uriMemo;
+
+    private record UriMemo(String scheme, String authority, String path, String query, URI uri) {}
+
+    private URI internUri(String scheme, String authority, String path, String query) throws IOException {
+      UriMemo m = uriMemo;
+      if (m != null && scheme.equals(m.scheme()) && authority.equals(m.authority()) && path.equals(m.path())
+          && java.util.Objects.equals(query, m.query())) {
+        return m.uri();
+      }
+      try {
+        URI uri = new URI(scheme, authority, path, query, null);
+        uriMemo = new UriMemo(scheme, authority, path, query, uri);
+        return uri;
+      } catch (URISyntaxException ex) {
+        throw new IOException("invalid uri", ex);
+      }
+    }
+
     void debug() {
       // the CALLER already iterates allHttp2Connections: the loop here
       // made the dump quadratic (N connections x N dumps) after the
@@ -929,12 +958,7 @@ class ServerImpl {
 
       request.set("Host", authority);
 
-      URI uri;
-      try {
-        uri = new URI(scheme, authority, path, query, null);
-      } catch (URISyntaxException ex) {
-        throw new IOException("invalid uri", ex);
-      }
+      URI uri = internUri(scheme, authority, path, query);
 
       String method = request.getFirst(":method");
       if (method == null) {
@@ -1038,6 +1062,16 @@ class ServerImpl {
   class Http1ConnectionHandler implements Runnable {
 
     final HttpConnection connection;
+
+    /**
+     * one-entry URI memo for the request line's URI string: keep-alive
+     * clients repeat the same target, and URI's parse (JFR: 25MB/30k
+     * requests on the h1 side) is skipped on a hit. one immutable record
+     * behind a single volatile reference: the two fields can never tear
+     */
+    private volatile UriMemo uriMemo;
+
+    private record UriMemo(String uriStr, URI uri) {}
 
     InputStream rawin;
 
@@ -1186,10 +1220,16 @@ class ServerImpl {
         throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request URI");
       }
       URI uri;
-      try {
-        uri = new URI(uriStr);
-      } catch (URISyntaxException e3) {
-        throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown", e3);
+      UriMemo m = uriMemo;
+      if (m != null && uriStr.equals(m.uriStr())) {
+        uri = m.uri();
+      } else {
+        try {
+          uri = new URI(uriStr);
+        } catch (URISyntaxException e3) {
+          throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "URISyntaxException thrown", e3);
+        }
+        uriMemo = new UriMemo(uriStr, uri);
       }
       start = space + 1;
       String version = requestLine.substring(start);
