@@ -46,6 +46,7 @@ public class PingFrame extends BaseFrame {
     return new PingFrame(frameHeader, body);
   }
 
+  @Override
   public byte[] encode() {
     return BinaryCodec.concat(List.of(getHeader().encode(), body));
   }

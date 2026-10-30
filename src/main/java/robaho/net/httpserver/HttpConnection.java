@@ -198,6 +198,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
 
   private final String connectionId;
 
+  @Override
   public boolean isClosed() { return closed; }
 
   HttpConnection(Socket socket) throws IOException {
@@ -242,6 +243,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     logger.log(Level.INFO, this + ", inRequest " + inRequest + ", request count " + requestCount.get());
   }
 
+  @Override
   public SSLSession getSSLSession() { return (socket instanceof SSLSocket ssl) ? ssl.getSession() : null; }
 
   @Override
@@ -252,6 +254,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
   @Override
   public void setLastActivityTime(long t) { lastActivityTime = t; }
 
+  @Override
   public boolean isSSL() { return socket instanceof SSLSocket; }
 
   @Override
@@ -259,6 +262,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     return connectionId;
   }
 
+  @Override
   public InetSocketAddress getRemoteAddress() {
     // per-connection addresses are immutable: cache them instead of
     // allocating two InetSocketAddress objects on every exchange's
@@ -269,6 +273,7 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     return remoteAddress;
   }
 
+  @Override
   public InetSocketAddress getLocalAddress() {
     if (localAddress == null) {
       localAddress = (InetSocketAddress) socket.getLocalSocketAddress();

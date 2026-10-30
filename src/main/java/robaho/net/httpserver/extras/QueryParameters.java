@@ -36,7 +36,8 @@ public class QueryParameters extends LinkedHashMap<String, List<String>> {
         String key = URLDecoder.decode(parts[0], encoding);
         qp.computeIfAbsent(key, k -> new LinkedList<>()).add(parts.length == 1 ? "" : URLDecoder.decode(parts[1], encoding));
       } catch (IllegalArgumentException e) {
-        throw new UnsupportedEncodingException("malformed percent escape in query: " + e.getMessage());
+        throw (UnsupportedEncodingException) new UnsupportedEncodingException(
+            "malformed percent escape in query: " + e.getMessage()).initCause(e);
       }
     }
     return qp;

@@ -54,7 +54,7 @@ public class GoAwayFrame extends BaseFrame {
       }
       return new GoAwayFrame(frameHeader, code, lastSeenStream);
     } catch (Exception e) {
-      throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR);
+      throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, e);
     }
   }
 

@@ -40,6 +40,7 @@ public class DataFrame extends BaseFrame {
     return new DataFrame(frameHeader, body);
   }
 
+  @Override
   public byte[] encode() {
     throw new UnsupportedOperationException();
   }

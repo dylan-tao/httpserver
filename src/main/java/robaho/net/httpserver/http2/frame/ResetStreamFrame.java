@@ -38,6 +38,7 @@ public class ResetStreamFrame extends BaseFrame {
     return new ResetStreamFrame(frameHeader, Http2ErrorCode.getEnum(readInt(body, 0)));
   }
 
+  @Override
   public byte[] encode() {
     byte[] buffer = new byte[4];
     BinaryCodec.writeInt(buffer, 0, errorCode.getValue(), 4);

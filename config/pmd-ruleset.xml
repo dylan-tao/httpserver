@@ -66,22 +66,17 @@
         <!-- System.Logger with lambda suppliers / pre-checked isLoggable
              on hot paths -->
         <exclude name="GuardLogStatement"/>
-        <!-- reject() paths convert to 400s: the message carries the
-             diagnostic; the valuable cause chains were fixed -->
-        <exclude name="PreserveStackTrace"/>
         <!-- Headers IS the JDK API type here, not an implementation
              detail -->
         <exclude name="LooseCoupling"/>
+        <!-- indexed loops over Lists are the zero-iterator-allocation
+             choice on the response hot path -->
+        <exclude name="ForLoopCanBeForeach"/>
         <!-- byte-offset parsing loops adjust offsets in place -->
         <exclude name="AvoidReassigningParameters"/>
         <!-- protocol constants on the left reads clearer in equals
              guards -->
         <exclude name="LiteralsFirstInComparisons"/>
-        <!-- the formatter plugin enforces style going forward -->
-        <exclude name="MissingOverride"/>
-        <!-- indexed loops over Lists are the zero-iterator-allocation
-             choice on the response hot path -->
-        <exclude name="ForLoopCanBeForeach"/>
         <!-- connection/socket lifecycle is manual by design
              (drain-before-close ordering) -->
         <exclude name="UseTryWithResources"/>

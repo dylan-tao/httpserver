@@ -381,7 +381,7 @@ public abstract class WebSocket {
         try {
           WebSocketFrame.binary2Text(message.getBinaryPayload());
         } catch (CharacterCodingException e) {
-          throw new WebSocketException(CloseCode.InvalidFramePayloadData, "invalid UTF-8 in fragmented text message");
+          throw new WebSocketException(CloseCode.InvalidFramePayloadData, "invalid UTF-8 in fragmented text message", e);
         }
       }
       onMessage(message);

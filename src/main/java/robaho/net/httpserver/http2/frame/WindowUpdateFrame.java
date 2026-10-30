@@ -32,7 +32,7 @@ public class WindowUpdateFrame extends BaseFrame {
     try {
       frame.windowSizeIncrement = BinaryCodec.readInt(frameBody, 0);
     } catch (Exception e) {
-      throw new Http2Exception(Http2ErrorCode.INTERNAL_ERROR);
+      throw new Http2Exception(Http2ErrorCode.INTERNAL_ERROR, e);
     }
     // the payload is [reserved bit][31-bit increment]: RFC 7540 4.1 says
     // the reserved bit MUST be ignored when receiving - mask it off rather

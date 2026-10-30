@@ -115,6 +115,7 @@ class ChunkedInputStream extends LeftOverInputStream {
     throw new IOException("end of stream reading chunk header");
   }
 
+  @Override
   protected int readImpl(byte[] b, int off, int len) throws IOException {
     if (eof) {
       return -1;

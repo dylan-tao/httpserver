@@ -46,6 +46,7 @@ class FixedLengthInputStream extends LeftOverInputStream {
     this.remaining = len;
   }
 
+  @Override
   protected int readImpl(byte[] b, int off, int len) throws IOException {
 
     eof = (remaining == 0L);

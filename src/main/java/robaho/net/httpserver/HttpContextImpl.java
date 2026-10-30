@@ -211,8 +211,10 @@ class HttpContextImpl extends HttpContext {
    * returns the handler for this context
    * @return the HttpHandler for this context
    */
+  @Override
   public HttpHandler getHandler() { return handler; }
 
+  @Override
   public void setHandler(HttpHandler h) {
     if (h == null) {
       throw new NullPointerException("Null handler parameter");
@@ -227,12 +229,14 @@ class HttpContextImpl extends HttpContext {
    * returns the path this context was created with
    * @return this context's path
    */
+  @Override
   public String getPath() { return path; }
 
   /**
    * returns the server this context was created with
    * @return this context's server
    */
+  @Override
   public HttpServer getServer() { return server.getWrapper(); }
 
   ServerImpl getServerImpl() { return server; }
@@ -251,12 +255,15 @@ class HttpContextImpl extends HttpContext {
    * Every attribute stored in this Map will be visible to
    * every HttpExchange processed by this context
    */
+  @Override
   public Map<String, Object> getAttributes() { return attributes; }
 
+  @Override
   public List<Filter> getFilters() { return ufilters; }
 
   List<Filter> getSystemFilters() { return sfilters; }
 
+  @Override
   public Authenticator setAuthenticator(Authenticator auth) {
     Authenticator old = authenticator;
     authenticator = auth;
@@ -264,6 +271,7 @@ class HttpContextImpl extends HttpContext {
     return old;
   }
 
+  @Override
   public Authenticator getAuthenticator() { return authenticator; }
 
   Logger getLogger() { return server.getLogger(); }

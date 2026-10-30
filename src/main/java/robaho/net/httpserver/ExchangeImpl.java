@@ -730,6 +730,7 @@ class PlaceholderOutputStream extends java.io.OutputStream {
     }
   }
 
+  @Override
   public void write(int b) throws IOException {
     checkWrap();
     wrapped.write(b);
