@@ -39,6 +39,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -264,9 +265,7 @@ public class WebSocketFrame {
     }
 
     if (isMasked()) {
-      for (int i = 0; i < this.payload.length; i++) {
-        this.payload[i] ^= this.maskingKey[i % 4];
-      }
+      unmask(this.payload, this.maskingKey);
     }
 
     // Test for Unicode errors - only for a COMPLETE unfragmented text
@@ -274,6 +273,35 @@ public class WebSocketFrame {
     // 8.2), so fragmented messages are validated on aggregation instead
     if (getOpCode() == OpCode.Text && isFin()) {
       this._payloadString = binary2Text(getBinaryPayload());
+    }
+  }
+
+  /**
+   * SWAR unmasking: the 4-byte key is broadcast into a 64-bit register once,
+   * then the payload is XORed 8 bytes per iteration. the per-frame cost of
+   * the old byte-at-a-time loop dominated masked-frame parsing on large
+   * payloads (bulk uploads are always client-masked, RFC 6455 5.1); the
+   * tail runs under it with the classic indexed loop
+   */
+  private static void unmask(byte[] payload, byte[] key) {
+    long k64;
+    if (payload.length >= 8) {
+      // 4 key bytes repeated twice into a long, matching the key's
+      // period-4 alignment at every 8-byte stride
+      k64 = (key[0] & 0xFFL) << 56 | (key[1] & 0xFFL) << 48 | (key[2] & 0xFFL) << 40 | (key[3] & 0xFFL) << 32
+          | (key[0] & 0xFFL) << 24 | (key[1] & 0xFFL) << 16 | (key[2] & 0xFFL) << 8 | (key[3] & 0xFFL);
+      int i = 0;
+      ByteBuffer bb = ByteBuffer.wrap(payload);
+      for (; i + 8 <= payload.length; i += 8) {
+        bb.putLong(i, bb.getLong(i) ^ k64);
+      }
+      for (; i < payload.length; i++) {
+        payload[i] ^= key[i & 3];
+      }
+      return;
+    }
+    for (int i = 0; i < payload.length; i++) {
+      payload[i] ^= key[i & 3];
     }
   }
 
@@ -370,7 +398,9 @@ public class WebSocketFrame {
 
   /**
    * serialize this frame (header, length, optional mask, payload) and
-   * flush the stream
+   * flush the stream. the fixed part is emitted as ONE array write: the
+   * old per-byte writes cost a call and a bounds check each, which
+   * dominated small/control frames (ping/close/short text)
    */
   public void write(OutputStream out) throws IOException {
     byte header = 0;
@@ -378,34 +408,47 @@ public class WebSocketFrame {
       header |= 0x80;
     }
     header |= this.opCode.getValue() & 0x0F;
-    out.write(header);
 
     this._payloadLength = getBinaryPayload().length;
+    // max fixed part: 1 opcode + 1 length + 8 extended + 4 mask = 14
+    byte[] fixed = new byte[14];
+    int n = 0;
+    fixed[n++] = header;
     if (this._payloadLength <= 125) {
-      out.write(isMasked() ? 0x80 | (byte) this._payloadLength : (byte) this._payloadLength);
+      fixed[n++] = isMasked() ? (byte) (0x80 | this._payloadLength) : (byte) this._payloadLength;
     } else if (this._payloadLength <= 0xFFFF) {
-      out.write(isMasked() ? 0xFE : 126);
-      out.write(this._payloadLength >>> 8);
-      out.write(this._payloadLength);
+      fixed[n++] = isMasked() ? (byte) 0xFE : 126;
+      fixed[n++] = (byte) (this._payloadLength >>> 8);
+      fixed[n++] = (byte) this._payloadLength;
     } else {
-      out.write(isMasked() ? 0xFF : 127);
+      fixed[n++] = isMasked() ? (byte) 0xFF : 127;
       // _payloadLength is an int (max 31 bits), so the top 4 of the 8
       // length bytes are always zero
-      out.write(0);
-      out.write(0);
-      out.write(0);
-      out.write(0);
-      out.write(this._payloadLength >>> 24);
-      out.write(this._payloadLength >>> 16);
-      out.write(this._payloadLength >>> 8);
-      out.write(this._payloadLength);
+      fixed[n++] = 0;
+      fixed[n++] = 0;
+      fixed[n++] = 0;
+      fixed[n++] = 0;
+      fixed[n++] = (byte) (this._payloadLength >>> 24);
+      fixed[n++] = (byte) (this._payloadLength >>> 16);
+      fixed[n++] = (byte) (this._payloadLength >>> 8);
+      fixed[n++] = (byte) this._payloadLength;
     }
+    if (isMasked()) {
+      System.arraycopy(this.maskingKey, 0, fixed, n, 4);
+      n += 4;
+    }
+    out.write(fixed, 0, n);
 
     if (isMasked()) {
-      out.write(this.maskingKey);
-      for (int i = 0; i < this._payloadLength; i++) {
-        out.write(getBinaryPayload()[i] ^ this.maskingKey[i % 4]);
+      // client-mode frames (the server never masks, RFC 6455 5.1):
+      // mask into a scratch buffer rather than per-byte writes
+      byte[] payload = getBinaryPayload();
+      byte[] masked = new byte[payload.length];
+      byte[] key = this.maskingKey;
+      for (int i = 0; i < payload.length; i++) {
+        masked[i] = (byte) (payload[i] ^ key[i & 3]);
       }
+      out.write(masked);
     } else {
       out.write(getBinaryPayload());
     }
