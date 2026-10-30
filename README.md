@@ -89,6 +89,19 @@ public class Test {
 mvn -q compile test-compile exec:java -Dexec.mainClass=SimpleFileServer -Dexec.classpathScope=test
 ```
 
+### 零拷贝文件响应（sendfile）
+
+静态文件响应走 `extras.Sendfile`，普通 h1 连接上由内核 `FileChannel.transferTo` 直通 socket——文件字节不经过用户态拷贝，handler 线程零参与：
+
+```java
+// handler 内：
+Sendfile.serve(exchange, path, "application/octet-stream");
+// 或等价地：exchange.setAttribute(Sendfile.ATTRIBUTE, path) 后
+// sendResponseHeaders(200, Files.size(path))，再 close 响应流
+```
+
+约束：声明的 Content-Length 必须等于文件大小（`serve` 自动计算）；声明后 handler 不得再写响应体。h2 与 TLS 连接自动回退为常规流式发送（h2 的 DATA 帧封装无法直通 socket），语义不变。
+
 ## WebSocket
 
 继承 `WebSocketHandler` 并注册端点：
@@ -166,6 +179,7 @@ Total Handler Exceptions: 0
 | `robaho.net.httpserver.http2MaxFrameSize` | int | `16384` | 本端通告的 SETTINGS_MAX_FRAME_SIZE（字节）。出站帧按对端通告值拆分 |
 | `robaho.net.httpserver.http2InitialWindowSize` | int | `65535` | 流级流控初始窗口大小（字节）。影响单流上传吞吐 |
 | `robaho.net.httpserver.http2ConnectionWindowSize` | int | `65535` | 连接级流控窗口大小（字节） |
+| `robaho.net.httpserver.http2AutoTuneMaxWindow` | int | `524288`（512KB） | 接收窗口自动调优上限（字节）。持续发送的连接/流按活跃度倍增其通告窗口直至该上限（空闲对端维持配置窗口）；流级增长信用随 handler 消费释放，慢 handler 不放大窗口。`0` 禁用（窗口固定为配置值） |
 | `robaho.net.httpserver.http2MaxConcurrentStreams` | int | `100` | 每连接最大并发流数。超过时新流收 REFUSED_STREAM（客户端可重试）。`-1` 为无限。100 对齐浏览器行为 |
 | `robaho.net.httpserver.http2MaxHeaderBlockSize` | int | `131072`（128KB） | 单个头块（HEADERS+CONTINUATION 累计）最大字节数。超过返回 ENHANCE_YOUR_CALM（防 CONTINUATION 洪水） |
 | `robaho.net.httpserver.http2DisableFlushDelay` | boolean | `false` | 每帧写后立即 flush（低延迟模式）。默认 false（批量冲刷，吞吐更高）。SSE 场景建议 `true` |

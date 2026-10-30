@@ -45,6 +45,24 @@ public class Http2Stream {
 
   private final int initialWindowSize;
 
+  /**
+   * auto-tuned stream-window target: starts at the advertised initial window
+   * and doubles (bounded by {@link ServerConfig#http2AutoTuneMaxWindow()}) as
+   * the client keeps sending. reader-thread-confined like the growth counter
+   */
+  private int streamWindowTarget;
+
+  /** DATA payload bytes received on this stream since the last growth; reader-thread-confined */
+  private long streamBytesSinceGrowth;
+
+  /**
+   * growth credit earned on the reader thread, released to the client as part
+   * of the next WINDOW_UPDATE the handler's consumption triggers (the flush
+   * site folds it in). AtomicLong: the reader adds credit, the handler's
+   * getAndSet(0) claim must never lose a concurrent add
+   */
+  private final AtomicLong windowGrowthPending = new AtomicLong();
+
   private final Http2Connection connection;
 
   private final Logger logger;
@@ -115,6 +133,7 @@ public class Http2Stream {
     } else {
       initialWindowSize = (int) SettingParameter.INITIAL_WINDOW_SIZE;
     }
+    streamWindowTarget = initialWindowSize;
     if (logger.isLoggable(Level.TRACE)) {
       logger.log(Level.TRACE, () -> "new stream, send window size " + sendWindow.get() + ", receive window size "
           + receiveWindow.get() + " on stream " + streamId);
@@ -341,6 +360,18 @@ public class Http2Stream {
           // the peer sent beyond the stream flow control window
           resetAndClose(Http2ErrorCode.FLOW_CONTROL_ERROR);
           return;
+        }
+        // activity-driven auto-tune (same policy as the connection window):
+        // a full window's worth received since the last growth doubles the
+        // target. the credit is released by the next consumption-driven
+        // WINDOW_UPDATE, so it only flows when the handler is actually
+        // reading - a slow handler never gets a bigger window
+        int autoTuneCap = ServerConfig.http2AutoTuneMaxWindow();
+        streamBytesSinceGrowth += frame.getHeader().length();
+        if (autoTuneCap > 0 && streamWindowTarget < autoTuneCap && streamBytesSinceGrowth >= streamWindowTarget) {
+          windowGrowthPending.addAndGet(streamWindowTarget);
+          streamWindowTarget = (int) Math.min(streamWindowTarget * 2L, autoTuneCap);
+          streamBytesSinceGrowth = 0;
         }
         // the padding octets are discarded on receipt (DataFrame.parse strips
         // them): queue their window credit so the handler's read folds them
@@ -873,10 +904,20 @@ public class Http2Stream {
           long credited = read + padding;
           receiveWindow.addAndGet(credited);
           pendingWindowUpdate += credited;
-          if (pendingWindowUpdate >= initialWindowSize / 2) {
+          if (pendingWindowUpdate >= initialWindowSize / 2 || windowGrowthPending.get() > 0) {
+            // fold any auto-tune growth credit into this update: the client's
+            // window doubles in the same frame, and our accounting mirrors
+            // the credit the frame grants (consumption was credited above,
+            // only the growth part is new). getAndSet: the reader thread's
+            // add must never land between the read and the clear
+            long growth = windowGrowthPending.getAndSet(0L);
+            long increment = pendingWindowUpdate + growth;
+            if (growth > 0) {
+              receiveWindow.addAndGet(growth);
+            }
             connection.lock();
             try {
-              WindowUpdateFrame frame = new WindowUpdateFrame(streamId, (int) pendingWindowUpdate);
+              WindowUpdateFrame frame = new WindowUpdateFrame(streamId, (int) increment);
               frame.writeTo(connection.outputStream);
               // flush: the peer may have exhausted its stream window
               // and be blocked waiting for exactly this update -

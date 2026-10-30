@@ -221,6 +221,17 @@ public class Http2Connection {
 
   private final int connectionWindowSize;
 
+  /**
+   * auto-tuned replenish target: starts at the configured window and doubles
+   * (bounded by {@link ServerConfig#http2AutoTuneMaxWindow()}) as the client
+   * keeps sending. reader-thread-confined: mutated only in the DATA case and
+   * read by {@link #sendWindowUpdate()} - both run on the connection reader
+   */
+  private int windowTarget;
+
+  /** DATA payload bytes received since the last window growth; reader-thread-confined */
+  private long bytesSinceGrowth;
+
   private int maxConcurrentStreams = -1;
 
   private int peakConcurrentStreams = 0;
@@ -244,6 +255,7 @@ public class Http2Connection {
     this.logger = System.getLogger("robaho.net.httpserver.http2");
 
     connectionWindowSize = ServerConfig.http2ConnectionWindowSize();
+    windowTarget = connectionWindowSize;
 
     localSettings.set(new SettingParameter(SettingIdentifier.SETTINGS_MAX_FRAME_SIZE, ServerConfig.http2MaxFrameSize()));
     localSettings
@@ -525,6 +537,17 @@ public class Http2Connection {
             // the peer sent beyond the connection flow control window
             throw new Http2Exception(Http2ErrorCode.FLOW_CONTROL_ERROR, "connection flow control window exceeded");
           }
+          // activity-driven auto-tune: a client that has pushed a full
+          // window's worth since the last growth is window-cycling - double
+          // the target so its bursts stop paying a WINDOW_UPDATE round trip
+          // per window. idle or trickle senders never reach the trigger.
+          // bounded by http2AutoTuneMaxWindow (0 disables)
+          int autoTuneCap = ServerConfig.http2AutoTuneMaxWindow();
+          bytesSinceGrowth += frame.getHeader().length();
+          if (autoTuneCap > 0 && windowTarget < autoTuneCap && bytesSinceGrowth >= windowTarget) {
+            windowTarget = (int) Math.min(windowTarget * 2L, autoTuneCap);
+            bytesSinceGrowth = 0;
+          }
           // replenish before the remaining window drops below what a
           // full-size DATA frame needs: a client that only sends whole
           // frames (frame size = our advertised SETTINGS_MAX_FRAME_SIZE,
@@ -533,12 +556,11 @@ public class Http2Connection {
           // frame size - the client waits for credit, the server waits
           // for data. the half-window floor matches the stream-level
           // policy (DataIn flushes at initialWindowSize/2).
-          // the threshold is clamped to the configured window: a
-          // threshold above it (maxFrameSize > connectionWindowSize)
+          // the threshold is clamped to the target window: a
+          // threshold above it (maxFrameSize > windowTarget)
           // would trigger replenishment with the window already at
           // the target and send a zero/negative increment
-          int replenishThreshold =
-              Math.min(Math.max(connectionWindowSize / 2, ServerConfig.http2MaxFrameSize()), connectionWindowSize);
+          int replenishThreshold = Math.min(Math.max(windowTarget / 2, ServerConfig.http2MaxFrameSize()), windowTarget);
           if (receiveWindow.get() < replenishThreshold) {
             sendWindowUpdate();
           }
@@ -850,7 +872,7 @@ public class Http2Connection {
 
   public void sendWindowUpdate() throws IOException {
     int current = receiveWindow.get();
-    int increment = connectionWindowSize - current;
+    int increment = windowTarget - current;
     if (increment <= 0) {
       // nothing to replenish - either the window is already at the
       // target, or the configured connection window is below the RFC

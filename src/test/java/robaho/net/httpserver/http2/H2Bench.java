@@ -109,25 +109,25 @@ public class H2Bench {
    */
   static void upload(H2Client c, int total) throws IOException {
     int s = c.sendRequest("POST", "/echo", false);
-    long connWindow = 65535, streamWindow = 65535;
+    // the connection window lives on the client (persisted across
+    // requests); only the stream window is per-request - each upload
+    // opens a fresh stream with the initial window
+    long streamWindow = 65535;
     byte[] chunk = new byte[16384];
     Arrays.fill(chunk, (byte) 'u');
     int sent = 0;
     while (sent < total) {
       int len = Math.min(chunk.length, total - sent);
       boolean end = sent + len >= total;
-      if (connWindow >= len && streamWindow >= len) {
+      if (c.connSendWindow >= len && streamWindow >= len) {
         c.sendData(s, Arrays.copyOf(chunk, len), end);
-        connWindow -= len;
         streamWindow -= len;
         sent += len;
       } else {
         int[] wu = c.readWindowUpdate();
-        if (wu[0] == 0)
-          connWindow += wu[1];
-        else if (wu[0] == s)
+        if (wu[0] == s)
           streamWindow += wu[1];
-        // else: another stream's update (single stream here) - ignore
+        // connection credit is applied inside H2Client.readWindowUpdate
       }
     }
     var r = c.awaitResponse(s);

@@ -286,6 +286,20 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
   Socket getSocket() { return socket; }
 
   /**
+   * the socket's channel for the sendfile fast path
+   * ({@link SendfileResponse}): FileChannel.transferTo writes the body
+   * straight to it, bypassing the buffered output. null when the socket is
+   * TLS-wrapped (the ciphertext must go through the SSLSocket) or not
+   * channel-backed (never, with this server's channel-backed accept)
+   */
+  java.nio.channels.WritableByteChannel sendfileChannel() {
+    if (socket instanceof SSLSocket) {
+      return null;
+    }
+    return socket.getChannel();
+  }
+
+  /**
    * guards the close transition. a ReentrantLock rather than a
    * synchronized monitor - historically because close() flushes and
    * closes streams (blocking IO) while holding it, which pinned a

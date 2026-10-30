@@ -68,6 +68,15 @@ class H2Client implements AutoCloseable {
 
   int goawayErrorCode = -1;
 
+  /**
+   * the client's view of its connection-level send window, maintained
+   * across requests: connection credit persists for the connection's
+   * lifetime, so a per-request reset starves the sender once the server
+   * auto-tunes the window above the initial value (the server stops
+   * replenishing while its own accounting is far above the threshold)
+   */
+  long connSendWindow = 65535;
+
   private int nextStreamId = 1;
 
   H2Client(int port) throws IOException {
@@ -283,6 +292,7 @@ class H2Client implements AutoCloseable {
   }
 
   void sendData(int streamId, byte[] payload, boolean endStream) throws IOException {
+    connSendWindow -= payload.length;
     writeFrame(TYPE_DATA, endStream ? FLAG_END_STREAM : 0, streamId, payload);
   }
 
@@ -322,7 +332,13 @@ class H2Client implements AutoCloseable {
             answerKeepalive(f);
             break;
           case TYPE_WINDOW_UPDATE:
-            return new int[] {f.streamId, readInt32(f.payload, 0)};
+            int windowInc = readInt32(f.payload, 0);
+            if (f.streamId == 0) {
+              // connection credit is tracked here, not by the caller:
+              // it belongs to the connection, not to any one request
+              connSendWindow += windowInc;
+            }
+            return new int[] {f.streamId, windowInc};
           case TYPE_GOAWAY:
             recordGoaway(f);
             throw new IOException("GOAWAY received: error " + goawayErrorCode);

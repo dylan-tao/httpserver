@@ -103,6 +103,9 @@ class ExchangeImpl {
 
   Map<String, Object> attributes;
 
+  /** exchange-scoped storage for the sendfile attribute (see getAttribute) */
+  private Object sendfileAttribute;
+
   int rcode = -1;
 
   HttpPrincipal principal;
@@ -368,7 +371,14 @@ class ExchangeImpl {
         if (!noContentLengthHeader) {
           rspHdrs.set("Content-length", contentLengthString(contentLen));
         }
-        o.setWrappedStream(new FixedLengthOutputStream(this, ros, contentLen));
+        // the sendfile attribute swaps the body stream for a
+        // library-managed file transfer (kernel zero-copy on plain h1)
+        SendfileResponse sendfile = SendfileResponse.create(this, ros, contentLen);
+        if (sendfile != null) {
+          o.setWrappedStream(sendfile);
+        } else {
+          o.setWrappedStream(new FixedLengthOutputStream(this, ros, contentLen));
+        }
       }
     }
 
@@ -662,6 +672,13 @@ class ExchangeImpl {
     if (name == null) {
       throw new NullPointerException("null name parameter");
     }
+    // the sendfile attribute is exchange-scoped, not context-scoped: the
+    // claim protocol (helper sets, core clears) would race across
+    // concurrent requests sharing one HttpContext - request A's claim
+    // would make request B's helper believe the core owns B's body
+    if (SendfileResponse.ATTRIBUTE.equals(name)) {
+      return sendfileAttribute;
+    }
     if (attributes == null) {
       attributes = getHttpContext().getAttributes();
     }
@@ -671,6 +688,10 @@ class ExchangeImpl {
   public void setAttribute(String name, Object value) {
     if (name == null) {
       throw new NullPointerException("null name parameter");
+    }
+    if (SendfileResponse.ATTRIBUTE.equals(name)) {
+      sendfileAttribute = value;
+      return;
     }
     if (attributes == null) {
       attributes = getHttpContext().getAttributes();

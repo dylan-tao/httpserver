@@ -108,4 +108,13 @@ class FixedLengthOutputStream extends FilterOutputStream {
     t.drainOriginalInputStream();
   }
 
+  /**
+   * sendfile fast path: the body reached the socket via
+   * FileChannel.transferTo without passing through this stream. the
+   * accounting is settled so close() completes the exchange normally
+   */
+  void markBodySent() {
+    remaining = 0;
+  }
+
 }

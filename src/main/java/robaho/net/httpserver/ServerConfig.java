@@ -84,6 +84,12 @@ public final class ServerConfig {
 
   private static final long DEFAULT_HTTP2_PING_INTERVAL_MILLIS = 1000;
 
+  // receive-window auto-tune cap: 512KB is 8x the RFC 65535 default and
+  // bounds the worst-case in-flight bytes per starving stream (100
+  // streams x 512KB = 50MB only when every stream is genuinely
+  // window-limited and actively sending)
+  private static final int DEFAULT_HTTP2_AUTO_TUNE_MAX_WINDOW = 512 * 1024;
+
   // maximum size of a single HTTP/1.1 request line or header line
   private static final int DEFAULT_MAX_REQ_LINE_SIZE = 64 * 1024;
 
@@ -165,6 +171,8 @@ public final class ServerConfig {
   private static int http2MaxConcurrentStreams;
 
   private static boolean http2DisableFlushDelay;
+
+  private static int http2AutoTuneMaxWindow;
 
   private static int http2MaxHeaderBlockSize;
 
@@ -258,6 +266,14 @@ public final class ServerConfig {
             Integer.getInteger(pkg + ".http2MaxConcurrentStreams", DEFAULT_HTTP2_MAX_CONCURRENT_STREAMS);
         http2MaxConcurrentStreams = Math.max(http2MaxConcurrentStreams, -1);
         http2DisableFlushDelay = Boolean.getBoolean(pkg + ".http2DisableFlushDelay");
+
+        // receive-window auto-tune cap: a connection (or stream) whose
+        // client keeps sending grows its advertised window by doubling,
+        // bounded here. activity-driven, not BDP-estimated: idle peers
+        // stay at the configured windows, active ones ramp to the cap.
+        // 0 disables the growth (windows stay at their configured sizes)
+        http2AutoTuneMaxWindow = Integer.getInteger(pkg + ".http2AutoTuneMaxWindow", DEFAULT_HTTP2_AUTO_TUNE_MAX_WINDOW);
+        http2AutoTuneMaxWindow = Math.max(http2AutoTuneMaxWindow, 0);
 
         // keepalive ping for idle h2 connections. the default 1s
         // matches the historical fixed behavior; <= 0 disables
@@ -552,6 +568,18 @@ public final class ServerConfig {
    */
   public static boolean http2DisableFlushDelay() {
     return http2DisableFlushDelay;
+  }
+
+  /**
+   * @return the auto-tune cap for h2 receive windows: a connection or
+   *         stream whose client keeps sending doubles its advertised
+   *         window up to this bound (activity-driven growth; idle peers
+   *         stay at the configured windows). 0 disables the growth.
+   *         configured via {@code robaho.net.httpserver.http2AutoTuneMaxWindow}
+   *         (default 512KB)
+   */
+  public static int http2AutoTuneMaxWindow() {
+    return http2AutoTuneMaxWindow;
   }
 
   /**

@@ -49,6 +49,7 @@ import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.channels.ServerSocketChannel;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -178,7 +179,11 @@ class ServerImpl {
     this.protocol = protocol;
     this.wrapper = wrapper;
 
-    socket = new ServerSocket();
+    // channel-backed so accepted sockets expose a SocketChannel (the
+    // sendfile fast path needs it for FileChannel.transferTo). all
+    // stream IO is unchanged - blocking semantics and the accept loop
+    // behave exactly as with a plain ServerSocket
+    socket = ServerSocketChannel.open().socket();
 
     // a single shared logger: per-instance logger names (identityHashCode)
     // accumulate in the LogManager forever when servers are created and
