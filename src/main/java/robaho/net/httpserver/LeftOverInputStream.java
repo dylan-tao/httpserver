@@ -206,8 +206,12 @@ abstract class LeftOverInputStream extends FilterInputStream {
     }
   }
 
-  // ok to concurrently share this since the data isn't used
-  private static final byte[] drainBuffer = new byte[2048];
+  // ok to concurrently share this since the data isn't used.
+  // sized to the connection read buffer: draining a capped 64KB body
+  // in 2KB chunks cost ~32 readImpl rounds per teardown, each with
+  // chunked parse overhead; at buffer granularity the syscall count
+  // drops to the socket-buffer refill minimum
+  private static final byte[] drainBuffer = new byte[Math.max(2048, robaho.net.httpserver.ServerConfig.bufferSize())];
 
   /**
    * how long drain() waits for straggling body bytes before giving up on
