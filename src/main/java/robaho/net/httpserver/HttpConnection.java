@@ -212,6 +212,16 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     // separate packet) per frame
     this.os = new NoSyncBufferedOutputStream(new ActivityTrackingOutputStream(socket.getOutputStream()),
         ServerConfig.bufferSize() + 64);
+    // writev fast path: on a plain (non-TLS) channel-backed socket, a body
+    // chunk that bypasses the buffer coalesces with the pending response
+    // head in ONE gathering write instead of flush+write. TLS ciphertext
+    // must keep flowing through the SSLSocket; h2 frames are never larger
+    // than the buffer so the path stays dormant there
+    if (!(socket instanceof SSLSocket) && socket.getChannel() != null) {
+      // stamp the writev traffic on the activity clock like buffered writes
+      ((NoSyncBufferedOutputStream) this.os).setGatherTarget(robaho.net.httpserver.internal.GatheringByteChannelSlice
+          .of(socket.getChannel(), () -> lastActivityTime = System.currentTimeMillis()));
+    }
     // flush deferred response bytes right before a blocking input read:
     // a response deferred because pipelined requests were waiting can
     // never get stuck behind a partially-received request. skipped for

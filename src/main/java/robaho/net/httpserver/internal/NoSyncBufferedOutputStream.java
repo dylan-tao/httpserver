@@ -3,6 +3,8 @@ package robaho.net.httpserver.internal;
 import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.GatheringByteChannel;
 
 /**
  * buffered output stream designed for virtual threads
@@ -12,6 +14,15 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
   private static final byte[] EMPTY = new byte[0];
 
   private final int bufferSize;
+
+  /**
+   * writev target: set ONLY on plain h1 connections whose socket exposes
+   * a channel (see HttpConnection). when a body chunk arrives that would
+   * bypass the buffer (len >= bufferSize), any pending head bytes ride
+   * along in a single gathering write instead of a separate flush.
+   * null => classic flush-then-write cascade (TLS, h2, tests)
+   */
+  private GatheringByteChannel gather;
 
   /**
    * The internal buffer where data is stored. lazily allocated on the first
@@ -41,6 +52,14 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
     super(out);
     this.bufferSize = size;
   }
+
+  /**
+   * enable the writev fast path: big body chunks coalesce with pending
+   * head bytes into one gathering write. the channel must be the SAME
+   * resource the wrapped stream writes to (the socket), and all writes
+   * stay on this stream's owning thread
+   */
+  public void setGatherTarget(GatheringByteChannel channel) { this.gather = channel; }
 
   /**
    * wrap an externally owned buffer (e.g. from a pool). the caller remains
@@ -73,6 +92,39 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
       out.write(buf, 0, count);
       count = 0;
     }
+  }
+
+  /**
+   * writev the pending head bytes together with the direct body chunk.
+   * gathering writes may return short even on blocking channels, so the
+   * loop drains both buffers; on a virtual thread a zero-progress return
+   * (non-blocking fd state, see the sendfile note) parks briefly before
+   * retrying instead of spinning. on failure count is left untouched,
+   * matching flushBuffer's contract: the connection dies with the
+   * exception either way
+   */
+  private void gatherPendingPlus(byte[] b, int off, int len) throws IOException {
+    ByteBuffer head = ByteBuffer.wrap(buf, 0, count);
+    ByteBuffer body = ByteBuffer.wrap(b, off, len);
+    ByteBuffer[] bufs = {head, body};
+    long parkNanos = 0;
+    while (head.hasRemaining() || body.hasRemaining()) {
+      long n = gather.write(bufs);
+      if (n > 0) {
+        parkNanos = 0;
+        if (!head.hasRemaining()) {
+          count = 0;
+        }
+        continue;
+      }
+      if (parkNanos == 0) {
+        parkNanos = 100_000;
+      } else if (parkNanos < 2_000_000) {
+        parkNanos *= 2;
+      }
+      java.util.concurrent.locks.LockSupport.parkNanos(parkNanos);
+    }
+    count = 0;
   }
 
   /**
@@ -116,6 +168,15 @@ public class NoSyncBufferedOutputStream extends FilterOutputStream {
        * flush the output buffer and then write the data directly.
        * In this way buffered streams will cascade harmlessly.
        */
+      if (count > 0 && gather != null) {
+        // writev: the pending head bytes (status line + headers) and
+        // this direct body chunk leave as ONE gathering write instead
+        // of a flush syscall plus a body syscall. only plain h1
+        // connections carry a gather target; everyone else cascades
+        // through the buffered path below
+        gatherPendingPlus(b, off, len);
+        return;
+      }
       flushBuffer();
       out.write(b, off, len);
       return;
