@@ -120,6 +120,21 @@ public class Http2Connection {
 
   private final java.util.concurrent.atomic.AtomicInteger pooledBufferCount = new java.util.concurrent.atomic.AtomicInteger();
 
+  /**
+   * pool ceiling: the observed peak concurrent streams, floored at 2. a
+   * fixed cap of 2 made every stream beyond the second (an 8-way mux
+   * client keeps ~8 alive) allocate a fresh 16KB buffer and have its
+   * close-time offer rejected - JFR showed 10.2MB/30k requests falling
+   * through pollStreamBuffer. the ceiling tracks the connection's own
+   * demand; the idle cleaner still drains the pool (shrinkBuffers), so
+   * idle connections keep paying nothing. benign when read racily: the
+   * peak only grows, and an offer admitted on a newer peak is within
+   * the newer ceiling anyway
+   */
+  private int maxPooledBuffers() {
+    return Math.max(MAX_POOLED_STREAM_BUFFERS, peakConcurrentStreams);
+  }
+
   private static final int MAX_POOLED_STREAM_BUFFERS = 2;
 
   byte[] pollStreamBuffer() {
@@ -138,10 +153,10 @@ public class Http2Connection {
     // fast path: a plain read avoids the increment/decrement round trip
     // for the common pool-full case; the increment-then-check below stays
     // authoritative under concurrent offers
-    if (pooledBufferCount.get() >= MAX_POOLED_STREAM_BUFFERS) {
+    if (pooledBufferCount.get() >= maxPooledBuffers()) {
       return;
     }
-    if (pooledBufferCount.incrementAndGet() <= MAX_POOLED_STREAM_BUFFERS) {
+    if (pooledBufferCount.incrementAndGet() <= maxPooledBuffers()) {
       streamBufferPool.offer(buffer);
     } else {
       pooledBufferCount.decrementAndGet();
