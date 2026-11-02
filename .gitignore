@@ -14,3 +14,6 @@ test-output/
 # internal session/audit log
 todo.md
 .zcodeignore
+src/test/bench/regressN.log
+src/test/bench/final6_*.log
+src/test/bench/server_*.log
