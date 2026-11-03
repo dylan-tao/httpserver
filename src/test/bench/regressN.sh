@@ -27,16 +27,20 @@ for i in $(seq 1 $N); do
   wait
   [ -f $ckfail ] && rfail=1
   rm -f $ckfail
-  if ! $J -cp $CP robaho.net.httpserver.http2.H2Bench $PORT upload256k 10 2>&1 | tail -1 | grep -q 'RESULT' ; then
-    echo "R$i UPLOAD-FAIL" >> $LOG; rfail=1
-  else
-    $J -cp $CP robaho.net.httpserver.http2.H2Bench $PORT upload256k 10 2>&1 | tail -1 >> $LOG
-  fi
-  if ! $J -cp $CP robaho.net.httpserver.http2.H2Bench $PORT seq 500 2>&1 | tail -1 | grep -q 'RESULT'; then
-    echo "R$i SEQ-FAIL" >> $LOG; rfail=1
-  else
-    $J -cp $CP robaho.net.httpserver.http2.H2Bench $PORT seq 500 2>&1 | tail -1 >> $LOG
-  fi
+  # capture the line WITHOUT grep -q in the pipeline: -q closes the pipe
+  # on first match, tail takes SIGPIPE, and pipefail (correctly) reports
+  # failure even though the run succeeded - the historical trap this
+  # script must not grow back
+  uline=$($J -cp $CP robaho.net.httpserver.http2.H2Bench $PORT upload256k 10 2>&1 | tail -1)
+  case "$uline" in
+    *RESULT*) echo "$uline" >> $LOG ;;
+    *) echo "R$i UPLOAD-FAIL [$uline]" >> $LOG; rfail=1 ;;
+  esac
+  sline=$($J -cp $CP robaho.net.httpserver.http2.H2Bench $PORT seq 500 2>&1 | tail -1)
+  case "$sline" in
+    *RESULT*) echo "$sline" >> $LOG ;;
+    *) echo "R$i SEQ-FAIL [$sline]" >> $LOG; rfail=1 ;;
+  esac
   code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/hello")
   [ "$code" != "200" ] && { echo "R$i HEALTH-FAIL code=$code" >> $LOG; rfail=1; }
   if [ $rfail -eq 0 ]; then echo "ROUND $i PASS" >> $LOG; else echo "ROUND $i FAIL" >> $LOG; overall=1; fi

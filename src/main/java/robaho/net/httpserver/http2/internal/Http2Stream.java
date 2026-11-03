@@ -483,7 +483,7 @@ public class Http2Stream {
     // merge entries swapped into the PARENT map field after handlers
     // ran; a no-op compiled out on production JVMs
     responseHeaders.mergeReflectivelySwappedEntries();
-    var block = HPackContext.encodeHeaderBlock(responseHeaders);
+    var block = HPackContext.encodeHeaderBlock(responseHeaders, connection.headerBlockScratch);
     connection.lock();
     try {
       int frames = block.writeFrames(connection.outputStream, connection.frameHeaderScratch, streamId, false,
@@ -492,6 +492,7 @@ public class Http2Stream {
         connection.stats.framesSent.addAndGet(frames);
       connection.outputStream.flush();
     } finally {
+      block.release();
       connection.unlock();
     }
   }
@@ -515,7 +516,7 @@ public class Http2Stream {
         // stream-local, only the frame writes need mutual exclusion.
         // this shrinks the per-response critical section ~10x so
         // concurrent streams scale with cores
-        var block = HPackContext.encodeHeaderBlock(responseHeaders);
+        var block = HPackContext.encodeHeaderBlock(responseHeaders, connection.headerBlockScratch);
         connection.lock();
         try {
           int frames = block.writeFrames(connection.outputStream, connection.frameHeaderScratch, streamId, closeStream,
@@ -526,6 +527,7 @@ public class Http2Stream {
             streamOutputClosed = true;
           }
         } finally {
+          block.release();
           connection.unlock();
         }
       } catch (IOException e) {

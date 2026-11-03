@@ -94,6 +94,18 @@ public class HPackContext {
 
   public List<Http2HeaderField> decodeFieldSegments(byte[] buffer) throws Http2Exception {
     List<Http2HeaderField> headers = new ArrayList<>(8);
+    decodeInto(buffer, headers);
+    return headers;
+  }
+
+  /**
+   * decode straight into the caller's list (cleared first): the h2 read
+   * path's lists are reader-thread-confined, so decoding appends into the
+   * recycled HeaderFieldList directly instead of allocating an
+   * intermediate list that addAll then copies field by field
+   */
+  public void decodeInto(byte[] buffer, List<Http2HeaderField> headers) throws Http2Exception {
+    headers.clear();
     int index = 0;
 
     try {
@@ -130,8 +142,6 @@ public class HPackContext {
     } catch (Exception e) {
       throw new Http2Exception(Http2ErrorCode.COMPRESSION_ERROR, e);
     }
-
-    return headers;
   }
 
   private int decodeIndexedHeaderField(byte[] buffer, int index, Http2HeaderField headerField) throws Http2Exception {
@@ -320,9 +330,23 @@ public class HPackContext {
    * per-frame array allocations
    */
   public static EncodedHeaderBlock encodeHeaderBlock(Headers headers) throws IOException {
+    return encodeHeaderBlock(headers, null);
+  }
+
+  /**
+   * encode the response headers into the given reusable block when it is
+   * free (borrow CAS), otherwise into a fresh one. the CALLER must
+   * release the block after writeFrames consumed it - the returned
+   * flag tells whether the scratch was used. connection-level reuse:
+   * the pooled block retains the peak capacity this connection encoded,
+   * so steady-state responses (same shape) stop allocating entirely
+   */
+  public static EncodedHeaderBlock encodeHeaderBlock(Headers headers, EncodedHeaderBlock scratch) throws IOException {
     // sized from the header count: the old fixed 256 started ~2 growth
     // copies behind for a typical response (average block ~800 bytes)
-    EncodedHeaderBlock fields = new EncodedHeaderBlock(Math.max(256, headers.size() * 64 + 64));
+    EncodedHeaderBlock fields =
+        scratch != null && scratch.tryBorrow() ? scratch : new EncodedHeaderBlock(Math.max(256, headers.size() * 64 + 64));
+    fields.reset();
 
     // ':status' is required and the only allowed outbound pseudo headers
     String status = headers.getFirst(":status");
@@ -383,8 +407,37 @@ public class HPackContext {
 
     private int len;
 
-    EncodedHeaderBlock(int capacity) {
+    /**
+     * FREE/BORROWED latch for connection-level reuse: encoding runs
+     * OUTSIDE the connection lock (concurrent streams race), so
+     * borrowing is a CAS - a busy block means the caller allocates its
+     * own and the pooled one returns after the next write. the reuse
+     * needs no serialization of concurrent encoders
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean borrowed = new java.util.concurrent.atomic.AtomicBoolean();
+
+    public EncodedHeaderBlock(int capacity) {
       buf = new byte[capacity];
+    }
+
+    /** try to claim this block for reuse; false when already in flight */
+    boolean tryBorrow() {
+      return borrowed.compareAndSet(false, true);
+    }
+
+    /** release after writeFrames consumed the block; same thread that borrowed */
+    public void release() {
+      reset();
+      borrowed.set(false);
+    }
+
+    /**
+     * drop the length, keep the capacity: called by encodeHeaderBlock on
+     * a freshly borrowed (or fresh) block before appending, and by
+     * release() after consumption
+     */
+    void reset() {
+      len = 0;
     }
 
     private void ensure(int extra) {

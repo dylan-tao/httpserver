@@ -65,6 +65,20 @@ public class HeaderFieldList implements Iterable<Http2HeaderField> {
     }
   }
 
+  /**
+   * recycle this container for the next request on the same (reader)
+   * thread: drops the field list and the pseudo-header map. the
+   * per-connection scratch pattern mirrors h1's HEADER_TABLE - the
+   * retained ArrayList capacity converges to this connection's request
+   * header count, so steady-state requests stop allocating the list
+   * (JFR: 22.9MB/30k through HeaderFieldList + the decode list copy)
+   */
+  public void reset() {
+    fields.clear();
+    pseudoHeaders.clear();
+    hasNonPseudoHeader = false;
+  }
+
   @Override
   public Iterator<Http2HeaderField> iterator() {
     return fields.iterator();
