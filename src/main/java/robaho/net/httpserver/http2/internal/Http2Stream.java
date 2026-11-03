@@ -343,7 +343,9 @@ public class Http2Stream {
       case DATA:
         DataFrame dataFrame = (DataFrame) frame;
         if (logger.isLoggable(Level.TRACE)) {
-          logger.log(Level.TRACE, () -> "received data frame, length " + dataFrame.body.length + " on stream " + streamId);
+          if (logger.isLoggable(Level.TRACE)) {
+            logger.log(Level.TRACE, "received data frame, length " + dataFrame.body.length + " on stream " + streamId);
+          }
         }
         if (halfClosed) {
           connection.sendResetStream(Http2ErrorCode.STREAM_CLOSED, streamId);

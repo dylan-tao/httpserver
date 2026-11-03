@@ -940,7 +940,12 @@ class ServerImpl {
       String path = request.getFirst(":path");
       String query = request.getFirst(":query");
 
-      logger.log(Level.TRACE, () -> "http2 stream started " + stream);
+      if (logger.isLoggable(Level.TRACE)) {
+        // gate: the TRACE supplier captures the per-request `stream`
+        // local, so the lambda instance allocates even with TRACE off
+        // (R1 JFR: the top remaining per-request allocation)
+        logger.log(Level.TRACE, "http2 stream started " + stream);
+      }
 
       if (authority == null || path == null) {
         throw new IOException("Invalid HTTP/2 headers: missing :authority or :path");
@@ -1014,7 +1019,9 @@ class ServerImpl {
         return;
       }
 
-      logger.log(Level.TRACE, () -> "http2 request on " + connection + " " + method + " for " + uri);
+      if (logger.isLoggable(Level.TRACE)) {
+        logger.log(Level.TRACE, "http2 request on " + connection + " " + method + " for " + uri);
+      }
 
       try {
         // doFilterTracked is the SINGLE counting site for the
@@ -1093,7 +1100,9 @@ class ServerImpl {
       this.rawin = connection.getInputStream();
       this.rawout = connection.getOutputStream();
 
-      logger.log(Level.TRACE, () -> "exchange started " + connection);
+      if (logger.isLoggable(Level.TRACE)) {
+        logger.log(Level.TRACE, "exchange started " + connection);
+      }
 
       while (!connection.closed) {
         try {
@@ -1136,7 +1145,9 @@ class ServerImpl {
           throw t;
         }
       }
-      logger.log(Level.TRACE, () -> "exchange finished " + connection);
+      if (logger.isLoggable(Level.TRACE)) {
+        logger.log(Level.TRACE, "exchange finished " + connection);
+      }
     }
 
     private void runPerRequest() throws IOException {
@@ -1260,7 +1271,9 @@ class ServerImpl {
         throw new RequestRejectedException(HttpStatus.HTTP_ENTITY_TOO_LARGE, requestLine,
             "Request body exceeds the configured maximum of " + bodySizeLimit + " bytes");
       }
-      logger.log(Level.TRACE, () -> "protocol " + protocol + " uri " + uri + " headers " + headers);
+      if (logger.isLoggable(Level.TRACE)) {
+        logger.log(Level.TRACE, "protocol " + protocol + " uri " + uri + " headers " + headers);
+      }
       // null-check, not Optional.ofNullable: a fresh Optional per request is
       // pure allocation on the dispatch hot path
       String uriPath = uri.getPath();

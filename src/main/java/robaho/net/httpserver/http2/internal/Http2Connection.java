@@ -360,7 +360,10 @@ public class Http2Connection {
   public void writeFrame(byte[] frame) throws IOException {
     lock();
     try {
-      logger.log(Level.TRACE, () -> "sending frame " + FrameHeader.debug(frame));
+      if (logger.isLoggable(Level.TRACE)) {
+        // gate: per-frame site, reader-thread hot loop
+        logger.log(Level.TRACE, "sending frame " + FrameHeader.debug(frame));
+      }
       outputStream.write(frame);
       outputStream.flush();
       if (Http2Stats.ENABLED)
