@@ -143,6 +143,9 @@ public final class ServerConfig {
   // default executor and the BufferedWebSocket drain threads both honor it
   private static boolean virtualThreads;
 
+  // 4.0.0 io_uring transport (opt-in; see the static initializer)
+  private static boolean iouring;
+
   // hot-path stats counters are only maintained when enabled (the /__stats
   // endpoint property); gating removes ~8 volatile RMWs per request
   private static boolean statsEnabled;
@@ -235,6 +238,12 @@ public final class ServerConfig {
         // scales far better on virtual threads. opt out with
         // robaho.net.httpserver.virtualThreads=false
         virtualThreads = Boolean.parseBoolean(System.getProperty(pkg + ".virtualThreads", "true"));
+
+        // 4.0.0 io_uring transport: OPT-IN — Linux only, and the blocking
+        // emulation rides a shared ring instead of the JDK's Read/Write
+        // pollers. unavailable (macOS, seccomp-blocked container) falls back
+        // to the channel path silently
+        iouring = Boolean.parseBoolean(System.getProperty(pkg + ".iouring", "false"));
 
         statsEnabled = Boolean.getBoolean(pkg + ".EnableStats");
 
@@ -436,6 +445,18 @@ public final class ServerConfig {
    */
   public static boolean virtualThreads() {
     return virtualThreads;
+  }
+
+  /**
+   * @return whether the 4.0.0 io_uring transport is enabled (Linux only,
+   *         opt-in). accepted connections ride the FFM ring's blocking
+   *         emulation instead of the JDK's Read/Write pollers; when
+   *         unavailable the server silently falls back to the channel
+   *         path. configured via {@code robaho.net.httpserver.iouring}
+   *         (default false)
+   */
+  public static boolean iouring() {
+    return iouring;
   }
 
   /**

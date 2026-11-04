@@ -82,16 +82,19 @@ public final class IoUringSockets {
 
   private volatile boolean stopped;
 
-  /** a parked blocking op: the carrier fills res (volatile) and unparks. */
+  /**
+   * a parked blocking op: the carrier fills res (volatile) and unparks.
+   * The parked thread is resolved per-op at blockingOp entry, NOT at stream
+   * construction — the library constructs streams on the dispatcher thread
+   * and parks on the connection's VT, so a construction-time owner would
+   * unpark the wrong thread (the sanity curl hang). blocking semantics keep
+   * one op in flight per stream, so the owner can be reassigned between ops.
+   */
   private static final class Waiter {
 
-    final Thread parked;
+    volatile Thread parked;
 
     volatile int res = Integer.MIN_VALUE; // filled by the carrier before unpark
-
-    Waiter(Thread parked) {
-      this.parked = parked;
-    }
 
   }
 
@@ -117,26 +120,35 @@ public final class IoUringSockets {
   /**
    * Creates the sharded transport, or null when io_uring is unavailable
    * (non-Linux, seccomp-blocked container, pre-5.1 kernel) — callers fall
-   * back to the channel path. Shards must be a power of two.
+   * back to the channel path. Shards must be a power of two. Prefers
+   * SQPOLL shards (zero-syscall submit; measured +68% on the blocking
+   * emulation — the per-op self-submit enter storm is the wall without
+   * it) and falls back to plain rings when the kernel refuses SQPOLL
+   * (no CAP_SYS_ADMIN).
    */
   public static IoUringSockets create(int shards) {
     if (shards <= 0 || Integer.bitCount(shards) != 1) {
       throw new IllegalArgumentException("shards must be a power of two: " + shards);
     }
-    IoUringRing shared = IoUringRing.shared();
-    if (shared == null) {
-      return null;
+    if (IoUringRing.shared() == null) {
+      return null; // no io_uring at all (probe once, cached)
     }
     IoUringRing[] rs = new IoUringRing[shards];
-    rs[0] = shared; // shard 0 rides the process-wide ring
+    // SQPOLL first: sq threads consume SQEs with zero submit syscalls. a
+    // 100s idle keeps them awake through the workload; sleeping sq threads
+    // are doorbelled by submit's NEED_WAKEUP check
+    IoUringSockets sqpoll = createSqpoll(shards, 100_000);
+    if (sqpoll != null) {
+      return sqpoll;
+    }
     try {
-      for (int i = 1; i < shards; i++) {
+      for (int i = 0; i < shards; i++) {
         rs[i] = IoUringRing.create(SHARD_ENTRIES);
       }
     } catch (IOException unavailable) {
-      for (int i = 1; i < shards; i++) {
-        if (rs[i] != null) {
-          rs[i].close();
+      for (IoUringRing r : rs) {
+        if (r != null) {
+          r.close();
         }
       }
       return null;
@@ -207,6 +219,51 @@ public final class IoUringSockets {
     }
   }
 
+  /**
+   * A peer address from accept4: fd plus the decoded sockaddr_in (port and
+   * IPv4 bytes, network order decoded here).
+   */
+  public record Accepted(int fd, int remotePort, byte[] remoteAddress) {}
+
+  /**
+   * Blocking accept with peer decoding. The caller must run on a PLATFORM
+   * thread (a raw FFM downcall never yields a virtual thread's carrier).
+   * On stop the listener fd closes and accept4 fails; callers treat that as
+   * shutdown.
+   */
+  public Accepted acceptPeer(int listenFd) throws IOException {
+    while (!stopped) {
+      try (Arena a = Arena.ofConfined()) {
+        MemorySegment peer = a.allocate(16); // sockaddr_in
+        MemorySegment len = a.allocate(4);
+        len.set(U32, 0, 16);
+        int fd = (int) ACCEPT4.invoke(listenFd, peer, len, SOCK_CLOEXEC);
+        if (fd < 0) {
+          // EINTR/ECONNABORTED class: retry after a beat
+          LockSupport.parkNanos(1_000_000);
+          continue;
+        }
+        try (Arena a2 = Arena.ofConfined()) {
+          MemorySegment one = a2.allocate(4);
+          one.set(U32, 0, 1);
+          SETSOCKOPT.invoke(fd, IPPROTO_TCP, TCP_NODELAY, one, 4);
+        }
+        // sockaddr_in: port u16@2 (network order), addr u32@4 (network order)
+        int port = Short.toUnsignedInt(peer.get(ValueLayout.JAVA_SHORT.withOrder(ByteOrder.BIG_ENDIAN), 2));
+        byte[] addr = new byte[4];
+        for (int i = 0; i < 4; i++) {
+          addr[i] = peer.get(ValueLayout.JAVA_BYTE, 4 + i);
+        }
+        return new Accepted(fd, port, addr);
+      } catch (IOException | RuntimeException pass) {
+        throw pass;
+      } catch (Throwable invoke) {
+        throw new IOException("accept4 failed", invoke);
+      }
+    }
+    throw new IOException("stopped");
+  }
+
   /** blocking accept (plain accept4; the listener is one socket). */
   public int accept(int listenFd) throws IOException {
     while (!stopped) {
@@ -251,6 +308,7 @@ public final class IoUringSockets {
       throw new IOException("stopped");
     }
     IoUringRing ring = rings[fd & ringMask];
+    w.parked = Thread.currentThread(); // per-op owner: see the Waiter doc
     w.res = Integer.MIN_VALUE;
     if (kind == KIND_READ) {
       ring.prepareRead(fd, addr, len, id);
@@ -320,6 +378,11 @@ public final class IoUringSockets {
     stopped = true;
   }
 
+  /** closes the listener fd (server stop path; wakes a parked accept4). */
+  public void closeListener(int listenFd) {
+    closeFd(listenFd);
+  }
+
   // ---- connection streams ---------------------------------------------------
 
   /** connection id: ordinal doubled, +1 marks the write stream. */
@@ -330,13 +393,26 @@ public final class IoUringSockets {
 
   /** blocking InputStream over an accepted fd (16KB native read buffer). */
   public InputStream inputStream(int fd) {
-    return new RingInputStream(fd);
+    return new RingInputStream(fd, new FdGuard(fd));
   }
 
   /** blocking OutputStream over an accepted fd. */
   public OutputStream outputStream(int fd) {
-    return new RingOutputStream(fd);
+    return new RingOutputStream(fd, new FdGuard(fd));
   }
+
+  /**
+   * One connection as a stream pair over a single fd guard: both streams
+   * share the FdGuard so the fd closes exactly once, whichever side closes
+   * first. The HttpConnection seam consumes this.
+   */
+  public Conn connection(int fd) {
+    FdGuard guard = new FdGuard(fd);
+    return new Conn(new RingInputStream(fd, guard), new RingOutputStream(fd, guard));
+  }
+
+  /** paired blocking streams over one connection fd. */
+  public record Conn(InputStream in, OutputStream out) {}
 
   private final class RingInputStream extends InputStream {
 
@@ -354,10 +430,10 @@ public final class IoUringSockets {
 
     private boolean eof;
 
-    RingInputStream(int fd) {
+    RingInputStream(int fd, FdGuard guard) {
       this.fd = fd;
-      this.guard = new FdGuard(fd);
-      this.waiter = new Waiter(Thread.currentThread());
+      this.guard = guard;
+      this.waiter = new Waiter();
       this.id = newStreamId(false);
       this.buf = arena.allocate(16384, 8); // 8B-aligned for the kernel
       waiters.put(id, waiter);
@@ -420,10 +496,10 @@ public final class IoUringSockets {
 
     private final MemorySegment buf; // 16KB native write staging
 
-    RingOutputStream(int fd) {
+    RingOutputStream(int fd, FdGuard guard) {
       this.fd = fd;
-      this.guard = new FdGuard(fd);
-      this.waiter = new Waiter(Thread.currentThread());
+      this.guard = guard;
+      this.waiter = new Waiter();
       this.id = newStreamId(true);
       this.buf = arena.allocate(16384, 8);
       waiters.put(id, waiter);

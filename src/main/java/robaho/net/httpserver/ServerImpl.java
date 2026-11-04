@@ -82,6 +82,17 @@ class ServerImpl {
 
   private final ServerSocket socket;
 
+  // 4.0.0 io_uring transport: a non-negative uringListenFd means an FFM
+  // listener owns the port (the JDK channel above stays unbound and
+  // dormant) and accepted connections ride the ring's blocking emulation
+  // instead of the JDK Read/Write pollers. see tryUringBind for the
+  // availability/fallback rules
+  private robaho.net.httpserver.iouring.IoUringSockets uringSockets;
+
+  private int uringListenFd = -1;
+
+  private InetSocketAddress uringAddr;
+
   private final Set<HttpConnection> allConnections = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
   // per-instance (was static): a JVM-global registry made every server's
@@ -193,9 +204,8 @@ class ServerImpl {
     https = protocol.equalsIgnoreCase("https");
     contexts = new ContextList();
     if (addr != null) {
-      socket.bind(addr, backlog);
+      bindListener(addr, backlog);
       bound = true;
-      logger.log(Level.INFO, "server bound to " + socket.getLocalSocketAddress() + " with backlog " + backlog);
     }
     dispatcher = new Dispatcher();
     // the connection-cleaner task is NOT scheduled here: it is attached
@@ -263,9 +273,50 @@ class ServerImpl {
     if (addr == null) {
       throw new NullPointerException("null address");
     }
+    bindListener(addr, backlog);
+    bound = true;
+  }
+
+  /**
+   * Binds the listener: the 4.0.0 io_uring transport when enabled and
+   * available (an FFM listener on the port — the JDK channel stays
+   * unbound), else the classic channel-backed ServerSocket.
+   */
+  private void bindListener(InetSocketAddress addr, int backlog) throws IOException {
+    if (tryUringBind(addr, backlog)) {
+      logger.log(Level.INFO, "server bound to " + addr + " with backlog " + backlog + " (io_uring)");
+      return;
+    }
     socket.bind(addr, backlog);
     logger.log(Level.INFO, "server bound to " + socket.getLocalSocketAddress() + " with backlog " + backlog);
-    bound = true;
+  }
+
+  /**
+   * Attaches the io_uring transport for this listener. false (classic path)
+   * when disabled, https is configured (TLS cannot ride raw fds), the port
+   * is ephemeral (getAddress would lie about the real port), or io_uring is
+   * unavailable — non-Linux, seccomp-blocked container, ring setup refused.
+   * Unavailability is a normal deployment state: DEBUG, never an error.
+   */
+  private boolean tryUringBind(InetSocketAddress addr, int backlog) {
+    if (!ServerConfig.iouring() || https || addr.getPort() == 0) {
+      return false;
+    }
+    var sockets = robaho.net.httpserver.iouring.IoUringSockets.create(4);
+    if (sockets == null) {
+      logger.log(Level.DEBUG, "io_uring transport unavailable; using the channel path");
+      return false;
+    }
+    try {
+      uringListenFd = sockets.listen(addr.getPort(), backlog);
+    } catch (IOException failed) {
+      sockets.stop();
+      logger.log(Level.DEBUG, "io_uring listener bind failed: " + failed.getMessage());
+      return false;
+    }
+    uringSockets = sockets;
+    uringAddr = addr;
+    return true;
   }
 
   public void start() {
@@ -344,6 +395,13 @@ class ServerImpl {
     try {
       socket.close();
     } catch (IOException e) {}
+    if (uringSockets != null) {
+      // closing the listener fd wakes a dispatcher parked in accept4; the
+      // uring-side stop() halts the shard carriers
+      uringSockets.stop();
+      uringSockets.closeListener(uringListenFd);
+      uringListenFd = -1;
+    }
     if (executor instanceof DefaultExecutor de) {
       // since we created it, shut it down when stopping because it is private
       de.shutdown();
@@ -475,6 +533,9 @@ class ServerImpl {
   public InetSocketAddress getAddress() {
     // no AccessController.doPrivileged: the socket is owned by this
     // instance and reading its local address needs no privileges
+    if (uringListenFd >= 0) {
+      return uringAddr;
+    }
     return (InetSocketAddress) socket.getLocalSocketAddress();
   }
 
@@ -489,7 +550,18 @@ class ServerImpl {
       long backoff = 1;
       while (true) {
         try {
-          Socket s = socket.accept();
+          Socket s;
+          if (uringListenFd >= 0) {
+            // raw FFM accept: this loop runs on the dedicated dispatcher
+            // platform thread, so a blocking accept4 never pins a VT
+            // carrier. the accepted conn rides the ring's blocking
+            // emulation (IoUringSocket) through the same
+            // acceptConnection flow as a channel socket
+            s = new robaho.net.httpserver.iouring.IoUringSocket(uringSockets, uringSockets.acceptPeer(uringListenFd),
+                uringAddr.getPort());
+          } else {
+            s = socket.accept();
+          }
           backoff = 1;
           try {
             executor.execute(() -> {
