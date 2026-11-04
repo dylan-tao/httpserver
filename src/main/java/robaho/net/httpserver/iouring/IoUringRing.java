@@ -66,7 +66,25 @@ public final class IoUringRing implements AutoCloseable {
 
   static final byte OP_RECV = 27;
 
+  static final byte OP_PROVIDE_BUFFERS = 31; // verified live by MultishotProbe
+
   static final byte OP_SHUTDOWN = 34;
+
+  // ---- sqe/cqe flag bits (io_uring.h:100-125,285-305,340-350) --------------
+
+  /** IOSQE_BUFFER_SELECT = 1U << 5 (BIT enum; bit 4 is IOSQE_ASYNC). */
+  static final byte SQE_BUFFER_SELECT = 1 << 5;
+
+  /** IORING_RECV_MULTISHOT lives in ioprio (io_uring.h:301). */
+  static final short RECV_MULTISHOT = 1 << 1;
+
+  /** IORING_CQE_F_BUFFER: the cqe flags' upper 16 bits carry the buffer id. */
+  static final int CQE_F_BUFFER = 1;
+
+  /** IORING_CQE_F_MORE: the multishot stays armed after this completion. */
+  static final int CQE_F_MORE = 2;
+
+  static final int CQE_BUFFER_SHIFT = 16;
 
   // ---- setup/enter/feature flags (io_uring.h:409,412,434-442) --------------
 
@@ -93,8 +111,10 @@ public final class IoUringRing implements AutoCloseable {
 
   // ---- struct io_uring_sqe (io_uring.h:22, 64B) ----------------------------
 
+  // SQE_BUF_INDEX_OR_GROUP (u16 @40): the packed union slot — fixed-buffer
+  // index for FIXED ops, buffer group id for BUFFER_SELECT/PROVIDE_BUFFERS
   static final long SQE_OPCODE = 0, SQE_FLAGS = 1, SQE_IOPRIO = 2, SQE_FD = 4, SQE_OFF = 8, SQE_ADDR = 16, SQE_LEN = 24,
-      SQE_RW_FLAGS = 28, SQE_USER_DATA = 32;
+      SQE_RW_FLAGS = 28, SQE_USER_DATA = 32, SQE_BUF_INDEX_OR_GROUP = 40;
 
   static final int SQE_SIZE = 64;
 
@@ -205,7 +225,7 @@ public final class IoUringRing implements AutoCloseable {
   private final Object reapLock = new Object();
 
   /** a reaped completion. res is the syscall's return: >= 0 bytes moved, or -errno. */
-  public record Completion(long userData, int res) {
+  public record Completion(long userData, int res, int flags) {
 
     public boolean failed() {
       return res < 0;
@@ -213,6 +233,16 @@ public final class IoUringRing implements AutoCloseable {
 
     public int errno() {
       return -res;
+    }
+
+    /** multishot: the provided-buffer id in the flags' upper 16 bits. */
+    public int bufferId() {
+      return (flags >>> CQE_BUFFER_SHIFT) & 0xFFFF;
+    }
+
+    /** multishot: the completion carried a provided-buffer selection. */
+    public boolean fromBufferPool() {
+      return (flags & CQE_F_BUFFER) != 0;
     }
 
   }
@@ -407,26 +437,84 @@ public final class IoUringRing implements AutoCloseable {
       throw new IOException("ring closed");
     }
     synchronized (submitLock) {
-      int head = sqRing.get(U32, sqHeadOff);
-      int tail = sqRing.get(U32, sqTailOff);
-      if (tail - head >= sqEntries) {
-        throw new IOException("SQ full (" + (tail - head) + " outstanding)");
-      }
-      int idx = tail & sqMask;
-      MemorySegment sqe = sqes.asSlice((long) idx * SQE_SIZE, SQE_SIZE);
-      sqe.fill((byte) 0);
-      sqe.set(ValueLayout.JAVA_BYTE, SQE_OPCODE, opcode);
-      sqe.set(ValueLayout.JAVA_INT, SQE_FD, fd);
-      // off = -1 (u64 @8): read/write at the socket's own cursor, not a file
-      // offset — preadv2/pwritev2 with -1 offset semantics
-      sqe.set(U64, SQE_OFF, -1L);
-      sqe.set(U64, SQE_ADDR, addr);
-      sqe.set(U32, SQE_LEN, len);
-      sqe.set(U64, SQE_USER_DATA, userData);
-      sqRing.set(U32, sqArrayOff + (long) idx * 4L, idx);
-      VarHandle.releaseFence(); // SQE + array entry visible before tail publish
-      sqRing.set(U32, sqTailOff, tail + 1); // publish: the kernel consumes it
+      reserveSqeLocked();
+      writeSqeLocked(opcode, fd, -1L, addr, len, userData, (byte) 0, (short) 0, -1);
     }
+  }
+
+  /**
+   * Arms one IORING_OP_RECV multishot (the MultishotProbe-validated form):
+   * flags IOSQE_BUFFER_SELECT, ioprio IORING_RECV_MULTISHOT, len 0, no
+   * buffer address — the kernel picks each delivered datum from buffer
+   * group {@code bgid} and reports its id in the CQE flags' upper 16 bits.
+   * ONE SQE delivers unbounded completions (F_MORE stays set while armed);
+   * re-arm by calling again after EOF or a fatal completion.
+   */
+  public void prepareMultishotRecv(int fd, int bgid, long userData) throws IOException {
+    if (closed) {
+      throw new IOException("ring closed");
+    }
+    synchronized (submitLock) {
+      reserveSqeLocked();
+      // buf_index (u16 @40) carries the bgid in the buffer-select form;
+      // REQ_F_BUFFER_SELECT comes from SQE_BUFFER_SELECT, RECV_MULTISHOT
+      // from ioprio — exactly the probe's verified field set
+      writeSqeLocked(OP_RECV, fd, 0L, 0L, 0, userData, SQE_BUFFER_SELECT, RECV_MULTISHOT, bgid);
+    }
+  }
+
+  /**
+   * IORING_OP_PROVIDE_BUFFERS (the MultishotProbe-validated v6.1 mapping):
+   * nbufs rides the sqe->fd field (kbuf.c:319 — fd is NOT a file here),
+   * starting bid in off, bgid in the u16 buf_index/buf_group slot. Hands
+   * {@code nbufs} slices of {@code bufSize} starting at {@code addr} back
+   * to the kernel's group; success completes with res=0.
+   */
+  public void prepareProvideBuffers(long addr, int bufSize, int nbufs, int bid, int bgid, long userData) throws IOException {
+    if (closed) {
+      throw new IOException("ring closed");
+    }
+    synchronized (submitLock) {
+      reserveSqeLocked();
+      // op=PROVIDE_BUFFERS; off=bid; fd=nbufs; u16@40=bgid; addr=pool base
+      writeSqeLocked(OP_PROVIDE_BUFFERS, nbufs, bid, addr, bufSize, userData, (byte) 0, (short) 0, bgid);
+    }
+  }
+
+  /** caller holds submitLock. Reserves the next SQ slot and zeroes the SQE. */
+  private int reserveSqeLocked() throws IOException {
+    int head = sqRing.get(U32, sqHeadOff);
+    int tail = sqRing.get(U32, sqTailOff);
+    if (tail - head >= sqEntries) {
+      throw new IOException("SQ full (" + (tail - head) + " outstanding)");
+    }
+    int idx = tail & sqMask;
+    sqes.asSlice((long) idx * SQE_SIZE, SQE_SIZE).fill((byte) 0);
+    return idx;
+  }
+
+  /** caller holds submitLock; slot already zeroed by reserveSqeLocked. */
+  private void writeSqeLocked(byte opcode, int fdField, long offField, long addr, int len, long userData, byte sqeFlags,
+      short ioprio, int bufIndexOrBgid) throws IOException {
+    int tail = sqRing.get(U32, sqTailOff);
+    int idx = tail & sqMask;
+    MemorySegment sqe = sqes.asSlice((long) idx * SQE_SIZE, SQE_SIZE);
+    sqe.set(ValueLayout.JAVA_BYTE, SQE_OPCODE, opcode);
+    sqe.set(ValueLayout.JAVA_BYTE, SQE_FLAGS, sqeFlags);
+    sqe.set(ValueLayout.JAVA_SHORT, SQE_IOPRIO, ioprio);
+    sqe.set(ValueLayout.JAVA_INT, SQE_FD, fdField);
+    sqe.set(U64, SQE_OFF, offField);
+    sqe.set(U64, SQE_ADDR, addr);
+    sqe.set(U32, SQE_LEN, len);
+    sqe.set(U64, SQE_USER_DATA, userData);
+    if (bufIndexOrBgid >= 0) {
+      // u16 at offset 40 in both uses: fixed-buffer index / (provide-)bgid;
+      // -1 leaves it zeroed
+      sqe.set(ValueLayout.JAVA_SHORT, SQE_BUF_INDEX_OR_GROUP, (short) bufIndexOrBgid);
+    }
+    sqRing.set(U32, sqArrayOff + (long) idx * 4L, idx);
+    VarHandle.releaseFence(); // SQE + array entry visible before tail publish
+    sqRing.set(U32, sqTailOff, tail + 1); // publish: the kernel consumes it
   }
 
   /**
@@ -541,9 +629,10 @@ public final class IoUringRing implements AutoCloseable {
     MemorySegment cqe = cqRing.asSlice(cqCqesOff + (long) (head & cqMask) * CQE_SIZE, CQE_SIZE);
     long userData = cqe.get(U64, CQE_USER_DATA);
     int res = cqe.get(U32, CQE_RES);
+    int flags = cqe.get(U32, CQE_FLAGS);
     VarHandle.acquireFence(); // CQE consumed before head publish
     cqRing.set(U32, cqHeadOff, head + 1);
-    return new Completion(userData, res);
+    return new Completion(userData, res, flags);
   }
 
   /**

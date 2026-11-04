@@ -160,6 +160,7 @@ public final class IoUringSockets {
     this.rings = rings;
     this.ringMask = rings.length - 1;
     this.arena = Arena.ofShared();
+    this.pools = new BufferPool[rings.length];
     for (int i = 0; i < rings.length; i++) {
       final int idx = i;
       Thread.ofPlatform().name("iouring-carrier-" + i).daemon(true).start(() -> carrierLoop(rings[idx]));
@@ -338,12 +339,21 @@ public final class IoUringSockets {
     return w.res;
   }
 
-  /** one completion -> its waiter; callable from ANY thread (spin or carrier). */
+  /**
+   * one completion -> its target: a per-op waiter (write path), a multishot
+   * channel (read path), or nothing (buffer-pool provides carry userData 0;
+   * stale ids after a close are dropped by design). callable from ANY thread.
+   */
   private void completeOne(IoUringRing.Completion c) {
     Waiter w = waiters.get(c.userData());
     if (w != null) {
       w.res = c.res();
       LockSupport.unpark(w.parked);
+      return;
+    }
+    MultishotChannel channel = multishots.get(c.userData());
+    if (channel != null) {
+      channel.onCompletion(c.res(), c.flags());
     }
   }
 
@@ -404,11 +414,344 @@ public final class IoUringSockets {
   /**
    * One connection as a stream pair over a single fd guard: both streams
    * share the FdGuard so the fd closes exactly once, whichever side closes
-   * first. The HttpConnection seam consumes this.
+   * first. The HttpConnection seam consumes this. The read side rides a
+   * multishot channel (ONE kernel recv per connection, served from a
+   * provided-buffer pool) when arming succeeds; any arm failure degrades
+   * to the per-read blocking stream — identical semantics, only the
+   * per-read SQE post returns.
    */
   public Conn connection(int fd) {
     FdGuard guard = new FdGuard(fd);
-    return new Conn(new RingInputStream(fd, guard), new RingOutputStream(fd, guard));
+    InputStream in = new RingInputStream(fd, guard);
+    if (MULTISHOT) {
+      try {
+        MultishotChannel channel = armMultishot(fd);
+        if (channel != null) {
+          in = channel.new Stream(guard);
+        }
+      } catch (IOException armFailed) {
+        // arm refused (SQ full, ring dying): per-read fallback above stays
+      }
+    }
+    return new Conn(in, new RingOutputStream(fd, guard));
+  }
+
+  // ---- multishot read path ---------------------------------------------------
+
+  /** multishot channels by stream id: the carrier's second dispatch table. */
+  private final ConcurrentHashMap<Long, MultishotChannel> multishots = new ConcurrentHashMap<>();
+
+  /** per-shard buffer pools, created lazily on the first connection. */
+  private final BufferPool[] pools;
+
+  /**
+   * multishot read path knob: OFF by default. v1 measured WORSE on every
+   * workload in the same-container differential (h1 -25%, seq -30%, mux8
+   * -54%, upload -100% vs the per-read stream): the per-delivery cost
+   * (synchronized pending queue + ArrayDeque entry + leftover bookkeeping
+   * + lazy recycle batches) exceeds the plain 16KB-read cost it replaced
+   * at these message sizes. the mechanism is correct (8MB uploads
+   * byte-verified) and stays armed for a v2 that elides the queue — zero
+   * when the copy happens directly on the carrier or the delivery lands
+   * in a reader-owned slot. opt back in with
+   * {@code -Drobaho.net.httpserver.iouring.multishot=true}.
+   */
+  private static final boolean MULTISHOT =
+      Boolean.parseBoolean(System.getProperty("robaho.net.httpserver.iouring.multishot", "false"));
+
+  /** buffer-pool sizing: 128 x 4KB = 512KB per shard. */
+  private static final int POOL_BUFFERS = 128;
+
+  private static final int POOL_BUF_SIZE = 4096;
+
+  /** pool group ids are u16: a global counter keeps pools collision-free. */
+  private static final java.util.concurrent.atomic.AtomicInteger BGIDS = new java.util.concurrent.atomic.AtomicInteger();
+
+  /**
+   * Arms one multishot RECV for the connection. Registration into the
+   * dispatch map happens BEFORE the submit — a completion can land between
+   * a later registration and would otherwise be dropped (the probe's
+   * early-reap lesson). null when this shard cannot host a pool.
+   */
+  private MultishotChannel armMultishot(int fd) throws IOException {
+    int shard = fd & ringMask;
+    BufferPool pool = pools[shard];
+    if (pool == null) {
+      pool = createPool(rings[shard]);
+      pools[shard] = pool;
+      if (pool == null) {
+        return null; // this shard stays on the per-read path
+      }
+    }
+    MultishotChannel channel = new MultishotChannel(fd, pool);
+    multishots.put(channel.id, channel);
+    IoUringRing ring = rings[shard];
+    ring.prepareMultishotRecv(fd, pool.bgid(), channel.id);
+    ring.submit();
+    return channel;
+  }
+
+  private BufferPool createPool(IoUringRing ring) {
+    try {
+      return new BufferPool(ring, BGIDS.incrementAndGet());
+    } catch (IOException failed) {
+      return null;
+    }
+  }
+
+  /**
+   * The multishot read side of one connection: ONE RECV SQE armed once
+   * delivers unbounded completions. The carrier enqueues (bufferId, len)
+   * deliveries and unparks the reader; the reader copies out of the pool
+   * slice and recycles drained buffers in batches of RECYCLE_AT via
+   * provide-buffers SQEs (userData 0: their completions route nowhere).
+   * Why this shape (the measured read-path layout): the per-read
+   * blockingOp costs an SQE post + submit + park round trip per request;
+   * here the SQE posts once per CONNECTION, parks happen only when the
+   * delivery queue is empty, and back-to-back requests drain multiple
+   * completions per park cycle (pipelined by the kernel's recv retry).
+   */
+  final class MultishotChannel {
+
+    private final int fd;
+
+    private final long id;
+
+    private final BufferPool pool;
+
+    /** delivered-but-unconsumed (bufferId, len) pairs; carrier adds, reader removes. */
+    private final java.util.ArrayDeque<long[]> pending = new java.util.ArrayDeque<>();
+
+    /** buffer ids drained by the reader, pending recycle (reader-thread-confined). */
+    private final java.util.ArrayDeque<Integer> drained = new java.util.ArrayDeque<>();
+
+    /** the parked reader; recorded before every park (record-then-recheck). */
+    private volatile Thread reader;
+
+    private volatile boolean eof;
+
+    private volatile int error;
+
+    private volatile boolean armed = true;
+
+    private static final long[] EOF_ENTRY = new long[] {-1, -1};
+
+    private static final int RECYCLE_AT = 4;
+
+    MultishotChannel(int fd, BufferPool pool) {
+      this.fd = fd;
+      this.pool = pool;
+      this.id = newStreamId(false);
+    }
+
+    /** the carrier's dispatch entry — one completion of the multishot SQE. */
+    void onCompletion(int res, int flags) {
+      if (res > 0) {
+        if ((flags & IoUringRing.CQE_F_BUFFER) != 0) {
+          int bid = (flags >>> IoUringRing.CQE_BUFFER_SHIFT) & 0xFFFF;
+          synchronized (pending) {
+            pending.addLast(new long[] {bid, res});
+          }
+        }
+        // res > 0 without F_BUFFER cannot carry data (no buffer selected)
+      } else if (res == 0) {
+        eof = true; // orderly EOF: already-queued data still delivers
+      } else if (res == -105 /* ENOBUFS: pool starvation */) {
+        // recoverable: the kernel drained every provided buffer while the
+        // reader lagged; the unconsumed socket data stays queued and the
+        // rearm path (flushRecycle + one new SQE) picks it up. treating
+        // this as fatal killed 8MB uploads with an empty response
+        armed = false;
+      } else if (error == 0) {
+        error = -res; // -errno: ECONNRESET and friends end the channel
+      }
+      if ((flags & IoUringRing.CQE_F_MORE) == 0) {
+        // the kernel ended the multishot: EOF, error, or buffer-pool
+        // starvation (-ENOBUFS with data still queued in the socket)
+        armed = false;
+      }
+      Thread r = reader;
+      if (r != null) {
+        LockSupport.unpark(r);
+      }
+    }
+
+    int read(byte[] b, int off, int len) throws IOException {
+      long[] d = take();
+      if (d == EOF_ENTRY) {
+        return -1; // the sentinel: {bufferId:-1, len:-1} must never slice
+      }
+      int n = (int) Math.min(len, d[1]);
+      MemorySegment.ofArray(b).asSlice(off, n).copyFrom(pool.region().asSlice(d[0] * pool.bufSize(), n));
+      if (n == d[1]) {
+        recycle((int) d[0]);
+      } else {
+        d[1] -= n; // remainder stays queued on the same buffer slot
+        synchronized (pending) {
+          pending.addFirst(d);
+        }
+      }
+      return n;
+    }
+
+    /** parks until a delivery, EOF or an error is visible; re-arms on disarm. */
+    private long[] take() throws IOException {
+      reader = Thread.currentThread(); // record-then-recheck
+      long[] d;
+      while ((d = pollPending()) == null) {
+        if (error != 0) {
+          throw new IOException("multishot read failed: errno " + error);
+        }
+        if (eof) {
+          return EOF_ENTRY;
+        }
+        if (!armed) {
+          rearm(); // starvation disarm: flush the recycle backlog, re-arm
+          continue;
+        }
+        LockSupport.park();
+      }
+      return d;
+    }
+
+    private long[] pollPending() {
+      synchronized (pending) {
+        return pending.pollFirst();
+      }
+    }
+
+    /** hands a drained buffer back; RECYCLE_AT batches the provides. */
+    private void recycle(int bid) {
+      drained.addLast(bid);
+      if (drained.size() >= RECYCLE_AT) {
+        flushRecycle();
+      }
+    }
+
+    /** posts provide-buffers SQEs for every drained id (contiguous runs merge). */
+    private void flushRecycle() {
+      if (drained.isEmpty() || stopped) {
+        return;
+      }
+      java.util.ArrayList<Integer> ids = new java.util.ArrayList<>(drained);
+      drained.clear();
+      int first = ids.get(0);
+      for (int i = 1; i < ids.size(); i++) {
+        if (ids.get(i) != first + i) {
+          first = -1; // non-contiguous: per-id provides
+          break;
+        }
+      }
+      try {
+        if (first >= 0) {
+          pool.provide(ids.size(), first);
+        } else {
+          for (int bid : ids) {
+            pool.provide(1, bid);
+          }
+        }
+      } catch (IOException io) {
+        // the shard is dying: the next read surfaces it via error
+      }
+    }
+
+    /** reader-side re-arm after a kernel-side disarm (pool starvation). */
+    private void rearm() throws IOException {
+      flushRecycle(); // the pool must not re-arm empty: -ENOBUFS would loop
+      IoUringRing ring = rings[fd & ringMask];
+      ring.prepareMultishotRecv(fd, pool.bgid(), id);
+      ring.submit();
+      armed = true;
+    }
+
+    /** the blocking-InputStream facade over this channel. */
+    final class Stream extends InputStream {
+
+      private final FdGuard guard;
+
+      Stream(FdGuard guard) {
+        this.guard = guard;
+      }
+
+      @Override
+      public int read(byte[] b, int off, int len) throws IOException {
+        if (len == 0) {
+          return 0;
+        }
+        return MultishotChannel.this.read(b, off, len);
+      }
+
+      @Override
+      public int read() throws IOException {
+        byte[] one = new byte[1];
+        int n = read(one, 0, 1);
+        return n == -1 ? -1 : one[0] & 0xFF;
+      }
+
+      @Override
+      public int available() {
+        long total = 0;
+        synchronized (pending) {
+          for (long[] d : pending) {
+            total += d[1];
+          }
+        }
+        return (int) Math.min(total, Integer.MAX_VALUE);
+      }
+
+      @Override
+      public void close() {
+        multishots.remove(id);
+        eof = true;
+        armed = false;
+        flushRecycle();
+        guard.close();
+      }
+
+    }
+
+  }
+
+  /** per-shard contiguous buffer pool backing the multishot channels. */
+  final class BufferPool {
+
+    private final IoUringRing ring;
+
+    private final MemorySegment region;
+
+    private final int bufSize;
+
+    private final int bgid;
+
+    BufferPool(IoUringRing ring, int bgid) throws IOException {
+      this.ring = ring;
+      this.bgid = bgid;
+      this.bufSize = POOL_BUF_SIZE;
+      this.region = arena.allocate((long) POOL_BUFFERS * bufSize, 8);
+      // userData 0: the provide's own completion routes to no waiter and
+      // no channel (completeOne skips unknown ids by design)
+      ring.prepareProvideBuffers(region.address(), bufSize, POOL_BUFFERS, 0, bgid, 0L);
+      ring.submit();
+    }
+
+    int bgid() {
+      return bgid;
+    }
+
+    int bufSize() {
+      return bufSize;
+    }
+
+    MemorySegment region() {
+      return region;
+    }
+
+    void provide(int n, int bid) throws IOException {
+      long base = region.address() + (long) bid * bufSize;
+      ring.prepareProvideBuffers(base, bufSize, n, bid, bgid, 0L);
+      ring.submit();
+    }
+
   }
 
   /** paired blocking streams over one connection fd. */

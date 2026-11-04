@@ -46,4 +46,9 @@
     <Match><Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE"/>
         <Class name="robaho.net.httpserver.http2.frame.DataFrameBodyPool"/>
     </Match>
+    <!-- shared() returns the singleton ring handle by design: the ring IS
+         the API for the socket layer, not an internal state copy -->
+    <Match><Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="robaho.net.httpserver.iouring.IoUringRing"/>
+    </Match>
 </FindBugsFilter>
