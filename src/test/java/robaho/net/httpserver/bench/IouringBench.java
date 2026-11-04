@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import robaho.net.httpserver.iouring.IoUringRing;
+import robaho.net.httpserver.iouring.IoUringSockets;
 
 /**
  * The syscall-floor A/B for the 4.0.0 io_uring backend, run INSIDE the
@@ -46,10 +47,48 @@ public final class IouringBench {
     switch (mode) {
       case "classic" -> classic(port);
       case "uring" -> uring(port);
+      case "uring-vt" -> uringVt(port);
       default -> {
-        System.err.println("usage: IouringBench <classic|uring> [port]");
+        System.err.println("usage: IouringBench <classic|uring|uring-vt> [port]");
         System.exit(2);
       }
+    }
+  }
+
+  // ---- uring-vt arm: the library's future shape -----------------------------
+  // one VT per connection + blocking streams over the shared ring (the
+  // IoUringSockets layer). same concurrency model as the classic arm: the
+  // ONLY difference is the IO mechanism — the honest apples-to-apples for
+  // the HttpConnection integration.
+
+  private static void uringVt(int port) throws Exception {
+    IoUringRing ring = IoUringRing.shared();
+    if (ring == null) {
+      System.err.println("uring-vt: IoUringRing unavailable; refusing to fake the A/B");
+      System.exit(3);
+    }
+    var sockets = new IoUringSockets(ring);
+    int listenFd = sockets.listen(port, 8192);
+    System.out.println("uring-vt: listening on 127.0.0.1:" + port);
+    while (true) {
+      int fd = sockets.accept(listenFd);
+      Thread.ofVirtual().name("vt-conn-" + fd).start(() -> serveUringVt(sockets, fd));
+    }
+  }
+
+  private static void serveUringVt(IoUringSockets sockets, int fd) {
+    var buf = new byte[16384];
+    try (var in = sockets.inputStream(fd); var out = sockets.outputStream(fd)) {
+      while (true) {
+        int n = in.read(buf);
+        if (n < 0) {
+          return;
+        }
+        out.write(RESP);
+        out.flush();
+      }
+    } catch (Exception ignored) {
+      // connection noise: close via the implicit try-with-resources
     }
   }
 

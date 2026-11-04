@@ -128,7 +128,9 @@ public final class IoUringRing implements AutoCloseable {
 
   private static final long SYS_IO_URING_ENTER = 426;
 
-  private static final long SYS_IO_URING_REGISTER = 427;
+  // SYS_IO_URING_REGISTER (427) is the third io_uring syscall: buffer/file
+  // table registration for the FIXED opcodes. unused by this ring (raw
+  // READ/WRITE only) — noted here so the syscall family stays enumerable
 
   private static final long IORING_OFF_SQ_RING = 0L;
 
@@ -233,12 +235,15 @@ public final class IoUringRing implements AutoCloseable {
       if (sharedProbed) {
         return null;
       }
-      if (!System.getProperty("os.name", "").toLowerCase().contains("linux")) {
+      if (!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("linux")) {
         sharedProbed = true;
         return null; // macOS never gains io_uring; no point retrying
       }
       try {
-        sharedRing = new IoUringRing(256);
+        // 8K SQEs: the shared ring carries at most 2 in-flight ops per
+        // connection (one read + one write) of a few thousand connections;
+        // 256 would overflow the SQ the moment a real server attaches
+        sharedRing = new IoUringRing(8192);
       } catch (IOException unavailable) {
         // EPERM (docker default seccomp) or pre-5.1 kernel: stay on the
         // channel path permanently

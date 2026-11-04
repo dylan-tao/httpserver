@@ -47,7 +47,10 @@ run_arm() { # $1 = classic|uring
 echo "== classic arm =="
 run_arm classic
 echo
-echo "== uring arm (includes the ring round-trip gate) =="
+echo "== uring arm (raw carrier, one thread) =="
 run_arm uring
+echo
+echo "== uring-vt arm (VT per connection, blocking streams over the ring) =="
+run_arm uring-vt
 echo
 echo "A/B complete. compare RESULT lines above."
