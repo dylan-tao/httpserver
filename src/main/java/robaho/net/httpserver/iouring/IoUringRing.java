@@ -513,18 +513,37 @@ public final class IoUringRing implements AutoCloseable {
    */
   public Completion pollCompletion() {
     synchronized (reapLock) {
-      int head = cqRing.get(U32, cqHeadOff);
-      int tail = cqRing.get(U32, cqTailOff);
-      if (head == tail) {
-        return null;
-      }
-      MemorySegment cqe = cqRing.asSlice(cqCqesOff + (long) (head & cqMask) * CQE_SIZE, CQE_SIZE);
-      long userData = cqe.get(U64, CQE_USER_DATA);
-      int res = cqe.get(U32, CQE_RES);
-      VarHandle.acquireFence(); // CQE consumed before head publish
-      cqRing.set(U32, cqHeadOff, head + 1);
-      return new Completion(userData, res);
+      return pollLocked();
     }
+  }
+
+  /**
+   * Lock-free probe for the spin path: reads the CQ head/tail WITHOUT the
+   * reap mutex; when empty (the overwhelmingly common spin outcome) it
+   * costs two mapped-memory loads and no lock traffic. When non-empty it
+   * falls back to the locked poll — the CAS-style optimistic path would
+   * need head-update atomicity that the lock provides anyway.
+   */
+  public Completion tryPollCompletion() {
+    if (cqRing.get(U32, cqHeadOff) == cqRing.get(U32, cqTailOff)) {
+      return null; // empty: the cheap answer, zero lock traffic
+    }
+    return pollCompletion();
+  }
+
+  /** caller holds reapLock. */
+  private Completion pollLocked() {
+    int head = cqRing.get(U32, cqHeadOff);
+    int tail = cqRing.get(U32, cqTailOff);
+    if (head == tail) {
+      return null;
+    }
+    MemorySegment cqe = cqRing.asSlice(cqCqesOff + (long) (head & cqMask) * CQE_SIZE, CQE_SIZE);
+    long userData = cqe.get(U64, CQE_USER_DATA);
+    int res = cqe.get(U32, CQE_RES);
+    VarHandle.acquireFence(); // CQE consumed before head publish
+    cqRing.set(U32, cqHeadOff, head + 1);
+    return new Completion(userData, res);
   }
 
   /**

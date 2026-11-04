@@ -235,6 +235,16 @@ public final class IoUringSockets {
    * Posts the op on the fd's shard and parks until that shard's carrier
    * completes it. res is reset BEFORE the publish (see the class doc for
    * why no stale completion can race the reset).
+   * Asymmetric wait: socket WRITES complete warm — the sq thread consumes
+   * the SQE within microseconds and the buffer has space — so a SHORT spin
+   * avoids the park/unpark round trip. READS wait on network RTT; spinning
+   * for them burned FJP workers and starved runnable VTs (measured: a
+   * uniform 50us spin collapsed 272k -> 144k rps at 6.7 cores — with VTs
+   * outnumbering cores, the park/unpark handoff is CHEAPER than spinning),
+   * so reads park immediately. While a write spins, the thread also reaps
+   * ready CQEs ("helping"): a reaped completion may complete a sibling
+   * without a carrier dispatch. Reaping is safe from any thread (the reap
+   * lock serializes CQ head advance).
    */
   private int blockingOp(Waiter w, long id, byte kind, int fd, long addr, int len) throws IOException {
     if (stopped) {
@@ -248,11 +258,47 @@ public final class IoUringSockets {
       ring.prepareWrite(fd, addr, len, id);
     }
     ring.submit(); // publish; this enter also carries any other shard ops
+    long deadline = kind == KIND_WRITE ? System.nanoTime() + WRITE_SPIN_NANOS : 0L;
     while (w.res == Integer.MIN_VALUE) {
-      LockSupport.park();
+      if (deadline != 0L) {
+        Thread.onSpinWait();
+        IoUringRing.Completion c = ring.tryPollCompletion();
+        if (c != null) {
+          completeOne(c);
+          if (w.res != Integer.MIN_VALUE) {
+            return w.res; // spin reaped our own completion: no park happened
+          }
+          continue; // completed a sibling: keep helping while the window lasts
+        }
+        if (System.nanoTime() < deadline) {
+          continue;
+        }
+        deadline = 0L; // spin window exhausted: fall through to the park path
+      }
+      LockSupport.park(); // cold completion: the carrier will wake us
     }
     return w.res;
   }
+
+  /** one completion -> its waiter; callable from ANY thread (spin or carrier). */
+  private void completeOne(IoUringRing.Completion c) {
+    Waiter w = waiters.get(c.userData());
+    if (w != null) {
+      w.res = c.res();
+      LockSupport.unpark(w.parked);
+    }
+  }
+
+  /**
+   * write-side spin budget, 0 by default. measured on the 4-shard SQPOLL A/B
+   * (wrk t4/c64, 8-CPU container): pure park 292k rps at 546% CPU vs write-
+   * spin-5us 284k at 583% — the completions are not warm enough (sq threads
+   * run ~136k ops/s) and worker occupancy is the scarce resource, so the
+   * park/unpark handoff wins at every spin budget. the knob stays for
+   * latency-tuning on different hardware shapes.
+   */
+  private static final long WRITE_SPIN_NANOS =
+      Math.max(0L, Long.parseLong(System.getProperty("iouring.write.spin.us", "0"))) * 1_000L;
 
   /** the per-shard dispatcher: bounded-wait enter, drain, complete, repeat. */
   private void carrierLoop(IoUringRing ring) {
@@ -264,11 +310,7 @@ public final class IoUringSockets {
       }
       IoUringRing.Completion c;
       while ((c = ring.pollCompletion()) != null) {
-        Waiter w = waiters.get(c.userData());
-        if (w != null) {
-          w.res = c.res();
-          LockSupport.unpark(w.parked);
-        }
+        completeOne(c);
       }
     }
   }
