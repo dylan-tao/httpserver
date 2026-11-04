@@ -93,3 +93,37 @@ identical on aarch64 and x86-64 — and every struct used here is u32/u64
 with natural alignment, so the same probe and the future transport work
 unchanged on amd64 Linux production hosts; only the JDK tarball differs
 per arch.
+
+## measured workload characterization (the landing decision)
+
+The seam is landed as **opt-in** (`-Drobaho.net.httpserver.iouring=true`).
+These are the library-level A/B numbers that decided it (same container,
+same netns; `src/test/bench/iouring-lib-ab.sh` + `iouring-lib-h2-ab.sh`):
+
+| workload | classic (channel+pollers) | uring (ring) | verdict |
+|---|---|---|---|
+| h1 /hello (wrk t4/c64) | ~380k rps @ 413% CPU | ~286k rps @ 566% | classic |
+| h2 mux8 / seq (H2Bench) | ~18–37k / ~8.7k | ~9–18k / ~4.5k | classic (~2x) |
+| h2 upload256k (H2Bench, verified) | **14 rps (3.5MB/s)** | **170–383 rps (98MB/s)** | **uring, 12–27x** |
+| h1 bulk upload (curl 8x8MB) | 673MB/s | 174MB/s | classic |
+| h2 download1m | ~300 rps | ~103 rps | classic (sendfile/writev dormant on the ring) |
+
+The h2-upload win is a container-environment finding, not a generic
+read-path win: on the macOS host, classic h2 upload is ALREADY fast
+(621–779 rps). In the container, the flow-control credit chain pays a
+JDK-poller wake (~1.4ms) per 16KB quantum on the channel path, which
+adds up to 22ms per 256KB upload; the ring's carrier dispatch wakes in
+~0.16ms — host-class latency. Conversely the per-op park/unpark round
+trip COSTS on small-frame multiplexing and bulk streaming, and the
+writev/sendfile fast paths stay dormant (getChannel() is null), which
+is why download regresses.
+
+Cost note: SQPOLL shards spin a kernel thread each (~100% CPU per shard
+while awake). The benchmark shape sets a 100s sq_thread idle — for
+latency-tolerant deployments shorten the idle; sleeping sq threads are
+doorbelled by submit's NEED_WAKEUP check.
+
+Bottom line: enable the transport for **h2 upload-heavy serving inside
+virtualized/containerized Linux**, keep the channel path for
+small-frame multiplexing and bulk streaming/download shapes.
+
