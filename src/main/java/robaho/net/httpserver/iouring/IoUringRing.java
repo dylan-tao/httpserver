@@ -73,6 +73,12 @@ public final class IoUringRing implements AutoCloseable {
   /** IORING_ENTER_GETEVENTS (1U << 0): wait for min_complete CQEs. */
   static final int ENTER_GETEVENTS = 1;
 
+  /** IORING_ENTER_SQ_WAKEUP (io_uring.h:410, 1U << 1): doorbell a sleeping sq thread. */
+  static final int ENTER_SQ_WAKEUP = 1 << 1;
+
+  /** IORING_SQ_NEED_WAKEUP (io_uring.h:383, 1U << 0): sq thread is sleeping. */
+  static final int SQ_NEED_WAKEUP = 1;
+
   /** IORING_ENTER_EXT_ARG (1U << 3): 5th syscall arg is getevents_arg. */
   static final int ENTER_EXT_ARG = 8;
 
@@ -106,7 +112,7 @@ public final class IoUringRing implements AutoCloseable {
 
   // io_sqring_offsets (io_uring.h:368): head@0 tail@4 mask@8 entries@12
   // flags@16 dropped@20 array@24
-  private static final long SQO_HEAD = 0, SQO_TAIL = 4, SQO_MASK = 8, SQO_ARRAY = 24;
+  private static final long SQO_HEAD = 0, SQO_TAIL = 4, SQO_MASK = 8, SQO_ARRAY = 24, SQO_FLAGS = 16;
 
   // io_cqring_offsets (io_uring.h:387): head@0 tail@4 mask@8 entries@12
   // overflow@16 cqes@20 flags@24
@@ -181,11 +187,14 @@ public final class IoUringRing implements AutoCloseable {
 
   private final int sqMask, cqMask, sqEntries, cqEntries;
 
-  private final long sqHeadOff, sqTailOff, sqArrayOff;
+  private final long sqHeadOff, sqTailOff, sqArrayOff, sqFlagsOff;
 
   private final long cqHeadOff, cqTailOff, cqCqesOff;
 
   private final boolean extArg;
+
+  /** true when the kernel's sq thread consumes SQEs (zero-syscall submit). */
+  private final boolean sqPoll;
 
   private volatile boolean closed;
 
@@ -243,7 +252,7 @@ public final class IoUringRing implements AutoCloseable {
         // 8K SQEs: the shared ring carries at most 2 in-flight ops per
         // connection (one read + one write) of a few thousand connections;
         // 256 would overflow the SQ the moment a real server attaches
-        sharedRing = new IoUringRing(8192);
+        sharedRing = new IoUringRing(8192, false, 0);
       } catch (IOException unavailable) {
         // EPERM (docker default seccomp) or pre-5.1 kernel: stay on the
         // channel path permanently
@@ -254,7 +263,29 @@ public final class IoUringRing implements AutoCloseable {
     }
   }
 
-  private IoUringRing(int entriesWanted) throws IOException {
+  /**
+   * Creates a standalone ring — the multi-carrier shards. Identical
+   * semantics to {@link #shared()} but privately owned: the creator closes
+   * it with the shard. Returns normally only where io_uring exists.
+   */
+  public static IoUringRing create(int entries) throws IOException {
+    return new IoUringRing(entries, false, 0);
+  }
+
+  /**
+   * Creates a standalone SQPOLL ring: an in-kernel submitter thread
+   * consumes SQEs as they are published to shared memory, so submission
+   * costs ZERO syscalls (the posting thread never calls enter). Requires
+   * CAP_SYS_ADMIN (containers run as root) and idleMs large enough that the
+   * sq thread does not sleep mid-benchmark (a sleeping sq thread needs
+   * IORING_ENTER_SQ_WAKEUP doorbells, which this v1 does not implement).
+   * Waiting/reaping is unchanged: enter(GETEVENTS) on the carrier.
+   */
+  public static IoUringRing createSqpoll(int entries, int idleMs) throws IOException {
+    return new IoUringRing(entries, true, idleMs);
+  }
+
+  private IoUringRing(int entriesWanted, boolean sqpoll, int sqpollIdleMs) throws IOException {
     Arena a = null;
     int fd = -1;
     MemorySegment sq = null, cq = null, sqeArr = null;
@@ -263,6 +294,12 @@ public final class IoUringRing implements AutoCloseable {
       a = Arena.ofShared();
       MemorySegment params = a.allocate(PARAMS_SIZE);
       params.fill((byte) 0);
+      if (sqpoll) {
+        // params.flags@8 = IORING_SETUP_SQPOLL (io_uring.h:133, 1U << 1);
+        // params.sq_thread_idle@16 = ms before the sq thread sleeps
+        params.set(U32, 8, 1 << 1);
+        params.set(U32, 16, sqpollIdleMs);
+      }
       long r = (long) SYSCALL.invoke(SYS_IO_URING_SETUP, (long) entriesWanted, params.address(), 0L, 0L, 0L, 0L);
       if (r < 0) {
         int errno = errno();
@@ -271,6 +308,7 @@ public final class IoUringRing implements AutoCloseable {
       }
       fd = (int) r;
       extArg = (params.get(U32, P_FEATURES) & FEAT_EXT_ARG) != 0;
+      sqPoll = sqpoll;
 
       sqEntries = params.get(U32, P_SQ_ENTRIES);
       cqEntries = params.get(U32, P_CQ_ENTRIES);
@@ -302,6 +340,7 @@ public final class IoUringRing implements AutoCloseable {
       sqHeadOff = u32(params, P_SQ_OFF + SQO_HEAD);
       sqTailOff = u32(params, P_SQ_OFF + SQO_TAIL);
       sqArrayOff = sqArrayRel;
+      sqFlagsOff = u32(params, P_SQ_OFF + SQO_FLAGS);
       cqHeadOff = u32(params, P_CQ_OFF + CQO_HEAD);
       cqTailOff = u32(params, P_CQ_OFF + CQO_TAIL);
       cqCqesOff = cqCqesRel;
@@ -392,7 +431,8 @@ public final class IoUringRing implements AutoCloseable {
 
   /**
    * Enters the kernel with every SQE published since the last submit: one
-   * syscall for the whole batch. Returns the number actually submitted.
+   * syscall for the whole batch. On an SQPOLL ring this is a no-op — the
+   * kernel's sq thread consumes published SQEs on its own.
    */
   public int submit() throws IOException {
     return (int) submit(0, 0L);
@@ -411,10 +451,12 @@ public final class IoUringRing implements AutoCloseable {
     if (closed) {
       throw new IOException("ring closed");
     }
-    int head = sqRing.get(U32, sqHeadOff);
-    int tail = sqRing.get(U32, sqTailOff);
-    int toSubmit = tail - head;
-    if (toSubmit == 0 && minComplete == 0) {
+    // SQPOLL: the sq thread submits, so enter carries no to_submit. but a
+    // SLEEPING sq thread (sq flags NEED_WAKEUP) leaves published SQEs
+    // unconsumed — enter must doorbell it with SQ_WAKEUP (io_uring.h:383,410)
+    int toSubmit = sqPoll ? 0 : sqRing.get(U32, sqTailOff) - sqRing.get(U32, sqHeadOff);
+    boolean needWake = sqPoll && (sqRing.get(U32, sqFlagsOff) & SQ_NEED_WAKEUP) != 0;
+    if (toSubmit == 0 && minComplete == 0 && !needWake) {
       return 0;
     }
     long ret;
@@ -428,14 +470,14 @@ public final class IoUringRing implements AutoCloseable {
         arg.set(U32, GEA_SIGMASK_SZ, 0);
         arg.set(U64, GEA_TS, ts.address());
         ret = (long) SYSCALL.invoke(SYS_IO_URING_ENTER, (long) ringFd, (long) toSubmit, (long) minComplete,
-            (long) (ENTER_GETEVENTS | ENTER_EXT_ARG), arg.address(), GEA_SIZE);
+            (long) (ENTER_GETEVENTS | ENTER_EXT_ARG | (needWake ? ENTER_SQ_WAKEUP : 0)), arg.address(), GEA_SIZE);
       } catch (IOException | RuntimeException pass) {
         throw pass;
       } catch (Throwable invoke) {
         throw new IOException("io_uring_enter invocation failed", invoke);
       }
     } else {
-      int flags = minComplete > 0 ? ENTER_GETEVENTS : 0;
+      int flags = (minComplete > 0 ? ENTER_GETEVENTS : 0) | (needWake ? ENTER_SQ_WAKEUP : 0);
       try {
         ret =
             (long) SYSCALL.invoke(SYS_IO_URING_ENTER, (long) ringFd, (long) toSubmit, (long) minComplete, (long) flags, 0L, 0L);

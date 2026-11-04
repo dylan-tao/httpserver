@@ -12,23 +12,30 @@ import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.ByteOrder;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * The blocking-IO emulation over the shared ring — the layer HttpConnection
+ * The blocking-IO emulation over sharded rings — the layer HttpConnection
  * will consume. One virtual thread per connection keeps the library's
- * programming model; each blocking read/write posts an SQE and parks until
- * the carrier reaps its completion and unparks it. The completion
- * dispatcher is a single shared carrier thread: it enters the kernel with a
- * bounded wait, drains every ready CQE, completes the parked waiters, and
- * loops — never holding Java locks across the enter.
+ * programming model; each blocking read/write posts an SQE on its shard's
+ * ring and parks until that shard's carrier reaps the completion and
+ * unparks it.
+ * Sharding: {@code shards} rings (a power of two), each with its own
+ * carrier thread and its own submission mutex; a connection maps to a shard
+ * by {@code fd & (shards-1)} so the in-flight ops of N connections spread
+ * across N independent SQ/critical sections instead of serializing on one.
+ * The first shard reuses {@link IoUringRing#shared()} so a single-shard
+ * instance costs nothing extra.
+ * Waiters: one Waiter per stream (per connection, per direction), registered
+ * once under a stable id (stream ordinal {@code << 1} | kind) and reused for
+ * every op on that stream — blocking semantics allow at most one in-flight
+ * op per direction, so no generation bookkeeping; the res slot is reset
+ * BEFORE the next SQE is published (the previous op's CQE was consumed
+ * before its blockingOp returned, so no stale completion can arrive).
  * FFM socket plumbing (socket/bind/listen/accept4/setsockopt) lives here too
- * so the whole 4.0.0 native surface is one package. Lifecycle: stop() stops
- * the carrier; connection fds are closed by their streams' close().
- * userData encoding: ordinal in the high 60 bits, wait kind in the low 4.
- * Ordinals are unique for the process lifetime (an AtomicLong), so a stale
- * completion for a closed waiter simply finds no slot — no generation
- * bookkeeping needed.
+ * so the whole 4.0.0 native surface is one package.
  */
 public final class IoUringSockets {
 
@@ -60,18 +67,22 @@ public final class IoUringSockets {
 
   private static final byte KIND_READ = 0, KIND_WRITE = 1;
 
-  private final IoUringRing ring;
+  private static final int SHARD_ENTRIES = 4096;
+
+  private final IoUringRing[] rings;
+
+  private final int ringMask;
 
   private final Arena arena;
 
-  /** waiter slots by ordinal; unique per process, removed on completion. */
+  /** waiters by stream id (ordinal << 1 | kind); one entry per stream. */
   private final ConcurrentHashMap<Long, Waiter> waiters = new ConcurrentHashMap<>();
 
-  private final java.util.concurrent.atomic.AtomicLong ordinals = new java.util.concurrent.atomic.AtomicLong();
+  private final AtomicLong streamIds = new AtomicLong();
 
   private volatile boolean stopped;
 
-  /** a parked blocking op: the carrier fills res (release) and unparks. */
+  /** a parked blocking op: the carrier fills res (volatile) and unparks. */
   private static final class Waiter {
 
     final Thread parked;
@@ -84,10 +95,89 @@ public final class IoUringSockets {
 
   }
 
-  public IoUringSockets(IoUringRing ring) {
-    this.ring = ring;
+  /** closes a connection fd exactly once across both streams. */
+  private static final class FdGuard {
+
+    final int fd;
+
+    private final AtomicBoolean closed = new AtomicBoolean();
+
+    FdGuard(int fd) {
+      this.fd = fd;
+    }
+
+    void close() {
+      if (closed.compareAndSet(false, true)) {
+        closeFd(fd);
+      }
+    }
+
+  }
+
+  /**
+   * Creates the sharded transport, or null when io_uring is unavailable
+   * (non-Linux, seccomp-blocked container, pre-5.1 kernel) — callers fall
+   * back to the channel path. Shards must be a power of two.
+   */
+  public static IoUringSockets create(int shards) {
+    if (shards <= 0 || Integer.bitCount(shards) != 1) {
+      throw new IllegalArgumentException("shards must be a power of two: " + shards);
+    }
+    IoUringRing shared = IoUringRing.shared();
+    if (shared == null) {
+      return null;
+    }
+    IoUringRing[] rs = new IoUringRing[shards];
+    rs[0] = shared; // shard 0 rides the process-wide ring
+    try {
+      for (int i = 1; i < shards; i++) {
+        rs[i] = IoUringRing.create(SHARD_ENTRIES);
+      }
+    } catch (IOException unavailable) {
+      for (int i = 1; i < shards; i++) {
+        if (rs[i] != null) {
+          rs[i].close();
+        }
+      }
+      return null;
+    }
+    return new IoUringSockets(rs);
+  }
+
+  private IoUringSockets(IoUringRing[] rings) {
+    this.rings = rings;
+    this.ringMask = rings.length - 1;
     this.arena = Arena.ofShared();
-    Thread.ofPlatform().name("iouring-carrier").daemon(true).start(this::carrierLoop);
+    for (int i = 0; i < rings.length; i++) {
+      final int idx = i;
+      Thread.ofPlatform().name("iouring-carrier-" + i).daemon(true).start(() -> carrierLoop(rings[idx]));
+    }
+  }
+
+  /**
+   * Creates the sharded transport with SQPOLL shards: submission costs zero
+   * syscalls (the kernel's sq threads consume published SQEs; see
+   * {@link IoUringRing#createSqpoll(int, int)}). Returns null when refused
+   * (no CAP_SYS_ADMIN, no io_uring).
+   */
+  public static IoUringSockets createSqpoll(int shards, int idleMs) {
+    if (shards <= 0 || Integer.bitCount(shards) != 1) {
+      throw new IllegalArgumentException("shards must be a power of two: " + shards);
+    }
+    IoUringRing[] rs = new IoUringRing[shards];
+    try {
+      for (int i = 0; i < shards; i++) {
+        rs[i] = IoUringRing.createSqpoll(SHARD_ENTRIES, idleMs);
+      }
+    } catch (IOException refused) {
+      for (IoUringRing r : rs) {
+        if (r != null) {
+          r.close();
+        }
+      }
+      return null;
+    }
+    return new IoUringSockets(rs);
   }
 
   /** creates the FFM listener; returns the listen fd. */
@@ -141,36 +231,31 @@ public final class IoUringSockets {
     throw new IOException("stopped");
   }
 
-  /** posts the op and parks until the carrier completes it. */
-  private int blockingOp(byte kind, int fd, long addr, int len) throws IOException {
+  /**
+   * Posts the op on the fd's shard and parks until that shard's carrier
+   * completes it. res is reset BEFORE the publish (see the class doc for
+   * why no stale completion can race the reset).
+   */
+  private int blockingOp(Waiter w, long id, byte kind, int fd, long addr, int len) throws IOException {
     if (stopped) {
       throw new IOException("stopped");
     }
-    long ordinal = ordinals.incrementAndGet();
-    Waiter w = new Waiter(Thread.currentThread());
-    waiters.put(ordinal, w);
-    try {
-      if (kind == KIND_READ) {
-        ring.prepareRead(fd, addr, len, (ordinal << 4) | kind);
-      } else {
-        ring.prepareWrite(fd, addr, len, (ordinal << 4) | kind);
-      }
-      ring.submit(); // publish; the carrier's enter drives it to completion
-      int spins = 0;
-      while (w.res == Integer.MIN_VALUE) {
-        LockSupport.park();
-        if (++spins > 1_000_000) {
-          throw new IOException("carrier lost the completion (ordinal " + ordinal + ")");
-        }
-      }
-      return w.res;
-    } finally {
-      waiters.remove(ordinal);
+    IoUringRing ring = rings[fd & ringMask];
+    w.res = Integer.MIN_VALUE;
+    if (kind == KIND_READ) {
+      ring.prepareRead(fd, addr, len, id);
+    } else {
+      ring.prepareWrite(fd, addr, len, id);
     }
+    ring.submit(); // publish; this enter also carries any other shard ops
+    while (w.res == Integer.MIN_VALUE) {
+      LockSupport.park();
+    }
+    return w.res;
   }
 
-  /** the dispatcher: bounded-wait enter, drain, complete, repeat. */
-  private void carrierLoop() {
+  /** the per-shard dispatcher: bounded-wait enter, drain, complete, repeat. */
+  private void carrierLoop(IoUringRing ring) {
     while (!stopped) {
       try {
         ring.submit(1, 20_000_000L); // wait for >=1 completion, up to 20ms
@@ -179,20 +264,27 @@ public final class IoUringSockets {
       }
       IoUringRing.Completion c;
       while ((c = ring.pollCompletion()) != null) {
-        Waiter w = waiters.get(c.userData() >>> 4);
+        Waiter w = waiters.get(c.userData());
         if (w != null) {
-          w.res = c.res(); // volatile write...
-          LockSupport.unpark(w.parked); // ...then the unpark pairs the park
+          w.res = c.res();
+          LockSupport.unpark(w.parked);
         }
       }
     }
   }
 
+  /** stops the carriers. ring close stays with the owner (shared ring: nobody). */
   public void stop() {
     stopped = true;
   }
 
   // ---- connection streams ---------------------------------------------------
+
+  /** connection id: ordinal doubled, +1 marks the write stream. */
+  private long newStreamId(boolean write) {
+    long id = streamIds.incrementAndGet() << 1;
+    return write ? id + 1 : id;
+  }
 
   /** blocking InputStream over an accepted fd (16KB native read buffer). */
   public InputStream inputStream(int fd) {
@@ -208,6 +300,12 @@ public final class IoUringSockets {
 
     private final int fd;
 
+    private final FdGuard guard;
+
+    private final Waiter waiter;
+
+    private final long id;
+
     private final MemorySegment buf; // 16KB native read target
 
     private int pos, limit;
@@ -216,7 +314,11 @@ public final class IoUringSockets {
 
     RingInputStream(int fd) {
       this.fd = fd;
+      this.guard = new FdGuard(fd);
+      this.waiter = new Waiter(Thread.currentThread());
+      this.id = newStreamId(false);
       this.buf = arena.allocate(16384, 8); // 8B-aligned for the kernel
+      waiters.put(id, waiter);
     }
 
     @Override
@@ -230,7 +332,7 @@ public final class IoUringSockets {
         pos += n;
         return n;
       }
-      int r = blockingOp(KIND_READ, fd, buf.address(), 16384);
+      int r = blockingOp(waiter, id, KIND_READ, fd, buf.address(), 16384);
       if (r <= 0) {
         if (r == 0) {
           eof = true;
@@ -258,7 +360,8 @@ public final class IoUringSockets {
 
     @Override
     public void close() {
-      closeFd(fd);
+      waiters.remove(id);
+      guard.close();
     }
 
   }
@@ -267,11 +370,21 @@ public final class IoUringSockets {
 
     private final int fd;
 
+    private final FdGuard guard;
+
+    private final Waiter waiter;
+
+    private final long id;
+
     private final MemorySegment buf; // 16KB native write staging
 
     RingOutputStream(int fd) {
       this.fd = fd;
+      this.guard = new FdGuard(fd);
+      this.waiter = new Waiter(Thread.currentThread());
+      this.id = newStreamId(true);
       this.buf = arena.allocate(16384, 8);
+      waiters.put(id, waiter);
     }
 
     @Override
@@ -280,7 +393,7 @@ public final class IoUringSockets {
       while (written < len) {
         int chunk = Math.min(len - written, 16384);
         buf.asSlice(0, chunk).copyFrom(MemorySegment.ofArray(b).asSlice(off + written, chunk));
-        int r = blockingOp(KIND_WRITE, fd, buf.address(), chunk);
+        int r = blockingOp(waiter, id, KIND_WRITE, fd, buf.address(), chunk);
         if (r < 0) {
           throw new IOException("ring write failed: errno " + (-r));
         }
@@ -305,7 +418,8 @@ public final class IoUringSockets {
 
     @Override
     public void close() {
-      closeFd(fd);
+      waiters.remove(id);
+      guard.close();
     }
 
   }

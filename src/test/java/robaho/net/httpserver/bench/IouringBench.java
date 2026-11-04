@@ -44,32 +44,35 @@ public final class IouringBench {
   public static void main(String[] args) throws Exception {
     String mode = args.length > 0 ? args[0] : "classic";
     int port = args.length > 1 ? Integer.parseInt(args[1]) : 18080;
+    // uring-vt only: shard count (power of two; the container has 8 CPUs)
+    int shards = args.length > 2 ? Integer.parseInt(args[2]) : 4;
     switch (mode) {
       case "classic" -> classic(port);
       case "uring" -> uring(port);
-      case "uring-vt" -> uringVt(port);
+      case "uring-vt" -> uringVt(port, shards, false);
+      case "uring-vt-sp" -> uringVt(port, shards, true);
       default -> {
-        System.err.println("usage: IouringBench <classic|uring|uring-vt> [port]");
+        System.err.println("usage: IouringBench <classic|uring|uring-vt|uring-vt-sp> [port] [shards]");
         System.exit(2);
       }
     }
   }
 
   // ---- uring-vt arm: the library's future shape -----------------------------
-  // one VT per connection + blocking streams over the shared ring (the
+  // one VT per connection + blocking streams over sharded rings (the
   // IoUringSockets layer). same concurrency model as the classic arm: the
   // ONLY difference is the IO mechanism — the honest apples-to-apples for
-  // the HttpConnection integration.
+  // the HttpConnection integration. the -sp variant runs SQPOLL shards:
+  // submission costs zero syscalls (kernel sq threads).
 
-  private static void uringVt(int port) throws Exception {
-    IoUringRing ring = IoUringRing.shared();
-    if (ring == null) {
-      System.err.println("uring-vt: IoUringRing unavailable; refusing to fake the A/B");
+  private static void uringVt(int port, int shards, boolean sqpoll) throws Exception {
+    IoUringSockets sockets = sqpoll ? IoUringSockets.createSqpoll(shards, 60_000) : IoUringSockets.create(shards);
+    if (sockets == null) {
+      System.err.println("uring-vt: io_uring unavailable; refusing to fake the A/B");
       System.exit(3);
     }
-    var sockets = new IoUringSockets(ring);
     int listenFd = sockets.listen(port, 8192);
-    System.out.println("uring-vt: listening on 127.0.0.1:" + port);
+    System.out.println("uring-vt: listening on 127.0.0.1:" + port + " shards=" + shards + (sqpoll ? " sqpoll" : ""));
     while (true) {
       int fd = sockets.accept(listenFd);
       Thread.ofVirtual().name("vt-conn-" + fd).start(() -> serveUringVt(sockets, fd));
