@@ -24,7 +24,12 @@ public class FrameParser {
     FrameHeader frameHeader = FrameHeader.parse(headerScratch);
 
     if (frameHeader.length() > ServerConfig.http2MaxFrameSize()) {
-      throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR);
+      // the raw header bytes ride the error: a length overrun means the
+      // stream is misaligned, and WHAT the 9 bytes contain (frame bytes at
+      // a wrong offset? body payload? unwritten buffer?) is the entire
+      // diagnosis. an empty message hid this from the multishot-race hunt
+      throw new Http2Exception(Http2ErrorCode.FRAME_SIZE_ERROR, "frame length " + frameHeader.length() + " exceeds "
+          + ServerConfig.http2MaxFrameSize() + "; header bytes " + java.util.HexFormat.of().formatHex(headerScratch));
     }
 
     // DATA is the only frame type whose body is consumed and released via
