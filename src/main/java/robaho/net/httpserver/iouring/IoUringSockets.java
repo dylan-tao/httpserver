@@ -10,6 +10,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -459,10 +460,16 @@ public final class IoUringSockets {
   private static final boolean MULTISHOT =
       Boolean.parseBoolean(System.getProperty("robaho.net.httpserver.iouring.multishot", "false"));
 
-  /** buffer-pool sizing: 128 x 4KB = 512KB per shard. */
-  private static final int POOL_BUFFERS = 128;
+  /**
+   * buffer-pool sizing: 64 x 16KB = 1MB per shard. 16KB matters: the v1
+   * 4KB pool QUADRUPLED the completion rate of the per-read path (a 16KB
+   * read became four deliveries) and that alone drove most of the
+   * measured regression. one buffer per delivery at 16KB matches the
+   * per-read completion rate exactly.
+   */
+  private static final int POOL_BUFFERS = 64;
 
-  private static final int POOL_BUF_SIZE = 4096;
+  private static final int POOL_BUF_SIZE = 16384;
 
   /** pool group ids are u16: a global counter keeps pools collision-free. */
   private static final java.util.concurrent.atomic.AtomicInteger BGIDS = new java.util.concurrent.atomic.AtomicInteger();
@@ -500,16 +507,25 @@ public final class IoUringSockets {
   }
 
   /**
-   * The multishot read side of one connection: ONE RECV SQE armed once
-   * delivers unbounded completions. The carrier enqueues (bufferId, len)
-   * deliveries and unparks the reader; the reader copies out of the pool
-   * slice and recycles drained buffers in batches of RECYCLE_AT via
-   * provide-buffers SQEs (userData 0: their completions route nowhere).
-   * Why this shape (the measured read-path layout): the per-read
-   * blockingOp costs an SQE post + submit + park round trip per request;
-   * here the SQE posts once per CONNECTION, parks happen only when the
-   * delivery queue is empty, and back-to-back requests drain multiple
-   * completions per park cycle (pipelined by the kernel's recv retry).
+   * The multishot read side of one connection (v2, the queue-elision
+   * shape): ONE RECV SQE armed once delivers unboundedly. The carrier
+   * writes (bufferId, len) pairs into a LOCK-FREE single-producer/
+   * single-consumer delivery ring and unparks the reader; the reader
+   * consumes slots, copies out of the pool slice, and hands the buffer
+   * back IMMEDIATELY (one provide SQE — no drained backlog, no batching
+   * bookkeeping). A reader-owned partial (curBid/curOff/curLen) holds
+   * leftover bytes of an unconsumed delivery, so nothing is ever
+   * re-queued.
+   * v1 (synchronized ArrayDeque + 4KB pool + batch-4 recycle) measured
+   * h1 -25% / seq -30% / mux8 -54% vs the per-read path: the 4KB pool
+   * QUADRUPLED the completion rate (every 16KB read turned into four
+   * deliveries), and each delivery paid a monitor + an allocation. v2
+   * fixes all three: 16KB buffers (completion rate matches the per-read
+   * shape), the SPSC ring costs one volatile store per delivery with
+   * zero allocation, and recycle is a bare SQE post.
+   * Ring capacity equals the pool depth: the kernel can never deliver
+   * more buffers to one channel than the pool holds, so the producer
+   * never blocks on a full ring — the SPSC pair needs no overflow path.
    */
   final class MultishotChannel {
 
@@ -519,11 +535,23 @@ public final class IoUringSockets {
 
     private final BufferPool pool;
 
-    /** delivered-but-unconsumed (bufferId, len) pairs; carrier adds, reader removes. */
-    private final java.util.ArrayDeque<long[]> pending = new java.util.ArrayDeque<>();
+    /** SPSC delivery ring: packed (bufferId &lt;&lt; 32 | len); carrier writes, reader reads. */
+    private final long[] ring = new long[POOL_BUFFERS];
 
-    /** buffer ids drained by the reader, pending recycle (reader-thread-confined). */
-    private final java.util.ArrayDeque<Integer> drained = new java.util.ArrayDeque<>();
+    private static final int RING_MASK = POOL_BUFFERS - 1;
+
+    /** carrier-owned write cursor; volatile: the reader's empty check sees it. */
+    private volatile int tail;
+
+    /** reader-owned read cursor; plain: only this reader mutates it. */
+    private int head;
+
+    /** reader-owned partial delivery: the slot's leftover bytes. */
+    private int curBid = -1;
+
+    private int curOff;
+
+    private int curLen;
 
     /** the parked reader; recorded before every park (record-then-recheck). */
     private volatile Thread reader;
@@ -534,11 +562,7 @@ public final class IoUringSockets {
 
     private volatile boolean armed = true;
 
-    private static final long[] EOF_ENTRY = new long[] {-1, -1};
-
-    private static final int RECYCLE_AT = 4;
-
-    MultishotChannel(int fd, BufferPool pool) {
+    private MultishotChannel(int fd, BufferPool pool) {
       this.fd = fd;
       this.pool = pool;
       this.id = newStreamId(false);
@@ -549,25 +573,22 @@ public final class IoUringSockets {
       if (res > 0) {
         if ((flags & IoUringRing.CQE_F_BUFFER) != 0) {
           int bid = (flags >>> IoUringRing.CQE_BUFFER_SHIFT) & 0xFFFF;
-          synchronized (pending) {
-            pending.addLast(new long[] {bid, res});
-          }
+          // capacity == pool depth: no overflow check is needed (see doc)
+          int t = tail;
+          ring[t & RING_MASK] = ((long) bid << 32) | (res & 0xFFFFFFFFL);
+          VarHandle.releaseFence(); // slot written before the tail publish
+          tail = t + 1;
         }
-        // res > 0 without F_BUFFER cannot carry data (no buffer selected)
+        // res > 0 without F_BUFFER carries no data (no buffer selected)
       } else if (res == 0) {
-        eof = true; // orderly EOF: already-queued data still delivers
-      } else if (res == -105 /* ENOBUFS: pool starvation */) {
-        // recoverable: the kernel drained every provided buffer while the
-        // reader lagged; the unconsumed socket data stays queued and the
-        // rearm path (flushRecycle + one new SQE) picks it up. treating
-        // this as fatal killed 8MB uploads with an empty response
-        armed = false;
+        eof = true; // orderly EOF: ring slots still deliver
+      } else if (res == -105 /* ENOBUFS: pool starvation, recoverable */) {
+        armed = false; // data stays queued in the socket; rearm picks it up
       } else if (error == 0) {
         error = -res; // -errno: ECONNRESET and friends end the channel
       }
       if ((flags & IoUringRing.CQE_F_MORE) == 0) {
-        // the kernel ended the multishot: EOF, error, or buffer-pool
-        // starvation (-ENOBUFS with data still queued in the socket)
+        // the kernel ended the multishot: EOF, error, or starvation
         armed = false;
       }
       Thread r = reader;
@@ -577,88 +598,76 @@ public final class IoUringSockets {
     }
 
     int read(byte[] b, int off, int len) throws IOException {
-      long[] d = take();
-      if (d == EOF_ENTRY) {
-        return -1; // the sentinel: {bufferId:-1, len:-1} must never slice
-      }
-      int n = (int) Math.min(len, d[1]);
-      MemorySegment.ofArray(b).asSlice(off, n).copyFrom(pool.region().asSlice(d[0] * pool.bufSize(), n));
-      if (n == d[1]) {
-        recycle((int) d[0]);
-      } else {
-        d[1] -= n; // remainder stays queued on the same buffer slot
-        synchronized (pending) {
-          pending.addFirst(d);
+      // the reader-owned partial first: no requeue, no ring traffic
+      if (curLen > 0) {
+        int n = Math.min(len, curLen);
+        MemorySegment.ofArray(b).asSlice(off, n).copyFrom(pool.region().asSlice((long) curBid * pool.bufSize() + curOff, n));
+        curOff += n;
+        curLen -= n;
+        if (curLen == 0) {
+          recycleNow(curBid);
+          curBid = -1;
         }
+        return n;
+      }
+      long packed = take();
+      if (packed == EOF_PACKED) {
+        return -1;
+      }
+      int bid = (int) (packed >>> 32);
+      int have = (int) packed;
+      int n = Math.min(len, have);
+      MemorySegment.ofArray(b).asSlice(off, n).copyFrom(pool.region().asSlice((long) bid * pool.bufSize(), n));
+      if (n == have) {
+        recycleNow(bid);
+      } else {
+        curBid = bid;
+        curOff = n;
+        curLen = have - n;
       }
       return n;
     }
 
+    private static final long EOF_PACKED = -1L;
+
     /** parks until a delivery, EOF or an error is visible; re-arms on disarm. */
-    private long[] take() throws IOException {
+    private long take() throws IOException {
       reader = Thread.currentThread(); // record-then-recheck
-      long[] d;
-      while ((d = pollPending()) == null) {
+      while (true) {
+        if (head != tail) {
+          long packed = ring[head & RING_MASK];
+          head++; // plain: only the reader mutates head
+          return packed;
+        }
         if (error != 0) {
           throw new IOException("multishot read failed: errno " + error);
         }
         if (eof) {
-          return EOF_ENTRY;
+          return EOF_PACKED;
         }
         if (!armed) {
-          rearm(); // starvation disarm: flush the recycle backlog, re-arm
+          rearm(); // starvation disarm: submit carries the recycle provides
           continue;
         }
         LockSupport.park();
       }
-      return d;
     }
 
-    private long[] pollPending() {
-      synchronized (pending) {
-        return pending.pollFirst();
-      }
-    }
-
-    /** hands a drained buffer back; RECYCLE_AT batches the provides. */
-    private void recycle(int bid) {
-      drained.addLast(bid);
-      if (drained.size() >= RECYCLE_AT) {
-        flushRecycle();
-      }
-    }
-
-    /** posts provide-buffers SQEs for every drained id (contiguous runs merge). */
-    private void flushRecycle() {
-      if (drained.isEmpty() || stopped) {
-        return;
-      }
-      java.util.ArrayList<Integer> ids = new java.util.ArrayList<>(drained);
-      drained.clear();
-      int first = ids.get(0);
-      for (int i = 1; i < ids.size(); i++) {
-        if (ids.get(i) != first + i) {
-          first = -1; // non-contiguous: per-id provides
-          break;
+    /** hands the buffer back NOW: one provide SQE, zero bookkeeping. */
+    private void recycleNow(int bid) {
+      if (!stopped) {
+        try {
+          pool.provide(1, bid);
+        } catch (IOException io) {
+          // the shard is dying: the next read surfaces it via error
         }
-      }
-      try {
-        if (first >= 0) {
-          pool.provide(ids.size(), first);
-        } else {
-          for (int bid : ids) {
-            pool.provide(1, bid);
-          }
-        }
-      } catch (IOException io) {
-        // the shard is dying: the next read surfaces it via error
       }
     }
 
     /** reader-side re-arm after a kernel-side disarm (pool starvation). */
     private void rearm() throws IOException {
-      flushRecycle(); // the pool must not re-arm empty: -ENOBUFS would loop
       IoUringRing ring = rings[fd & ringMask];
+      ring.submit(); // carry any provides the pool needs back
       ring.prepareMultishotRecv(fd, pool.bgid(), id);
       ring.submit();
       armed = true;
@@ -690,13 +699,19 @@ public final class IoUringSockets {
 
       @Override
       public int available() {
-        long total = 0;
-        synchronized (pending) {
-          for (long[] d : pending) {
-            total += d[1];
-          }
+        // the TRUE delivered byte count: NoSyncBufferedInputStream.read1
+        // loops while available() > 0, so an over-report (full bufSize per
+        // queued slot instead of the packed len) makes it issue raw reads
+        // past the real data — the reader then parks on an empty ring and
+        // a flow-controlled upload deadlocks (client waits for credit the
+        // parked handler would issue). slots between head and the read of
+        // tail are immutable once written, so this sum is stable
+        int total = curLen;
+        int t = tail;
+        for (int i = head; i < t; i++) {
+          total += (int) ring[i & RING_MASK];
         }
-        return (int) Math.min(total, Integer.MAX_VALUE);
+        return Math.min(total, Integer.MAX_VALUE);
       }
 
       @Override
@@ -704,7 +719,9 @@ public final class IoUringSockets {
         multishots.remove(id);
         eof = true;
         armed = false;
-        flushRecycle();
+        if (curLen > 0 && curBid >= 0) {
+          recycleNow(curBid); // do not strand the partial's buffer
+        }
         guard.close();
       }
 
