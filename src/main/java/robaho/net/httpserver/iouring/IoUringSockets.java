@@ -44,7 +44,9 @@ public final class IoUringSockets {
 
   private static final ValueLayout.OfInt U32 = ValueLayout.JAVA_INT.withOrder(ByteOrder.nativeOrder());
 
-  private static final MethodHandle SOCKET, BIND, LISTEN, ACCEPT4, SETSOCKOPT, CLOSE;
+  private static final ValueLayout.OfLong U64 = ValueLayout.JAVA_LONG.withOrder(ByteOrder.nativeOrder());
+
+  private static final MethodHandle SOCKET, BIND, LISTEN, ACCEPT4, SETSOCKOPT, CLOSE, FCNTL, WRITE, READ, ERRNO_LOC;
 
   static {
     try {
@@ -56,6 +58,12 @@ public final class IoUringSockets {
           FunctionDescriptor.of(U32, U32, ValueLayout.ADDRESS, ValueLayout.ADDRESS, U32));
       SETSOCKOPT = L.downcallHandle(libc.find("setsockopt").orElseThrow(),
           FunctionDescriptor.of(U32, U32, U32, U32, ValueLayout.ADDRESS, U32));
+      // fcntl is variadic; for F_GETFL/F_SETFL the third arg is an int — the
+      // fixed 3-int arity is ABI-identical for this form (same trick as syscall)
+      FCNTL = L.downcallHandle(libc.find("fcntl").orElseThrow(), FunctionDescriptor.of(U32, U32, U32, U32));
+      WRITE = L.downcallHandle(libc.find("write").orElseThrow(), FunctionDescriptor.of(U64, U32, ValueLayout.ADDRESS, U64));
+      READ = L.downcallHandle(libc.find("read").orElseThrow(), FunctionDescriptor.of(U64, U32, ValueLayout.ADDRESS, U64));
+      ERRNO_LOC = L.downcallHandle(libc.find("__errno_location").orElseThrow(), FunctionDescriptor.of(ValueLayout.ADDRESS));
       CLOSE = L.downcallHandle(libc.find("close").orElseThrow(), FunctionDescriptor.of(U32, U32));
     } catch (Throwable t) {
       throw new ExceptionInInitializerError(t);
@@ -65,6 +73,11 @@ public final class IoUringSockets {
   private static final int AF_INET = 2, SOCK_STREAM = 1, SOL_SOCKET = 1, SO_REUSEADDR = 2;
 
   private static final int IPPROTO_TCP = 6, TCP_NODELAY = 1, SOCK_CLOEXEC = 0x80000;
+
+  // fcntl commands / flags (linux)
+  private static final int F_GETFL = 3, F_SETFL = 4, O_NONBLOCK = 2048; // 0o4000
+
+  private static final int EAGAIN = 11, EINTR = 4;
 
   private static final byte KIND_READ = 0, KIND_WRITE = 1;
 
@@ -137,10 +150,17 @@ public final class IoUringSockets {
     IoUringRing[] rs = new IoUringRing[shards];
     // SQPOLL first: sq threads consume SQEs with zero submit syscalls. a
     // 100s idle keeps them awake through the workload; sleeping sq threads
-    // are doorbelled by submit's NEED_WAKEUP check
-    IoUringSockets sqpoll = createSqpoll(shards, 100_000);
-    if (sqpoll != null) {
-      return sqpoll;
+    // are doorbelled by submit's NEED_WAKEUP check. the preference is
+    // switchable: with the hybrid direct write/read carrying the
+    // per-request traffic the SQE rate is ~1/read, and plain rings cost
+    // ~1 enter syscall per read — while SQPOLL burns a spinning kernel
+    // thread per shard (~1 core each) that competes with the workload
+    // for CPU on small boxes
+    if (SQPOLL_PREFERRED) {
+      IoUringSockets sqpoll = createSqpoll(shards, 100_000);
+      if (sqpoll != null) {
+        return sqpoll;
+      }
     }
     try {
       for (int i = 0; i < shards; i++) {
@@ -250,6 +270,10 @@ public final class IoUringSockets {
           one.set(U32, 0, 1);
           SETSOCKOPT.invoke(fd, IPPROTO_TCP, TCP_NODELAY, one, 4);
         }
+        if (DIRECT) {
+          setNonblocking(fd); // only with a direct path to absorb EAGAIN; a
+          // blocking fd keeps the ring's OP_READ semaphore-free blocking
+        }
         // sockaddr_in: port u16@2 (network order), addr u32@4 (network order)
         int port = Short.toUnsignedInt(peer.get(ValueLayout.JAVA_SHORT.withOrder(ByteOrder.BIG_ENDIAN), 2));
         byte[] addr = new byte[4];
@@ -276,6 +300,10 @@ public final class IoUringSockets {
             MemorySegment one = a.allocate(4);
             one.set(U32, 0, 1);
             SETSOCKOPT.invoke(fd, IPPROTO_TCP, TCP_NODELAY, one, 4);
+          }
+          if (DIRECT) {
+            setNonblocking(fd); // only with a direct path to absorb EAGAIN; a
+            // blocking fd keeps the ring's OP_READ semaphore-free blocking
           }
           return fd;
         }
@@ -318,11 +346,16 @@ public final class IoUringSockets {
       ring.prepareWrite(fd, addr, len, id);
     }
     ring.submit(); // publish; this enter also carries any other shard ops
-    // zero-budget must read as ZERO here: `nanoTime() + 0` is never zero,
-    // so the old form left the "default off" spin ACTIVE — its helping path
-    // then reaped multishot CQEs from WRITE threads, making the delivery
-    // ring dual-producer (lost slots, stale tail, corrupted h2 streams: the
-    // cold-start GOAWAY(FRAME_SIZE_ERROR) race, 8/15 boots)
+    // record-then-recheck, full form: poll the CQ ONCE before the first
+    // park. a warm completion (inline-completed read/write, the common
+    // case for small ops) is often already sitting in the CQ at this
+    // point — the pre-park poll catches it without ANY park or carrier
+    // dispatch (the non-sqpoll cold-start hang traced to exactly this
+    // window: the opener's inline CQE completed before the carrier's
+    // 20ms GETEVENTS armed, and nothing else on the box reaped it).
+    // the zero-budget lesson stays: the WRITE spin is still opt-in, but
+    // this ONE pre-park poll is part of the readiness protocol, not a
+    // spin budget (it runs once regardless of kind)
     long deadline = kind == KIND_WRITE && WRITE_SPIN_NANOS > 0 ? System.nanoTime() + WRITE_SPIN_NANOS : 0L;
     while (w.res == Integer.MIN_VALUE) {
       if (deadline != 0L) {
@@ -339,6 +372,15 @@ public final class IoUringSockets {
           continue;
         }
         deadline = 0L; // spin window exhausted: fall through to the park path
+      } else {
+        IoUringRing.Completion c = ring.tryPollCompletion();
+        if (c != null) {
+          completeOne(c);
+          if (w.res != Integer.MIN_VALUE) {
+            return w.res; // warm completion: zero parks, zero dispatches
+          }
+          // a sibling's: loop once more, then park for ours
+        }
       }
       LockSupport.park(); // cold completion: the carrier will wake us
     }
@@ -397,6 +439,33 @@ public final class IoUringSockets {
   /** closes the listener fd (server stop path; wakes a parked accept4). */
   public void closeListener(int listenFd) {
     closeFd(listenFd);
+  }
+
+  /**
+   * O_NONBLOCK on a connected fd (F_GETFL then F_SETFL — the flag is not
+   * settable via accept4, whose SOCK_NONBLOCK would also hit the listener
+   * semantics we keep blocking). the hybrid write/read paths need it:
+   * they attempt the fast syscall FIRST and fall to the ring on EAGAIN.
+   */
+  private static void setNonblocking(int fd) throws IOException {
+    try {
+      int flags = (int) FCNTL.invoke(fd, F_GETFL, 0);
+      FCNTL.invoke(fd, F_SETFL, flags | O_NONBLOCK);
+    } catch (IOException | RuntimeException pass) {
+      throw pass;
+    } catch (Throwable invoke) {
+      throw new IOException("fcntl(O_NONBLOCK) failed", invoke);
+    }
+  }
+
+  /** libc errno (POSIX convention: -1 return + errno set). */
+  private static int errno() {
+    try {
+      MemorySegment p = ((MemorySegment) ERRNO_LOC.invoke()).reinterpret(4, Arena.global(), null);
+      return p.get(ValueLayout.JAVA_INT, 0);
+    } catch (Throwable t) {
+      return -1;
+    }
   }
 
   // ---- connection streams ---------------------------------------------------
@@ -464,6 +533,14 @@ public final class IoUringSockets {
    */
   private static final boolean MULTISHOT =
       Boolean.parseBoolean(System.getProperty("robaho.net.httpserver.iouring.multishot", "false"));
+
+  /** hybrid direct-write/read switch (A/B knob, default on). */
+  private static final boolean DIRECT =
+      Boolean.parseBoolean(System.getProperty("robaho.net.httpserver.iouring.direct", "true"));
+
+  /** SQPOLL ring preference switch (A/B knob, default on). */
+  private static final boolean SQPOLL_PREFERRED =
+      Boolean.parseBoolean(System.getProperty("robaho.net.httpserver.iouring.sqpoll", "true"));
 
   /**
    * buffer-pool sizing: 64 x 16KB = 1MB per shard. 16KB matters: the v1
@@ -832,6 +909,40 @@ public final class IoUringSockets {
         pos += n;
         return n;
       }
+      // hybrid direct read: queued socket data returns inline — zero park,
+      // zero carrier round trip (the classic path's pipelined-request win).
+      // EAGAIN (nothing queued) falls to the ring SQE below. ordering is
+      // single-op-in-flight per stream (the same blocking semantics this
+      // class already carries), so the direct read and any SQE never race;
+      // the MULTISHOT path cannot do this (a standing recv would race the
+      // direct read and reorder the stream — see MultishotChannel's doc)
+      long direct = 0;
+      int err = 0;
+      if (DIRECT) {
+        try {
+          direct = (long) READ.invoke(fd, buf, 16384L);
+        } catch (Throwable invoke) {
+          throw new IOException("direct read failed", invoke);
+        }
+      }
+      if (direct == 0) {
+        eof = true;
+        return -1;
+      }
+      if (direct < 0) {
+        err = errno();
+        if (err != EAGAIN && err != EINTR) {
+          throw new IOException("direct read failed: errno " + err);
+        }
+      }
+      if (direct > 0) {
+        pos = 0;
+        limit = (int) direct;
+        int n = Math.min(len, (int) direct);
+        MemorySegment.ofArray(b).asSlice(off, n).copyFrom(buf.asSlice(0, n));
+        pos = n;
+        return n;
+      }
       int r = blockingOp(waiter, id, KIND_READ, fd, buf.address(), 16384);
       if (r <= 0) {
         if (r == 0) {
@@ -887,22 +998,61 @@ public final class IoUringSockets {
       waiters.put(id, waiter);
     }
 
+    /**
+     * Hybrid write: the classic path completes small writes INLINE (the
+     * socket accepts them synchronously — no park, no syscall round trip
+     * through the carrier); the ring path paid that async tax on EVERY
+     * write, which is where most of the uring h1/mux regression lived.
+     * So: stage into the native buffer, attempt a DIRECT write() on the
+     * nonblocking fd, and only the remainder (partial or EAGAIN) rides the
+     * ring SQE. ordering is safe by construction — a write is at most one
+     * in flight per stream, so the direct write and the fallback SQE never
+     * interleave with anything else on this fd.
+     */
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
       int written = 0;
       while (written < len) {
         int chunk = Math.min(len - written, 16384);
         buf.asSlice(0, chunk).copyFrom(MemorySegment.ofArray(b).asSlice(off + written, chunk));
-        int r = blockingOp(waiter, id, KIND_WRITE, fd, buf.address(), chunk);
-        if (r < 0) {
-          throw new IOException("ring write failed: errno " + (-r));
+        long direct;
+        int err = 0;
+        if (DIRECT) {
+          try {
+            // ADDRESS parameters take the SEGMENT, not its raw address —
+            // passing buf.address() (a long) throws WrongMethodTypeException
+            direct = (long) WRITE.invoke(fd, buf, (long) chunk);
+          } catch (Throwable invoke) {
+            throw new IOException("direct write failed", invoke);
+          }
+        } else {
+          direct = 0;
         }
-        if (r == 0) {
-          // zero-progress on a socket write: park briefly and retry instead
-          // of spinning (same backoff shape as the writev path)
-          LockSupport.parkNanos(100_000);
+        if (direct < 0) {
+          err = errno();
+          if (err != EAGAIN && err != EINTR) {
+            throw new IOException("direct write failed: errno " + err);
+          }
+          direct = 0;
         }
-        written += r;
+        if (direct > 0) {
+          written += (int) direct;
+        }
+        int rest = chunk - (int) direct;
+        if (rest > 0) {
+          // partial or would-block: the remainder rides the ring (the
+          // bytes sit at buf+direct.. — the SQE addresses them directly)
+          int r = blockingOp(waiter, id, KIND_WRITE, fd, buf.asSlice(direct, rest).address(), rest);
+          if (r < 0) {
+            throw new IOException("ring write failed: errno " + (-r));
+          }
+          if (r == 0) {
+            // zero-progress on a socket write: park briefly and retry instead
+            // of spinning (same backoff shape as the writev path)
+            LockSupport.parkNanos(100_000);
+          }
+          written += r;
+        }
       }
     }
 
