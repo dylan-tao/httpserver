@@ -318,7 +318,12 @@ public final class IoUringSockets {
       ring.prepareWrite(fd, addr, len, id);
     }
     ring.submit(); // publish; this enter also carries any other shard ops
-    long deadline = kind == KIND_WRITE ? System.nanoTime() + WRITE_SPIN_NANOS : 0L;
+    // zero-budget must read as ZERO here: `nanoTime() + 0` is never zero,
+    // so the old form left the "default off" spin ACTIVE — its helping path
+    // then reaped multishot CQEs from WRITE threads, making the delivery
+    // ring dual-producer (lost slots, stale tail, corrupted h2 streams: the
+    // cold-start GOAWAY(FRAME_SIZE_ERROR) race, 8/15 boots)
+    long deadline = kind == KIND_WRITE && WRITE_SPIN_NANOS > 0 ? System.nanoTime() + WRITE_SPIN_NANOS : 0L;
     while (w.res == Integer.MIN_VALUE) {
       if (deadline != 0L) {
         Thread.onSpinWait();
@@ -535,8 +540,8 @@ public final class IoUringSockets {
 
     private final BufferPool pool;
 
-    /** SPSC delivery ring: packed (bufferId &lt;&lt; 32 | len); carrier writes, reader reads. */
-    private final long[] ring = new long[POOL_BUFFERS];
+    /** delivery ring: packed (bufferId &lt;&lt; 32 | len); producers append under ringLock, the reader consumes. */
+    private final long[] ringSlots = new long[POOL_BUFFERS];
 
     private static final int RING_MASK = POOL_BUFFERS - 1;
 
@@ -572,12 +577,7 @@ public final class IoUringSockets {
     void onCompletion(int res, int flags) {
       if (res > 0) {
         if ((flags & IoUringRing.CQE_F_BUFFER) != 0) {
-          int bid = (flags >>> IoUringRing.CQE_BUFFER_SHIFT) & 0xFFFF;
-          // capacity == pool depth: no overflow check is needed (see doc)
-          int t = tail;
-          ring[t & RING_MASK] = ((long) bid << 32) | (res & 0xFFFFFFFFL);
-          VarHandle.releaseFence(); // slot written before the tail publish
-          tail = t + 1;
+          deliver((flags >>> IoUringRing.CQE_BUFFER_SHIFT) & 0xFFFF, res);
         }
         // res > 0 without F_BUFFER carries no data (no buffer selected)
       } else if (res == 0) {
@@ -630,12 +630,34 @@ public final class IoUringSockets {
 
     private static final long EOF_PACKED = -1L;
 
+    /**
+     * Appends one delivery. The slot write is synchronized: the ring is
+     * SPSC by design (carrier produces, reader consumes), but the write
+     * threads' opt-in spin-helping also reaches here as a RARE second
+     * producer (a reaped CQE cannot be pushed back into the kernel ring).
+     * Uncontended lock cost is ~20ns per delivery — the alternative, CAS
+     * slot claiming with a separate publish index, only moves the same
+     * ordering problem around.
+     */
+    private void deliver(int bid, int res) {
+      synchronized (ringLock) {
+        // capacity == pool depth: no overflow check is needed (see doc)
+        int t = tail;
+        ringSlots[t & RING_MASK] = ((long) bid << 32) | (res & 0xFFFFFFFFL);
+        VarHandle.releaseFence(); // slot written before the tail publish
+        tail = t + 1;
+      }
+    }
+
+    /** guards the delivery-ring append (see deliver). */
+    private final Object ringLock = new Object();
+
     /** parks until a delivery, EOF or an error is visible; re-arms on disarm. */
     private long take() throws IOException {
       reader = Thread.currentThread(); // record-then-recheck
       while (true) {
         if (head != tail) {
-          long packed = ring[head & RING_MASK];
+          long packed = ringSlots[head & RING_MASK];
           head++; // plain: only the reader mutates head
           return packed;
         }
@@ -709,7 +731,7 @@ public final class IoUringSockets {
         int total = curLen;
         int t = tail;
         for (int i = head; i < t; i++) {
-          total += (int) ring[i & RING_MASK];
+          total += (int) ringSlots[i & RING_MASK];
         }
         return Math.min(total, Integer.MAX_VALUE);
       }
