@@ -350,12 +350,7 @@ public final class IoUringSockets {
     // park. a warm completion (inline-completed read/write, the common
     // case for small ops) is often already sitting in the CQ at this
     // point — the pre-park poll catches it without ANY park or carrier
-    // dispatch (the non-sqpoll cold-start hang traced to exactly this
-    // window: the opener's inline CQE completed before the carrier's
-    // 20ms GETEVENTS armed, and nothing else on the box reaped it).
-    // the zero-budget lesson stays: the WRITE spin is still opt-in, but
-    // this ONE pre-park poll is part of the readiness protocol, not a
-    // spin budget (it runs once regardless of kind)
+    // dispatch.
     long deadline = kind == KIND_WRITE && WRITE_SPIN_NANOS > 0 ? System.nanoTime() + WRITE_SPIN_NANOS : 0L;
     while (w.res == Integer.MIN_VALUE) {
       if (deadline != 0L) {

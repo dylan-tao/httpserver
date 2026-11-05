@@ -302,7 +302,8 @@ class ServerImpl {
     if (!ServerConfig.iouring() || https || addr.getPort() == 0) {
       return false;
     }
-    var sockets = robaho.net.httpserver.iouring.IoUringSockets.create(4);
+    var sockets = robaho.net.httpserver.iouring.IoUringSockets
+        .create(Math.max(1, Integer.getInteger("robaho.net.httpserver.iouring.shards", 4)));
     if (sockets == null) {
       logger.log(Level.DEBUG, "io_uring transport unavailable; using the channel path");
       return false;
