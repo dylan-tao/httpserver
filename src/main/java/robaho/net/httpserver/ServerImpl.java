@@ -210,52 +210,14 @@ class ServerImpl {
     // on the last disconnect (see h2ConnectionRegistered)
     logger.log(Level.DEBUG, "HttpServer created " + protocol + " " + addr);
     if (Boolean.getBoolean("robaho.net.httpserver.EnableStats")) {
-      createContext("/__stats", new StatsHandler());
+      createContext("/__stats", new StatsHandler(connectionCount, stats, http2Stats));
     }
     if (Boolean.getBoolean("robaho.net.httpserver.EnableDebug")) {
-      createContext("/__debug", new DebugHandler());
+      createContext("/__debug", new DebugHandler(allConnections, allHttp2Connections, logger));
     }
-  }
-
-  private class StatsHandler implements HttpHandler {
-
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-      var output = ("Active Connections: " + connectionCount.get() + "\n" + stats.stats() + http2Stats.stats())
-          .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-
-      exchange.sendResponseHeaders(200, output.length);
-      exchange.getResponseBody().write(output);
-      exchange.getResponseBody().close();
-    }
-
   }
 
   /** dump connection/stream state to the response body (and the log) */
-  private class DebugHandler implements HttpHandler {
-
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-      logger.log(Level.INFO, "logging debug state, requestor " + exchange.getRemoteAddress());
-      StringBuilder sb = new StringBuilder(4096);
-      for (var connection : allConnections) {
-        connection.debug();
-        sb.append(connection).append('\n');
-      }
-      // per-instance registry (was static): dump only THIS server's
-      // h2 connections
-      for (var handler : allHttp2Connections) {
-        handler.debug();
-      }
-      byte[] body = sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-      exchange.sendResponseHeaders(200, body.length);
-      try (var os = exchange.getResponseBody()) {
-        os.write(body);
-      }
-    }
-
-  }
-
   public void bind(InetSocketAddress addr, int backlog) throws IOException {
     if (bound) {
       throw new BindException("HttpServer already bound");
@@ -292,31 +254,6 @@ class ServerImpl {
       throw new IllegalStateException("server already started");
     }
     this.executor = executor;
-  }
-
-  private static class DefaultExecutor implements Executor {
-
-    // virtual threads by default (JDK 21, JEP 444): connection handling is
-    // blocking-IO-heavy (request reads, drains, SSL handshakes) and
-    // thread-per-connection scales far better virtually than on the
-    // platform-thread pool. the old "no monitors anywhere" rule existed
-    // only for JEP 444 pinning; JDK 24 (JEP 491) removed it, and locks
-    // that need tryLock (h2 connection, websocket watchdog) keep
-    // ReentrantLock for that semantic, not for pinning
-    // opt out with robaho.net.httpserver.virtualThreads=false
-    private final ExecutorService executor = ServerConfig.virtualThreads()
-        ? Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("httpserver-vt-", 0).factory())
-        : Executors.newCachedThreadPool();
-
-    @Override
-    public void execute(Runnable task) {
-      executor.execute(task);
-    }
-
-    public void shutdown() {
-      executor.shutdown();
-    }
-
   }
 
   public Executor getExecutor() { return executor; }
@@ -788,6 +725,19 @@ class ServerImpl {
     };
   }
 
+  // package-private accessors for the extracted ConnectionCleanerTask
+  Set<HttpConnection> allConnections() {
+    return allConnections;
+  }
+
+  Logger logger() {
+    return logger;
+  }
+
+  ServerStats stats() {
+    return stats;
+  }
+
   private void closeConnection(HttpConnection conn) {
     // the connection's own thread: deliver any pending coalesced response
     closeConnection(conn, true);
@@ -798,7 +748,8 @@ class ServerImpl {
    *          can block on a stalled peer's full kernel send buffer, and those
    *          threads must never be held hostage by a remote client
    */
-  private void closeConnection(HttpConnection conn, boolean flushResponse) {
+  // package-private: the extracted cleaner closes through this seam
+  void closeConnection(HttpConnection conn, boolean flushResponse) {
     logger.log(Level.TRACE, () -> "closing connection: " + conn.toString());
     conn.close(flushResponse);
     if (allConnections.remove(conn)) {
@@ -808,21 +759,6 @@ class ServerImpl {
   }
 
   /* used to link to 2 or more Filter.Chains together */
-  class LinkHandler implements HttpHandler {
-
-    Filter.Chain nextChain;
-
-    LinkHandler(Filter.Chain nextChain) {
-      this.nextChain = nextChain;
-    }
-
-    @Override
-    public void handle(HttpExchange exchange) throws IOException {
-      nextChain.doFilter(exchange);
-    }
-
-  }
-
   class Http2ConnectionHandler implements Runnable, Http2Connection.StreamHandler {
 
     final HttpConnection connection;
@@ -1502,7 +1438,7 @@ class ServerImpl {
         if (cleanerTimer == null) {
           cleanerTimer = new Timer("connection-cleaner", true);
         }
-        cleanerTask = new ConnectionCleanerTask();
+        cleanerTask = new ConnectionCleanerTask(this);
         cleanerTimer.schedule(cleanerTask, IDLE_TIMER_TASK_SCHEDULE, IDLE_TIMER_TASK_SCHEDULE);
       }
     }
@@ -1527,82 +1463,6 @@ class ServerImpl {
         }
       }
     }
-  }
-
-  class ConnectionCleanerTask extends TimerTask {
-
-    @Override
-    public void run() {
-      // System.currentTimeMillis, not the CachedClock snapshot: the
-      // cleaner compares this against lastActivityTime/drainingAt,
-      // which are plain wall-clock writes (see HttpConnection) - both
-      // sides of the comparison must use the same source
-      long now = System.currentTimeMillis();
-
-      for (var c : allConnections) {
-        // an h2c connection's inRequest is only true during the upgrade window
-        // (cleared at the Http2ConnectionHandler handoff); ALPN h2 never sets it.
-        // busy state is requestsInProgress: streams in progress must not be
-        // idle-closed mid-flight
-        boolean busy = c.inRequest || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
-        if (c.drainingAt != 0 && now - c.drainingAt >= IDLE_INTERVAL / 2) {
-          closeConnection(c, false);
-          continue;
-        }
-        if (now - c.lastActivityTime >= IDLE_INTERVAL && !busy) {
-          logger.log(Level.DEBUG, "closing idle connection");
-          stats.idleCloseCount.incrementAndGet();
-          closeConnection(c, false);
-        } else if (MAX_REQ_TIME != -1 && busy && !c.streamsHandedOff && (now - c.lastActivityTime >= MAX_REQ_TIME)) {
-          // streamsHandedOff (websocket/CONNECT tunnels) is NOT a
-          // "request": a quiet websocket session is legal (app-level
-          // keepalive), but inRequest=true made it look stalled and
-          // the cleaner killed it at maxReqTime
-          logger.log(Level.WARNING, "closing connection due to request processing time");
-          closeConnection(c, false);
-        } else if (!busy && now - c.lastActivityTime >= IDLE_INTERVAL / 4) {
-          // idle but not yet closeable: release the 16KB input/output
-          // buffers and the line buffer. the connection stays alive
-          // (keep-alive) and the buffers re-allocate on the next
-          // read/write. this is the memory optimization for
-          // long-lived idle connections
-          c.shrinkBuffers();
-        }
-      }
-      // enforce the idle connection count limit: close the OLDEST idle
-      // connections beyond MAX_IDLE_CONNECTIONS. the enforcement existed
-      // only as a comment before, so idle keep-alive connections (and
-      // their buffers) were unbounded despite the config
-      if (MAX_IDLE_CONNECTIONS > 0) {
-        List<HttpConnection> idle = new ArrayList<>();
-        for (var c : allConnections) {
-          // "idle" = no request in flight AND quiet for a while.
-          // h2 busy state is requestsInProgress (inRequest is only
-          // the brief h2c upgrade window, cleared at the handoff);
-          // ALPN h2 never sets it. recency of lastActivityTime is
-          // the additional signal that an h2 connection is still
-          // serving: without it the cap would count - and
-          // eventually close - ACTIVE h2 connections. the busy
-          // check matches the main idle-close branch: without it
-          // the cap sweep killed quiet-but-busy h2 streams (a
-          // handler mid-DB-query sorted as the "oldest idle" and
-          // was closed preferentially once the cap was exceeded)
-          boolean busy = c.inRequest || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
-          if (!busy && now - c.lastActivityTime >= IDLE_INTERVAL / 2) {
-            idle.add(c);
-          }
-        }
-        if (idle.size() > MAX_IDLE_CONNECTIONS) {
-          idle.sort(java.util.Comparator.comparingLong(c -> c.lastActivityTime));
-          for (int i = 0; i < idle.size() - MAX_IDLE_CONNECTIONS; i++) {
-            logger.log(Level.DEBUG, "closing idle connection (over max idle limit)");
-            stats.idleCloseCount.incrementAndGet();
-            closeConnection(idle.get(i), false);
-          }
-        }
-      }
-    }
-
   }
 
   /**
