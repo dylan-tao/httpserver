@@ -257,7 +257,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
           if (remaining <= 0) {
             break;
           }
-          t.connection.drainingAt = System.currentTimeMillis();
+          t.connection.markDraining();
           var socket = t.connection.getSocket();
           int previousTimeout = socket.getSoTimeout();
           try {
@@ -275,7 +275,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
           }
           continue;
         }
-        t.connection.drainingAt = System.currentTimeMillis();
+        t.connection.markDraining();
         // the buffered bytes may not complete the chunk framing
         // (a withheld CRLF makes readImpl block in a socket read):
         // bound it with the same SoTimeout the empty branch uses,
@@ -307,7 +307,7 @@ abstract class LeftOverInputStream extends FilterInputStream {
       }
       return false;
     } finally {
-      t.connection.drainingAt = 0;
+      t.connection.clearDraining();
     }
   }
 

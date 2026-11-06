@@ -353,7 +353,7 @@ class ExchangeImpl {
       // the raw streams now belong to the upgrade/tunnel code: reads
       // and writes may come from different threads, so the
       // connection's pre-read flush hook must stand down
-      connection.streamsHandedOff = true;
+      connection.handOffStreams();
     } else { /* standard response with possible response data */
       if (contentLen == 0) {
         if (http10) {
@@ -404,7 +404,7 @@ class ExchangeImpl {
       // means the peer will send nothing after its request: tell the
       // connection so its close() skips the RST-prevention input
       // drain - for these exchanges the drain is pure latency
-      connection.peerDoneSending = true;
+      connection.peerIsDoneSending();
     }
 
     writeHeaders(statusLineBytes(rCode), rspHdrs, ros);
@@ -514,7 +514,7 @@ class ExchangeImpl {
     if (head == null || head.length < total) {
       head = new byte[total];
       if (total <= 8192) {
-        connection.headerScratch = head;
+        connection.setHeaderScratch(head);
       }
     }
     final byte[] buf = head;

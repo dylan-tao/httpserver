@@ -240,6 +240,67 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     connectionId = "[" + socket.getLocalPort() + "." + socket.getPort() + "]";
   }
 
+  // ---- lifecycle semantics (the encapsulation seam) -------------------------
+  // these wrap the volatile state that OTHER classes used to write
+  // directly (ServerImpl: inRequest x6 + http2Connection; ExchangeImpl:
+  // streamsHandedOff/peerDoneSending/headerScratch; LeftOverInputStream:
+  // drainingAt). the fields stay package-visible for the cleaner's reads
+  // (busy checks) but every WRITE now goes through a method with a name.
+
+  /** mark this connection as mid-request (request-parse/handle window). */
+  void beginRequest() {
+    inRequest = true;
+  }
+
+  /** clear the mid-request mark (response sent or connection parking). */
+  void endRequest() {
+    inRequest = false;
+  }
+
+  /**
+   * attach the h2 protocol handler at the h2c/ALPN upgrade: the connection
+   * switches from the h1 request loop to h2 frame processing. volatile
+   * publish semantics unchanged (written by the connection VT before
+   * registration into allConnections; the cleaner reads it to pick the h2
+   * shrink path)
+   */
+  void attachHttp2(robaho.net.httpserver.http2.internal.Http2Connection http2) {
+    http2Connection = http2;
+  }
+
+  /**
+   * raw streams handed to non-request-loop code (101 upgrade / CONNECT
+   * tunnel): the pre-read flush hook must stand down - its unsynchronized
+   * flush would race the external writer
+   */
+  void handOffStreams() {
+    streamsHandedOff = true;
+  }
+
+  /**
+   * the peer declared it will send nothing more: the RST-prevention drain
+   * in close() is pure latency for this connection
+   */
+  void peerIsDoneSending() {
+    peerDoneSending = true;
+  }
+
+  /** start the close-drain window (peer asked to close). */
+  void markDraining() {
+    drainingAt = System.currentTimeMillis();
+  }
+
+  /** clear the close-drain window (drain completed). */
+  void clearDraining() {
+    drainingAt = 0;
+  }
+
+  /**
+   * publish the response-head scratch for the next response on this
+   * connection's single writer VT
+   */
+  void setHeaderScratch(byte[] head) { headerScratch = head; }
+
   /**
    * true when pipelined request bytes are already buffered and waiting:
    * lets response completion defer its flush so a pipelined batch

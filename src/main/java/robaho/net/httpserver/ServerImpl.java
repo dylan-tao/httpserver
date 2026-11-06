@@ -820,7 +820,7 @@ class ServerImpl {
 
       http2 = new Http2Connection(conn, http2Stats, connection.getInputStream(), connection.getOutputStream(), this);
       // let the idle cleaner reach the h2 stream buffer pool for shrinking
-      conn.http2Connection = http2;
+      conn.attachHttp2(http2);
     }
 
     @Override
@@ -1091,7 +1091,7 @@ class ServerImpl {
 
       logger.log(Level.TRACE, "reading request");
 
-      connection.inRequest = false;
+      connection.endRequest();
 
       Request req;
       final String requestLine;
@@ -1102,7 +1102,7 @@ class ServerImpl {
         // mark in-request before the 400 write: with inRequest false
         // the idle cleaner may concurrently shrink the output buffer
         // the reply is written into
-        connection.inRequest = true;
+        connection.beginRequest();
         // surface the ACTUAL parse error: the old fixed message
         // reported every header-line failure as "Request line too
         // long" (the differential harness hit it on the blank-line
@@ -1115,7 +1115,7 @@ class ServerImpl {
         // mark busy BEFORE the handoff: between the request line and
         // the h2 connection construction no busy marker existed, so
         // stop(delay)'s sweep could close a connection mid-upgrade
-        connection.inRequest = true;
+        connection.beginRequest();
         logger.log(Level.DEBUG, "found http2 request on non-SSL assuming prior knowledge");
         // h2 frames (16KB DATA) must be read at the full buffer size,
         // not the 2KB idle size the connection may carry
@@ -1132,12 +1132,12 @@ class ServerImpl {
         // immortal - never idle-closed, never shrunk, never counted
         // toward maxIdleConnections (the round-2 bug, re-introduced
         // by the upgrade-window fix and caught in review)
-        connection.inRequest = false;
+        connection.endRequest();
         exchange.run();
         return;
       }
 
-      connection.inRequest = true;
+      connection.beginRequest();
 
       if (requestLine.isEmpty()) {
         /* connection closed */
@@ -1381,7 +1381,7 @@ class ServerImpl {
           // a rejected request never has a tx: mark the connection
           // directly - the peer's malformed request is the last
           // thing it sent, so the close drain has nothing to do
-          connection.peerDoneSending = true;
+          connection.peerIsDoneSending();
           closeConnection(connection);
         }
       } catch (IOException e) {
