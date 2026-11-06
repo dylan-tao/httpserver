@@ -197,7 +197,7 @@ class ServerImpl {
       bound = true;
       logger.log(Level.INFO, "server bound to " + socket.getLocalSocketAddress() + " with backlog " + backlog);
     }
-    dispatcher = new Dispatcher();
+    dispatcher = new Dispatcher(this);
     // the connection-cleaner task is NOT scheduled here: it is attached
     // lazily to its own timer on the first accepted connection and
     // detached when the last one closes (see connectionRegistered), so
@@ -415,206 +415,6 @@ class ServerImpl {
     return (InetSocketAddress) socket.getLocalSocketAddress();
   }
 
-  /**
-   * The Dispatcher is responsible for accepting any connections and then
-   * using those connections to process incoming requests.
-   */
-  class Dispatcher implements Runnable {
-
-    @Override
-    public void run() {
-      long backoff = 1;
-      while (true) {
-        try {
-          Socket s = socket.accept();
-          backoff = 1;
-          try {
-            executor.execute(() -> {
-              try {
-                acceptConnection(s);
-              } catch (IOException | RuntimeException t) {
-                // socket-level failures during connection setup are
-                // client-side noise, not server faults: an RST'd
-                // connection fails setTcpNoDelay with EINVAL on
-                // macOS ("Invalid argument") and resets during the
-                // preface peek surface as SocketException too.
-                // keep them out of the WARNING stream; anything
-                // else (e.g. SSL handshake problems) stays visible
-                Level level = t instanceof java.net.SocketException ? Level.DEBUG : Level.WARNING;
-                logger.log(level, "unable to accept connection", t);
-                try {
-                  s.close();
-                } catch (IOException ex) {
-                  // socket already dead; nothing to close
-                }
-              }
-            });
-          } catch (RuntimeException e) {
-            // REE is the standard overload signal; any other
-            // RuntimeException from a user-supplied executor
-            // (custom bounded pools throw ISE) used to escape and
-            // kill the accept loop permanently - the server kept
-            // "started" while accepting nothing
-            logger.log(Level.DEBUG, "executor rejected connection", e);
-            try {
-              s.close();
-            } catch (IOException closeFailed) {
-              // the outer IOException catch would misattribute
-              // a close failure as an accept failure
-            }
-          }
-        } catch (IOException e) {
-          if (isFinishing() || socket.isClosed()) {
-            if (!isFinishing()) {
-              logger.log(Level.ERROR, "socket accept failed", e);
-            }
-            return;
-          }
-          // a transient accept failure (e.g. EMFILE when the process
-          // runs out of file descriptors) must not kill the
-          // dispatcher: retry with exponential backoff so the server
-          // recovers once the resource is freed
-          logger.log(Level.ERROR, "socket accept failed, retrying in " + backoff + "ms", e);
-          try {
-            Thread.sleep(backoff);
-          } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            return;
-          }
-          backoff = Math.min(backoff * 2, 1000);
-        }
-      }
-    }
-
-    private void acceptConnection(Socket s) throws IOException {
-      if (isFinishing()) {
-        // a queued accept task running after stop()'s connection sweep:
-        // the connection would be registered into the freshly swept set
-        // with the cleaner timer already cancelled, so nothing would
-        // ever close it (leaked socket + blocked exchange thread)
-        try {
-          s.close();
-        } catch (IOException ignored) {}
-        return;
-      }
-      if (logger.isLoggable(Level.TRACE)) {
-        logger.log(Level.TRACE, "accepted connection: " + s.toString());
-      }
-      stats.connectionCount.incrementAndGet();
-      if (MAX_CONNECTIONS > 0 && connectionCount.get() >= MAX_CONNECTIONS) {
-        // we've hit max limit of current open connections, so we go
-        // ahead and close this connection without processing it
-        try {
-          stats.maxConnectionsExceededCount.incrementAndGet();
-          logger.log(Level.WARNING, "closing accepted connection due to too many connections");
-          s.close();
-        } catch (IOException ignore) {}
-        return;
-      }
-
-      if (ServerConfig.noDelay()) {
-        s.setTcpNoDelay(true);
-      }
-
-      boolean http2 = false;
-
-      if (https) {
-        // for some reason, creating an SSLServerSocket and setting the default parameters would
-        // not work, so upgrade to a SSLSocket after connection
-        SSLSocketFactory ssf = httpsConfig.getSSLContext().getSocketFactory();
-        // autoClose=true: with false, closing the layered SSLSocket
-        // never closes the underlying accepted socket (JDK
-        // SSLSocketImpl.closeSocket only calls super.close() when
-        // autoClose || !isLayered()) - every HTTPS connection leaked
-        // its raw socket fd (CLOSE_WAIT accumulation until EMFILE)
-        SSLSocket sslSocket = (SSLSocket) ssf.createSocket(s, null, true);
-        SSLConfigurator.configure(sslSocket, httpsConfig);
-
-        sslSocket.setHandshakeApplicationProtocolSelector((_sslSocket, protocols) -> {
-          if (protocols.contains("h2") && ServerConfig.http2OverSSL()) {
-            return "h2";
-          }
-          if (protocols.contains("http/1.1")) {
-            return "http/1.1";
-          }
-          // RFC 7301: never answer with a protocol the client did
-          // not offer (a gRPC client offering only "h2" against
-          // http2OverSSL=false used to get "http/1.1" - strict
-          // OpenSSL peers abort the handshake on the mismatch).
-          // "" (NOT null) omits the ALPN extension from the reply:
-          // the JDK selector contract treats null as "no agreement"
-          // and answers with a fatal no_application_protocol alert,
-          // hard-failing the TLS handshake for every h2-only client
-          return "";
-        });
-        // the following forces the SSL handshake to complete in order to determine the negotiated protocol.
-        // the handshake is bounded so a stalled client cannot hold the connection thread indefinitely
-        // clamp before the int cast: a huge configured timeout
-        // overflowed to negative and made every https accept throw
-        sslSocket.setSoTimeout((int) Math.min(Math.max(ServerConfig.getSslHandshakeTimeoutMillis(), 1), Integer.MAX_VALUE));
-        try {
-          // getSession() SWALLOWS IOExceptions and returns a dummy
-          // invalid session on handshake failure (the JDK closes the
-          // socket in that case): without the validity check a dead
-          // socket proceeded into connection registration, and the
-          // finally's setSoTimeout(0) on the closed socket threw
-          // SocketException - misclassified as client noise at
-          // DEBUG, hiding every real handshake failure from the logs
-          if (!sslSocket.getSession().isValid()) {
-            throw new java.net.SocketException("SSL handshake failed");
-          }
-        } finally {
-          try {
-            sslSocket.setSoTimeout(0);
-          } catch (java.net.SocketException closedDuringHandshake) {
-            // socket already closed by the failed handshake
-          }
-        }
-        if ("h2".equals(sslSocket.getApplicationProtocol())) {
-          logger.log(Level.DEBUG, () -> "http2 connection " + sslSocket);
-          http2 = true;
-          // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
-          sslSocket.setTcpNoDelay(ServerConfig.http2NoDelay());
-        } else {
-          logger.log(Level.DEBUG, () -> "http/1.1 connection " + sslSocket);
-        }
-        s = sslSocket;
-      }
-
-      HttpConnection c = new HttpConnection(s);
-      try {
-        allConnections.add(c);
-        connectionCount.incrementAndGet();
-        connectionRegistered();
-        if (isFinishing()) {
-          // stop()'s sweep may have completed between the entry
-          // check and this registration (the SSL handshake can
-          // stretch the window by seconds): nothing would ever
-          // close this connection - the sweep is done and the
-          // cleaner timer is cancelled. close it here
-          closeConnection(c);
-          return;
-        }
-
-        if (http2) {
-          if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
-            nis.growBuffer();
-          }
-          Http2ConnectionHandler t = new Http2ConnectionHandler(protocol, c);
-          t.run();
-        } else {
-          Http1ConnectionHandler t = new Http1ConnectionHandler(ServerImpl.this, c);
-          t.run();
-        }
-      } catch (Throwable t) {
-        logger.log(Level.WARNING, "Dispatcher Exception", t);
-        stats.handleExceptionCount.incrementAndGet();
-        closeConnection(c);
-      }
-    }
-
-  }
-
   Logger getLogger() { return logger; }
 
   /**
@@ -757,6 +557,19 @@ class ServerImpl {
 
   String protocolToken() {
     return protocol;
+  }
+
+  java.util.concurrent.atomic.AtomicInteger connectionCount() {
+    return connectionCount;
+  }
+
+  HttpsConfigurator httpsConfig() {
+    return httpsConfig;
+  }
+
+  /** the accepting ServerSocket (the dispatcher owns its accept loop). */
+  java.net.ServerSocket serverSocket() {
+    return socket;
   }
 
   /**
@@ -1053,7 +866,7 @@ class ServerImpl {
    * cleanerTask null for the latecomer to (re)schedule, so the registry
    * can never be left non-empty with no task attached
    */
-  private void connectionRegistered() {
+  void connectionRegistered() {
     synchronized (cleanerTaskLock) {
       if (finished) {
         return;
