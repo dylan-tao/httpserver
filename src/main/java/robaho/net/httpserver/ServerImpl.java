@@ -217,7 +217,6 @@ class ServerImpl {
     }
   }
 
-  /** dump connection/stream state to the response body (and the log) */
   public void bind(InetSocketAddress addr, int backlog) throws IOException {
     if (bound) {
       throw new BindException("HttpServer already bound");
