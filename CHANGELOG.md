@@ -3,6 +3,55 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.0.0] - unreleased
+
+A performance-focused major release: the h2 flow-control rewrite (parse-site
+stream credit), the allocation campaign (writev, HPACK interning, per-request
+scratch reuse, frame header pooling), and structural cleanup of the God class.
+
+### Fixed
+- h2 stream-window credit is released at the PARSE site (was: accumulated
+  on the handler thread and flushed at half the initial window): a
+  window-cycling client no longer pays a park/wake round trip per window
+  boundary. In virtualized/container environments, single-stream upload
+  throughput 14 -> 42 rps (3x). Host behavior is unchanged (it was already
+  at the wake-chain floor).
+- WebSocket echo double-masking: the wire fact (client-masked) was confused
+  with the write state, so an echo handler re-masked what it received. A
+  copy-constructor now propagates the wire fact.
+- Frame-flag table aliasing: the flags bitset mapped PRIORITY onto ACK, so
+  a truncated PRIORITY-HEADERS test expected the wrong error code. The
+  table is now indexed by the full 7-bit flag space.
+
+### Changed
+- FrameParser's FRAME_SIZE_ERROR now reports the raw 9 header bytes hex
+  (was an empty message that hid the diagnosis of stream corruption).
+
+### Performance
+- h1 bulk64k +15% (writev: header + direct body chunk in one gathering
+  write; partial writes drain with park-retry backoff).
+- Per-request allocation 2.7KB -> ~1KB on the h1 path; GC pauses per
+  million requests 32 -> 27.
+- Measured vs main 2.x and vs JDK 25's own HttpServer (8-core macOS,
+  256MB heap, 2-minute warmup, wrk t4/c64): h1 bulk64k +15%,
+  GC pause count -64% vs JDK, h2 sequential +15% in containers, and
+  the flow-control fix above. Loopback h1 RPS is at the platform floor
+  (94-97% of a no-parse raw socket server, measured).
+- The response-head scratch, the frame-header scratch, and the HPACK
+  name intern (bounded 256) eliminate the remaining per-request
+  allocations on the keep-alive path.
+
+### Internal
+- Structural diet: ServerImpl 1662 -> 946 lines. Dispatcher,
+  Http1ConnectionHandler, ConnectionCleanerTask, and the stats/debug
+  handlers are now separate classes; HttpConnection's volatile
+  lifecycle state is written only through named methods
+  (beginRequest/endRequest/attachHttp2/handOffStreams/
+  peerIsDoneSending/markDraining/clearDraining/setHeaderScratch).
+- Hot-path TRACE loggers gated by isLoggable checks (zero allocation
+  at disabled levels); per-request lambda captures removed from the
+  R1 logging sites.
+
 ## [2.0.0] - unreleased
 
 A JDK 25-focused major release: virtual-thread hardening, an HTTP/2
@@ -23,7 +72,7 @@ an API cleanup (see MIGRATION.md for the 1.x → 2.0 class renames).
 - `/__debug` now returns the connection/stream dump as the response body.
 - CI (GitHub Actions, JDK 25), multi-stage Dockerfile (JDK 25), Maven
   enforcer (requireJavaVersion 25), THIRD-PARTY-NOTICES.
-- Test suite grown to 214 tests, including: h2-over-TLS ALPN (negotiation,
+- Test suite grown to 240 tests, including: h2-over-TLS ALPN (negotiation,
   fallback, multiplexing), h1 chunked trailer coverage, four-path request
   body cap assertions, full-size DATA frame pool round-trip, and the
   pre-existing h2 compliance/regression suites.

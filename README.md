@@ -17,10 +17,13 @@
 
 ## 性能
 
-- 比 JDK 内置实现快 **10 倍以上**（TechEmpower 基准，同硬件同 JDK）
-- 比 Jetty http2 快 **3 倍**、http1 快 **5 倍**（h2load 基准）
-- 单机回环实测：h1 ~31k RPS、h2 多路复用 ~28k RPS、单流上传 ~110MB/s（8 核 macOS，小响应）
-- h2 路径垃圾分配比优化前减少 **73%**（GC 停顿 4 倍减少）
+- 与 JDK 25 内建 `HttpServer` 对照（8 核 macOS、JDK 25、每臂 2 分钟预热、wrk t4/c64、240 项测试门禁的可复现剧本 `src/test/bench/`）：
+  - h1 吞吐持平（回环已达平台 syscall 地板：裸 socket 无解析基线的 94–97%）
+  - h1 bulk64k **+15%**（writev 合并路径）
+  - **GC 暂停次数 -64%**（同负载 189 vs 530 次，256MB 堆）
+  - 头块解析 2–3×、管道化 4.5×（历史战役数据，见 CHANGELOG）
+- 对上游 main 分支：h1 bulk64k +15%、h2 顺序（容器）+15%、h2 单流上传在容器环境 **3×**（流控修复）
+- 老基准（TechEmpower 10×、h2load vs Jetty 3×/5×）见上游项目页；本仓库的可复现数据以上表为准
 
 ## Maven
 
@@ -81,6 +84,54 @@ public class Test {
 }
 ```
 
+## API 总览
+
+模块名 `robaho.httpserver`（JPMS）。导出 4 个包；依赖 `java.logging`、`java.net.http`、`jdk.httpserver`（均传递），`java.management` 为静态可选（最小 jlink 镜像可省，仅影响启动时 JVM 特性探测）。完整契约见 javadoc jar。
+
+| 包 | 内容 |
+|---|---|
+| `robaho.net.httpserver` | 主 API：`AuthFilter`、`DefaultHttpServerProvider`（SPI，自动发现）、`HttpStatus`（状态码常量与文案） |
+| `robaho.net.httpserver.extras` | 工具：`Sendfile`（零拷贝）、`FormParser`、`MultipartFormParser`、`QueryParameters`、`ContentTypeCharset`、`ProxyHandler` |
+| `robaho.net.httpserver.websockets` | RFC 6455：`WebSocketHandler`、`WebSocket`、`BufferedWebSocket`、`WebSocketFrame`、`CloseFrame`、`CloseCode`、`OpCode`、`WebSocketException` |
+| `robaho.net.httpserver.http2` | h2 诊断：`Http2Stats`（全部计数器）、`Http2ErrorCode`（错误码枚举）、`Http2Exception` |
+
+实现类（`HttpConnection`、`Http2ExchangeImpl`、`HttpServerImpl`、`HttpsServerImpl` 等）与数据结构内部均在非导出包——2.0 起 API 面已收窄，`package-info` 声明各包契约。
+
+### 认证（AuthFilter）
+
+与 JDK `Authenticator` 集成，作为 `Filter` 挂到 context 的系统过滤器链：
+
+```java
+Authenticator auth = new MyBasicAuthenticator("realm");
+server.createContext("/api", handler).getFilters().add(new AuthFilter(auth));
+// 或替换：((AuthFilter) filter).setAuthenticator(newAuth);
+```
+
+`AuthFilter` 实现了 `PrincipalExchange` 扩展接口：通过认证的 `HttpExchange` 可取出 `Principal`（避免再解析 Authorization 头）。认证失败时按 JDK 语义返回 `Authenticator` 的重试响应（如 401 + WWW-Authenticate）。
+
+### 表单解析（extras）
+
+```java
+// application/x-www-form-urlencoded
+Map<String, List<String>> params = FormParser.parse(charset, exchange.getRequestBody());
+
+// multipart/form-data（文件落盘到 storage 目录，data 为内存字段）
+Map<String, List<MultipartFormParser.Part>> parts =
+    MultipartFormParser.parse(charset, contentType, exchange.getRequestBody(), storagePath);
+for (var part : parts.get("upload")) {
+  // part.contentType() / part.filename() / part.data()（内存）/ part.file()（落盘）
+}
+
+// 查询串
+QueryParameters qp = QueryParameters.decode(charset, exchange.getRequestURI().getQuery());
+String first = qp.getFirst("q");
+
+// 请求的 charset（Content-Type 头 + RFC 2046 默认规则）
+String cs = ContentTypeCharset.charset(exchange.getRequestHeaders());
+```
+
+属性上限（防 DoS）：`max_form_bytes`（10MB）、`max_form_params`（1000）、`max_multipart_field_bytes`（1MB）见参数表。`SimpleFileServer`（测试源码树 `src/test/extras/`，非发布 API）演示了 FormParser/QueryParameters/ContentTypeCharset 的组合用法。
+
 ### 简单文件服务器
 
 用于基本测试（下载、echo、hello）：
@@ -112,6 +163,25 @@ HttpContext c = server.createContext("/ws", h);
 ```
 
 更多示例见 [websocket 测试目录](https://github.com/robaho/httpserver/tree/main/src/test/java/robaho/net/httpserver/websockets)。底层 API 来自 [nanohttpd](https://github.com/NanoHttpd/nanohttpd)。
+
+### 回调契约（WebSocket）
+
+`WebSocketHandler.openWebSocket(exchange)` 返回你的 `WebSocket` 子类实例，四个回调：
+
+| 回调 | 必须覆写 | 线程 | 说明 |
+|---|---|---|---|
+| `onOpen()` | 否 | 连接 VT | 连接建立后调用一次 |
+| `onClose(code, reason, initiatedByRemote)` | **是** | 单线程 | 恰好一次；`initiatedByRemote` 区分本地/远端发起 |
+| `onMessage(WebSocketFrame)` | **是** | 连接 VT | 完整消息（分片已聚合；控制帧走 `onPong`） |
+| `onPong(pong)` | 否 | 连接 VT | 心跳响应 |
+
+发送 API：`send(String)` / `send(byte[])` / `sendFrame(frame)` / `ping(payload)` / `isOpen()`。**单一写者纪律**：回调之外的线程发送需自行串行化（或用 `BufferedWebSocket`，其内部队列 + drain 线程代管并发发送，背压上限 `maxBufferedWebSocketBytes`）。
+
+工具类型：`WebSocketFrame.binary2Text/text2Binary`（UTF-8 编解码）、`CloseFrame`（关闭帧构造/解析）、`CloseCode`（RFC 6455 关闭码枚举，`find(int)` 反查）、`OpCode`（帧类型，`isControlFrame()`）。静态谓词 `WebSocketHandler.isWebsocketRequested(headers)` 供自定义升级路由复用握手检测。
+
+### h2 诊断类型
+
+`Http2Stats`（`/__stats` h2 段的数据源）暴露全部 `AtomicLong` 计数器：`activeStreams`、`totalStreams`、`bytesSent`、`framesSent`、`flushes`、`sslConnections`/`nonsslConnections` 等——按实例获取（`Http2Stats` 由服务器内部持有；`/__stats` 端点或 `EnableStats` 即为对外视图）。`Http2ErrorCode` 是全部 RFC 9113 错误码枚举（`getValue()`/`getEnum(int)`），`Http2Exception` 携带错误码抛给 handler 捕获。
 
 ## 日志
 
@@ -218,7 +288,7 @@ Total Handler Exceptions: 0
 
 ### 部署配方（实测数据）
 
-以下配方均在 8 核 macOS / JDK 25 / 本库 33k rps 负载下实测验证：
+以下配方均在 8 核 macOS / JDK 25 / 本库 35k rps 负载下实测验证：
 
 **1. 紧凑对象头**（分配密集场景，零代码）：
 
@@ -281,7 +351,7 @@ HTTP/2 连接级发送窗口（服务端→客户端方向）初始为 65535 字
 
 ## 测试与合规
 
-- 几乎所有 JDK 原有测试均已包含（全部 TestNG 套件通过（当前 214 项，见 CI））
+- 几乎所有 JDK 原有测试均已包含（全部 TestNG 套件通过（当前 240 项，见 CI））
 - 额外的代理、WebSocket、HTTP/2 合规测试
 - HTTP/2 通过 [h2spec](https://github.com/summerwind/h2spec) 全部规范测试
 

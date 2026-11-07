@@ -120,3 +120,22 @@ module users:
 
 Gradle → Maven. `mvn package` builds, tests, sources and javadoc jars.
 `mvn -Prelease deploy` publishes to Maven Central.
+
+
+## Migrating from 2.x to 3.0
+
+No renames, no removals: the 2.x API surface is unchanged. Read the
+3.0.0 CHANGELOG section for behavior deltas:
+
+- Header parsing is stricter (no-colon header lines are now 400,
+  obs-fold joins with a single space, HTTP versions other than 1.0/1.1
+  are 505, `//`-prefixed URIs are 400, leading blank lines capped at 4).
+- `maxReqHeaderSize` (380KB default) returns 431; opt-in
+  `maxRequestBodySize` returns 413 / kills the connection per protocol.
+- h2 stream credit is released at the parse site (container upload
+  throughput 3x; host behavior unchanged).
+- `HttpServer.stop(delay)` takes SECONDS (JDK-compatible) — code that
+  passed milliseconds must be corrected.
+- Late reads of request headers (after the response completed and the
+  connection served the next request) return an EMPTY Headers view, not
+  a stale snapshot (see README's known-differences section).
