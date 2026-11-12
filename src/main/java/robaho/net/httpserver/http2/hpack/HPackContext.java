@@ -328,6 +328,22 @@ public class HPackContext {
    * and each frame is written as the 9-byte header through the caller's
    * scratch plus a direct slice of this block - no block-level copy, no
    * per-frame array allocations
+   * <p>TODO (post-3.0, bandwidth feature - NOT throughput): the encoder
+   * emits every VALUE as a literal (static-table names indexed, huffman
+   * chosen per RFC 7541 5.2 shorter-of); it never INDEXES into a dynamic
+   * table, so repeated name-value pairs (server, content-type, cookies)
+   * are re-encoded per response. adding an encoder-side dynamic table
+   * with reverse indices (see "Exploring HTTP/2 Header Compression",
+   * CFI'17, the nghttp2/h2o authors - https://www.mew.org/~kazu/doc/paper/hpack-2017.pdf)
+   * would cut outbound header bytes roughly 2-3x (their measured
+   * compression ratios: static+huffman ~0.66, +dynamic table ~0.31) but
+   * measured rps on loopback benchmarks stays within noise - the wins
+   * are egress bytes on WAN/traffic-billed deployments only. the cost:
+   * HPACK state must advance in frame order, forcing encoding back
+   * under the connection lock (serializing concurrent streams), plus
+   * per-connection reverse indices, peer SETTINGS_HEADER_TABLE_SIZE
+   * negotiation, and never-indexed handling for set-cookie. the decoder
+   * side (dynamic table + huffman decode) is already complete.
    */
   public static EncodedHeaderBlock encodeHeaderBlock(Headers headers) throws IOException {
     return encodeHeaderBlock(headers, null);
