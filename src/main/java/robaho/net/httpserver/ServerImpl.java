@@ -747,7 +747,9 @@ class ServerImpl {
       // incrementally in the stream's DATA path)
       long bodySizeLimit = ServerConfig.getMaxRequestBodySize();
       if (bodySizeLimit > 0) {
-        String contentLength = request.getFirst("content-length");
+        // normalized-form literal: a lowercase key would fold (allocate)
+        // on every capped-request lookup, unlike the other lookups here
+        String contentLength = request.getFirst("Content-length");
         if (contentLength != null) {
           try {
             if (Long.parseLong(contentLength) > bodySizeLimit) {

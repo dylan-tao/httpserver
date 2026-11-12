@@ -161,15 +161,19 @@ public class OptimizedHeaders extends Headers {
 
   @Override
   public List<String> get(Object key) {
-    Object o = map.get(normalize((String) key));
+    // normalize ONCE for both the lookup and the view: the single-value
+    // path re-normalized the same key on every hit - a second scan per
+    // get, and a second fold allocation when the caller's key was not
+    // in normalized form
+    String normalizedKey = normalize((String) key);
+    Object o = map.get(normalizedKey);
     // a SINGLE value must come back as a live list: the JDK's Headers
     // hands its own LinkedList out, and application code mutating it
     // ("the external modification the JDK comment names") must be
     // visible to the store - a retry test injects an illegal value
     // through it, expects sendResponseHeaders to throw, removes it
     // and retries (Jdk25ParityTest.atomicResponseHeadersOnRetry)
-    return o == null ? null : o instanceof String || o == NULL_VALUE ? singleValueView(normalize((String) key))
-        : nullSafeList(o);
+    return o == null ? null : o instanceof String || o == NULL_VALUE ? singleValueView(normalizedKey) : nullSafeList(o);
   }
 
   /**
