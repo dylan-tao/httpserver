@@ -4,10 +4,19 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
     <description>
-        errorprone + bestpractices; every exclusion is a triaged intentional
-        pattern from the static-analysis sweeps (commits 74d68ff and this
-        gate's own triage). design/codestyle categories are not referenced:
-        the formatter-maven-plugin is the mechanical style layer.
+        errorprone + bestpractices + security + performance; every exclusion
+        is a triaged intentional pattern from the static-analysis sweeps
+        (commits 74d68ff and this gate's own triage).
+        design/codestyle/documentation/multithreading are not referenced:
+        the formatter-maven-plugin is the mechanical style layer, and those
+        categories are either hostile to this codebase's design
+        (DoNotUseThreads/AvoidUsingVolatile vs the virtual-thread +
+        volatile-clock architecture) or their findings are deliberate style.
+        security: whole category (HardCodedCryptoKey, InsecureCryptoIv) -
+        zero-violation today, guards future TLS-adjacent commits.
+        performance: whole category minus three triaged rules (see the
+        excludes) - the remaining 22 rules are zero-violation today and
+        guard future code changes (string/buffer/collection hygiene).
     </description>
     <rule ref="category/java/errorprone.xml">
         <!-- boundary dispatchers catch Exception/Throwable by design:
@@ -56,6 +65,7 @@
              baseline per instance, before the constructor body runs -->
         <exclude name="NonStaticInitializer"/>
     </rule>
+
     <rule ref="category/java/bestpractices.xml">
         <!-- h2 frames and HPACK buffers are zero-copy by design:
              ownership transfers with the frame, no defensive copies on
@@ -83,12 +93,28 @@
         <!-- array parameters mirror the internal table shapes (called
              once at class-init); varargs would copy on every call -->
         <exclude name="UseVarargs"/>
-        <!-- the formatter plugin enforces style going forward -->
-        <exclude name="OneDeclarationPerLine"/>
         <!-- cross-call dataflow PMD cannot model: the chunk state machine
              (ChunkedInputStream.needToReadHeader) and the reflective
              baseline capture (OptimizedHeaders) read/write across
              method invocations -->
         <exclude name="UnusedAssignment"/>
     </rule>
+
+    <rule ref="category/java/performance.xml">
+        <!-- = false / = 0 explicit field initializers: deliberate style
+             (28 sites) - the initializer documents the field's zero-state;
+             removing it changes nothing semantically -->
+        <exclude name="RedundantFieldInitializer"/>
+        <!-- parser pipelines (FormParser, MultipartFormParser,
+             QueryParameters, the h2 header assembly) allocate per-element
+             objects inside their parse loops by design - 12 sites, all
+             cold extras or once-per-request paths, not hot loops -->
+        <exclude name="AvoidInstantiatingObjectsInLoops"/>
+        <!-- MultipartFormParser writes uploaded parts to disk via
+             Files.newOutputStream: the semantic (a real file) is the
+             point, not a buffer to optimize -->
+        <exclude name="AvoidFileStream"/>
+    </rule>
+
+    <rule ref="category/java/security.xml"/>
 </ruleset>

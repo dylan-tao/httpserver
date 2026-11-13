@@ -165,13 +165,13 @@ class Http1ConnectionHandler implements Runnable {
       server.stats().requestCount.incrementAndGet();
 
     server.logger().log(Level.DEBUG, () -> "Http1 request line: " + requestLine);
-    int space = requestLine.indexOf(" ");
+    int space = requestLine.indexOf(' ');
     if (space == -1) {
       throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request line");
     }
     String method = requestLine.substring(0, space);
     int start = space + 1;
-    space = requestLine.indexOf(" ", start);
+    space = requestLine.indexOf(' ', start);
     if (space == -1) {
       throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request line");
     }
@@ -390,7 +390,7 @@ class Http1ConnectionHandler implements Runnable {
       var informational = (code >= 100 && code < 200);
 
       if (text != null && text.length() != 0) {
-        builder.append("Content-length: ").append(text.length()).append("\r\n").append("Content-type: text/html\r\n");
+        builder.append("Content-length: ").append(text.length()).append("\r\nContent-type: text/html\r\n");
       } else {
         if (!informational) {
           // no body for 1xx responses

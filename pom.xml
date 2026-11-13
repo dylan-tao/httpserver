@@ -43,26 +43,26 @@
     </scm>
 
     <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- maven plugin versions, centrally managed -->
-        <version.maven-compiler-plugin>3.16.0</version.maven-compiler-plugin>
-        <version.build-helper-maven-plugin>3.6.2</version.build-helper-maven-plugin>
-        <version.maven-surefire-plugin>3.5.6</version.maven-surefire-plugin>
-        <version.maven-pmd-plugin>3.28.0</version.maven-pmd-plugin>
-        <version.spotbugs-maven-plugin>4.10.5.0</version.spotbugs-maven-plugin>
-        <version.formatter-maven-plugin>2.29.0</version.formatter-maven-plugin>
-        <version.maven-enforcer-plugin>3.6.3</version.maven-enforcer-plugin>
-        <version.maven-jar-plugin>3.5.1</version.maven-jar-plugin>
-        <version.maven-source-plugin>3.4.0</version.maven-source-plugin>
-        <version.maven-javadoc-plugin>3.12.0</version.maven-javadoc-plugin>
-        <version.maven-gpg-plugin>3.2.8</version.maven-gpg-plugin>
-        <version.central-publishing-maven-plugin>0.12.0</version.central-publishing-maven-plugin>
-        <!-- javadoc fork reads this (it does not follow release=25):
-             ScopedValue & friends are JDK 25 APIs -->
         <maven.compiler.source>25</maven.compiler.source>
-        <!-- JDK 25 target: unlocks ScopedValue (JEP 506, final in 25) and the
-             compact object headers flag in the test JVM -->
         <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- maven plugin versions -->
+        <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
+        <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
+        <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+        <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
+        <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+
+        <build-helper-maven-plugin.version>3.6.2</build-helper-maven-plugin.version>
+        <formatter-maven-plugin.version>2.29.0</formatter-maven-plugin.version>
+        <maven-pmd-plugin.version>3.28.0</maven-pmd-plugin.version>
+        <spotbugs-maven-plugin.version>4.10.5.0</spotbugs-maven-plugin.version>
+
+        <central-publishing-maven-plugin.version>0.12.0</central-publishing-maven-plugin.version>
+        <!-- testing versions -->
         <testng.version>7.10.2</testng.version>
     </properties>
 
@@ -79,8 +79,31 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>${maven-enforcer-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>enforce-java</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <!-- fail fast with a clear message on an older
+                                 JDK instead of a compiler release error -->
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[25,)</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>${version.maven-compiler-plugin}</version>
+                <version>${maven-compiler-plugin.version}</version>
                 <configuration>
                     <release>25</release>
                 </configuration>
@@ -94,41 +117,15 @@
                                  module) instead of patching them into the named
                                  module, where those reads are illegal -->
                             <useModulePath>false</useModulePath>
-                    <!-- surefire >= 3.5 applies its default *Test include
-                         filter to suite-listed classes too, silently dropping
-                         the JDK-derived default-package tests that do not
-                         carry the Test suffix (InputNotRead, ZeroLength...);
-                         widen the filter so the testng.xml class list is
-                         authoritative -->
-                    <includes>
-                        <include>**/*.java</include>
-                    </includes>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!-- additional test source roots (parity with the old gradle
-                 sourceSets): the standalone test_mains programs are compiled
-                 with the tests but only run via their main() methods -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>build-helper-maven-plugin</artifactId>
-                <version>${version.build-helper-maven-plugin}</version>
-                <executions>
-                    <execution>
-                        <id>add-test-sources</id>
-                        <phase>generate-test-sources</phase>
-                        <goals>
-                            <goal>add-test-source</goal>
-                        </goals>
-                        <configuration>
-                            <sources>
-                                <source>src/test/extras</source>
-                                <source>src/test/java_default/bugs</source>
-                                <source>src/test/java_default/HttpExchange</source>
-                                <source>src/test/test_mains</source>
-                            </sources>
+                            <!-- surefire >= 3.5 applies its default *Test include
+                                 filter to suite-listed classes too, silently dropping
+                                 the JDK-derived default-package tests that do not
+                                 carry the Test suffix (InputNotRead, ZeroLength...);
+                                 widen the filter so the testng.xml class list is
+                                 authoritative -->
+                            <includes>
+                                <include>**/*.java</include>
+                            </includes>
                         </configuration>
                     </execution>
                 </executions>
@@ -137,7 +134,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>${version.maven-surefire-plugin}</version>
+                <version>${maven-surefire-plugin.version}</version>
                 <configuration>
                     <suiteXmlFiles>
                         <suiteXmlFile>src/test/resources/testng.xml</suiteXmlFile>
@@ -176,94 +173,10 @@
                 </configuration>
             </plugin>
 
-            <!-- static analysis + formatting: the quality gates.
-                 pmd/spotbugs run on every verify (P1-P4 gate, ruleset
-                 excludes document the intentional patterns); formatter
-                 is the mechanical codestyle layer so PMD can stay lean -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-pmd-plugin</artifactId>
-                <!-- latest; bundles PMD engine 7.17.0 (the 7.28.0-engine CLI
-                     sweep lives in the triage history; the ruleset is engine-
-                     compatible across 7.x) -->
-                <version>${version.maven-pmd-plugin}</version>
-                <configuration>
-                    <rulesets>
-                        <ruleset>${project.basedir}/config/pmd-ruleset.xml</ruleset>
-                    </rulesets>
-                    <minimumPriority>4</minimumPriority>
-                    <failOnViolation>true</failOnViolation>
-                    <printFailingErrors>true</printFailingErrors>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>pmd-check</id>
-                        <phase>verify</phase>
-                        <goals><goal>check</goal></goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>com.github.spotbugs</groupId>
-                <artifactId>spotbugs-maven-plugin</artifactId>
-                <version>${version.spotbugs-maven-plugin}</version>
-                <configuration>
-                    <effort>Max</effort>
-                    <threshold>Medium</threshold>
-                    <excludeFilterFile>${project.basedir}/config/spotbugs-exclude.xml</excludeFilterFile>
-                    <failOnError>true</failOnError>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>spotbugs-check</id>
-                        <phase>verify</phase>
-                        <goals><goal>check</goal></goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>net.revelc.code.formatter</groupId>
-                <artifactId>formatter-maven-plugin</artifactId>
-                <version>${version.formatter-maven-plugin}</version>
-                <configuration>
-                    <lineEnding>LF</lineEnding>
-                    <configFile>${project.basedir}/config/formatter-eclipse.xml</configFile>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>format-sources</id>
-                        <goals><goal>format</goal></goals>
-                        <phase>process-sources</phase>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-enforcer-plugin</artifactId>
-                <version>${version.maven-enforcer-plugin}</version>
-                <executions>
-                    <execution>
-                        <id>enforce-java</id>
-                        <goals>
-                            <goal>enforce</goal>
-                        </goals>
-                        <configuration>
-                            <!-- fail fast with a clear message on an older
-                                 JDK instead of a compiler release error -->
-                            <rules>
-                                <requireJavaVersion>
-                                    <version>[25,)</version>
-                                </requireJavaVersion>
-                            </rules>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>${version.maven-jar-plugin}</version>
+                <version>${maven-jar-plugin.version}</version>
                 <configuration>
                     <archive>
                         <manifest>
@@ -276,7 +189,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
-                <version>${version.maven-source-plugin}</version>
+                <version>${maven-source-plugin.version}</version>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -290,7 +203,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>${version.maven-javadoc-plugin}</version>
+                <version>${maven-javadoc-plugin.version}</version>
                 <configuration>
                     <!-- strict: the exported API surface is fully documented,
                          so missing/syntax/reference problems fail the build
@@ -312,6 +225,92 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- additional test source roots (parity with the old gradle
+                 sourceSets): the standalone test_mains programs are compiled
+                 with the tests but only run via their main() methods -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>${build-helper-maven-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>add-test-sources</id>
+                        <phase>generate-test-sources</phase>
+                        <goals>
+                            <goal>add-test-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>src/test/extras</source>
+                                <source>src/test/java_default/bugs</source>
+                                <source>src/test/java_default/HttpExchange</source>
+                                <source>src/test/test_mains</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>net.revelc.code.formatter</groupId>
+                <artifactId>formatter-maven-plugin</artifactId>
+                <version>${formatter-maven-plugin.version}</version>
+                <configuration>
+                    <lineEnding>LF</lineEnding>
+                    <configFile>${project.basedir}/config/formatter-eclipse.xml</configFile>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>format-sources</id>
+                        <goals><goal>format</goal></goals>
+                        <phase>process-sources</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- static analysis + formatting: the quality gates.
+                 pmd/spotbugs run on every verify (P1-P4 gate, ruleset
+                 excludes document the intentional patterns); formatter
+                 is the mechanical codestyle layer so PMD can stay lean -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-pmd-plugin</artifactId>
+                <version>${maven-pmd-plugin.version}</version>
+                <configuration>
+                    <rulesets>
+                        <ruleset>${project.basedir}/config/pmd-ruleset.xml</ruleset>
+                    </rulesets>
+                    <minimumPriority>4</minimumPriority>
+                    <failOnViolation>true</failOnViolation>
+                    <printFailingErrors>true</printFailingErrors>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>pmd-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>${spotbugs-maven-plugin.version}</version>
+                <configuration>
+                    <effort>Max</effort>
+                    <threshold>Medium</threshold>
+                    <excludeFilterFile>${project.basedir}/config/spotbugs-exclude.xml</excludeFilterFile>
+                    <failOnError>true</failOnError>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotbugs-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -326,7 +325,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-gpg-plugin</artifactId>
-                        <version>${version.maven-gpg-plugin}</version>
+                        <version>${maven-gpg-plugin.version}</version>
                         <executions>
                             <execution>
                                 <id>sign-artifacts</id>
@@ -340,7 +339,7 @@
                     <plugin>
                         <groupId>org.sonatype.central</groupId>
                         <artifactId>central-publishing-maven-plugin</artifactId>
-                        <version>${version.central-publishing-maven-plugin}</version>
+                        <version>${central-publishing-maven-plugin.version}</version>
                         <extensions>true</extensions>
                         <configuration>
                             <publishingServerId>central</publishingServerId>
