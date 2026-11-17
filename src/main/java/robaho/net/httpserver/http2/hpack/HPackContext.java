@@ -469,11 +469,20 @@ public class HPackContext {
     }
 
     /**
+     * scratch for stringEncodedSize to hand its huffman length to
+     * encodeStringInto: an instance field (not a fresh int[1] per field)
+     * because appendField runs per response header under the connection
+     * lock on the single writer thread
+     */
+    private final int[] huffLenScratch = new int[1];
+
+    /**
      * append one encoded header field, written positionally: the old
      * encodeHeader() allocated an exact-size byte[] per field and the
      * buffer absorbed it with another copy. the value's UTF-8 bytes
      * remain one allocation (String.getBytes is the only portable
-     * encoder); the huffman length is computed over them as before
+     * encoder); the huffman length is computed over them exactly once
+     * and threaded through the sizing and encoding passes
      */
     void appendField(String name, String value) {
       if (":status".equals(name)) {
@@ -486,15 +495,20 @@ public class HPackContext {
       var index = RFC7541StaticTable.getIndex(name);
       byte[] valueBytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
       if (index != null) {
-        ensure(indexedFieldEncodedSize(index, 4) + stringEncodedSize(valueBytes));
+        ensure(indexedFieldEncodedSize(index, 4) + stringEncodedSize(valueBytes, huffLenScratch));
+        int valueHuffLen = huffLenScratch[0];
         int pos = encodeIndexedFieldInto(buf, len, index, 4);
-        len = encodeStringInto(buf, pos, valueBytes);
+        len = encodeStringInto(buf, pos, valueBytes, valueHuffLen);
       } else {
         byte[] nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        ensure(1 + stringEncodedSize(nameBytes) + stringEncodedSize(valueBytes));
+        int nameSize = stringEncodedSize(nameBytes, huffLenScratch);
+        int nameHuffLen = huffLenScratch[0];
+        int valueSize = stringEncodedSize(valueBytes, huffLenScratch);
+        int valueHuffLen = huffLenScratch[0];
+        ensure(1 + nameSize + valueSize);
         buf[len] = 0x00; // Literal Header Field without Indexing
-        int pos = encodeStringInto(buf, len + 1, nameBytes);
-        len = encodeStringInto(buf, pos, valueBytes);
+        int pos = encodeStringInto(buf, len + 1, nameBytes, nameHuffLen);
+        len = encodeStringInto(buf, pos, valueBytes, valueHuffLen);
       }
     }
 
@@ -540,10 +554,15 @@ public class HPackContext {
 
   /**
    * exact encoded size of a string literal: huffman when shorter (RFC 7541
-   * 5.2 "SHOULD"), literal otherwise - varint length prefix + payload
+   * 5.2 "SHOULD"), literal otherwise - varint length prefix + payload.
+   * also returns the huffman length via the encodedLengths out-param so
+   * the caller can pass it to encodeStringInto, which must make the SAME
+   * huffman-vs-literal decision without re-walking the code table (the
+   * old shape computed Huffman.encodedLength twice per field)
    */
-  private static int stringEncodedSize(byte[] value) {
+  private static int stringEncodedSize(byte[] value, int[] encodedLengths) {
     int huffLen = Huffman.encodedLength(value);
+    encodedLengths[0] = huffLen;
     if (huffLen < value.length) {
       return stringLengthPrefixSize(huffLen) + huffLen;
     }
@@ -566,10 +585,12 @@ public class HPackContext {
 
   /**
    * write a string literal into the target buffer at pos: huffman-coded
-   * when shorter (flag bit set), raw otherwise. returns the new position
+   * when shorter (flag bit set), raw otherwise. the huffLen argument is
+   * the length the sizing pass (stringEncodedSize) already computed -
+   * the two MUST agree, so it is passed instead of recomputed. returns
+   * the new position
    */
-  private static int encodeStringInto(byte[] out, int pos, byte[] value) {
-    int huffLen = Huffman.encodedLength(value);
+  private static int encodeStringInto(byte[] out, int pos, byte[] value, int huffLen) {
     if (huffLen < value.length) {
       pos = encodeLengthPrefix(out, pos, huffLen, true);
       return Huffman.encodeInto(value, out, pos);

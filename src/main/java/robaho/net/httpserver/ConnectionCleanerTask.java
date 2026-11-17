@@ -30,6 +30,10 @@ class ConnectionCleanerTask extends TimerTask {
     // which are plain wall-clock writes (see HttpConnection) - both
     // sides of the comparison must use the same source
     long now = System.currentTimeMillis();
+    // collected in the same pass as the sweep: the old shape ran a
+    // SECOND full O(n) scan whose busy/idle test duplicated this
+    // loop's verbatim
+    List<HttpConnection> idle = ServerImpl.MAX_IDLE_CONNECTIONS > 0 ? new ArrayList<>() : null;
 
     for (HttpConnection c : server.allConnections()) {
       // an h2c connection's inRequest is only true during the upgrade window
@@ -53,46 +57,39 @@ class ConnectionCleanerTask extends TimerTask {
             // the cleaner killed it at maxReqTime
             server.logger().log(java.lang.System.Logger.Level.WARNING, "closing connection due to request processing time");
             server.closeConnection(c, false);
-          } else
-        if (!busy && now - c.lastActivityTime >= ServerImpl.IDLE_INTERVAL / 4) {
-          // idle but not yet closeable: release the 16KB input/output
-          // buffers and the line buffer. the connection stays alive
-          // (keep-alive) and the buffers re-allocate on the next
-          // read/write. this is the memory optimization for
-          // long-lived idle connections
-          c.shrinkBuffers();
-        }
+          } else {
+            if (!busy && now - c.lastActivityTime >= ServerImpl.IDLE_INTERVAL / 4) {
+              // idle but not yet closeable: release the 16KB input/output
+              // buffers and the line buffer. the connection stays alive
+              // (keep-alive) and the buffers re-allocate on the next
+              // read/write. this is the memory optimization for
+              // long-lived idle connections
+              c.shrinkBuffers();
+            }
+            if (idle != null && !busy && now - c.lastActivityTime() >= ServerImpl.IDLE_INTERVAL / 2) {
+              // candidate for the idle-count cap. recency of
+              // lastActivityTime is the additional signal that an h2
+              // connection is still serving: without it the cap would
+              // count - and eventually close - ACTIVE h2 connections.
+              // the busy check matches the main idle-close branch:
+              // without it the cap sweep killed quiet-but-busy h2
+              // streams (a handler mid-DB-query sorted as the "oldest
+              // idle" and was closed preferentially once the cap was
+              // exceeded)
+              idle.add(c);
+            }
+          }
     }
     // enforce the idle connection count limit: close the OLDEST idle
     // connections beyond MAX_IDLE_CONNECTIONS. the enforcement existed
     // only as a comment before, so idle keep-alive connections (and
     // their buffers) were unbounded despite the config
-    if (ServerImpl.MAX_IDLE_CONNECTIONS > 0) {
-      List<HttpConnection> idle = new ArrayList<>();
-      for (HttpConnection c : server.allConnections()) {
-        // "idle" = no request in flight AND quiet for a while.
-        // h2 busy state is requestsInProgress (inRequest is only
-        // the brief h2c upgrade window, cleared at the handoff);
-        // ALPN h2 never sets it. recency of lastActivityTime is
-        // the additional signal that an h2 connection is still
-        // serving: without it the cap would count - and
-        // eventually close - ACTIVE h2 connections. the busy
-        // check matches the main idle-close branch: without it
-        // the cap sweep killed quiet-but-busy h2 streams (a
-        // handler mid-DB-query sorted as the "oldest idle" and
-        // was closed preferentially once the cap was exceeded)
-        boolean busy = c.inRequest || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0);
-        if (!busy && now - c.lastActivityTime() >= ServerImpl.IDLE_INTERVAL / 2) {
-          idle.add(c);
-        }
-      }
-      if (idle.size() > ServerImpl.MAX_IDLE_CONNECTIONS) {
-        idle.sort(java.util.Comparator.comparingLong(c -> c.lastActivityTime));
-        for (int i = 0; i < idle.size() - ServerImpl.MAX_IDLE_CONNECTIONS; i++) {
-          server.logger().log(java.lang.System.Logger.Level.DEBUG, "closing idle connection (over max idle limit)");
-          server.stats().idleCloseCount.incrementAndGet();
-          server.closeConnection(idle.get(i), false);
-        }
+    if (idle != null && idle.size() > ServerImpl.MAX_IDLE_CONNECTIONS) {
+      idle.sort(java.util.Comparator.comparingLong(c -> c.lastActivityTime));
+      for (int i = 0; i < idle.size() - ServerImpl.MAX_IDLE_CONNECTIONS; i++) {
+        server.logger().log(java.lang.System.Logger.Level.DEBUG, "closing idle connection (over max idle limit)");
+        server.stats().idleCloseCount.incrementAndGet();
+        server.closeConnection(idle.get(i), false);
       }
     }
   }

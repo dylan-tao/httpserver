@@ -36,9 +36,14 @@ class ContextList {
 
   private final List<HttpContextImpl> list = new CopyOnWriteArrayList<>();
 
-  private final Map<CacheKey, HttpContextImpl> cache = new ConcurrentHashMap<>();
-
-  private record CacheKey(String protocol, String path) {}
+  /**
+   * exact-match lookup cache keyed by the path alone: every context of
+   * this list is created with the SAME server protocol token, so a
+   * (protocol, path) pair key carried a dead dimension - and allocated
+   * a CacheKey record per request. the cached context is always an
+   * exact path match (see findContext), so the path alone identifies it
+   */
+  private final Map<String, HttpContextImpl> cache = new ConcurrentHashMap<>();
 
   /**
    * serializes add/remove against each other (rare admin operations).
@@ -80,8 +85,7 @@ class ContextList {
    * Context with longest prefix matches (currently case-sensitive)
    */
   HttpContextImpl findContext(String protocol, String path) {
-    CacheKey key = new CacheKey(protocol, path);
-    var ctx = cache.get(key);
+    var ctx = cache.get(path);
     if (ctx != null)
       return ctx;
     ctx = findContext(protocol, path, false);
@@ -98,7 +102,7 @@ class ContextList {
       lock.lock();
       try {
         if (list.contains(ctx)) {
-          cache.put(key, ctx);
+          cache.put(path, ctx);
         }
       } finally {
         lock.unlock();

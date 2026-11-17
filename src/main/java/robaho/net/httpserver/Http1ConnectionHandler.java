@@ -90,6 +90,11 @@ class Http1ConnectionHandler implements Runnable {
           server.closeConnection(connection);
           break;
         }
+        // the exchange is dead but the connection is reused: drop the
+        // reference (it may hold a materialized request-headers map
+        // and the framing streams), or it lingers until the next
+        // request overwrites the field
+        tx = null;
       } catch (Throwable t) {
         server.closeConnection(connection);
         server.logger().log(Level.ERROR, "ServerImpl critical error", t);
@@ -164,7 +169,11 @@ class Http1ConnectionHandler implements Runnable {
     if (ServerStats.ENABLED)
       server.stats().requestCount.incrementAndGet();
 
-    server.logger().log(Level.DEBUG, () -> "Http1 request line: " + requestLine);
+    // isLoggable gate: the supplier lambda allocates even with DEBUG off
+    // (same JFR finding that gated the h2 TRACE loggers)
+    if (server.logger().isLoggable(Level.DEBUG)) {
+      server.logger().log(Level.DEBUG, () -> "Http1 request line: " + requestLine);
+    }
     int space = requestLine.indexOf(' ');
     if (space == -1) {
       throw new RequestRejectedException(HttpStatus.HTTP_BAD_REQUEST, requestLine, "Bad request line");
@@ -193,8 +202,10 @@ class Http1ConnectionHandler implements Runnable {
       }
       uriMemo = new UriMemo(uriStr, uri);
     }
-    start = space + 1;
-    String version = requestLine.substring(start);
+    // req.protocol() already cached the same substring at Request
+    // construction (lastIndexOf(' ')+1): substringing it again here
+    // allocated a second String + byte[] per request
+    String version = req.protocol();
     if (!"HTTP/1.1".equals(version) && !"HTTP/1.0".equals(version)) {
       // the h2c PRI line was already handled above; anything else
       // is an unsupported protocol version

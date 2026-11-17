@@ -90,6 +90,9 @@ class ChunkedOutputStream extends FilterOutputStream {
 
   private static final byte[] CRNL_BYTES = "\r\n".getBytes(StandardCharsets.ISO_8859_1);
 
+  /** lowercase hex digits for writeChunk's direct digit emission */
+  private static final byte[] HEX_DIGITS = "0123456789abcdef".getBytes(StandardCharsets.ISO_8859_1);
+
   ChunkedOutputStream(ExchangeImpl t, OutputStream src) {
     super(src);
     this.t = t;
@@ -162,12 +165,21 @@ class ChunkedOutputStream extends FilterOutputStream {
    * count must == number of user bytes (<= CHUNK_SIZE)
    */
   private void writeChunk() throws IOException {
-    char[] c = Integer.toHexString(count).toCharArray();
-    int clen = c.length;
+    // count is bounded by CHUNK_SIZE (4096 = 0x1000, 3 hex digits):
+    // emit the digits directly instead of Integer.toHexString()
+    // .toCharArray(), which allocated a String + char[] per chunk
+    int clen = 1;
+    if (count >= 0x1000) {
+      clen = 3;
+    } else if (count >= 0x100) {
+      clen = 2;
+    }
     int startByte = 4 - clen;
-    int i;
-    for (i = 0; i < clen; i++) {
-      buf[startByte + i] = (byte) c[i];
+    int i = 0;
+    int shift = (clen - 1) * 4;
+    while (shift >= 0) {
+      buf[startByte + i++] = (byte) HEX_DIGITS[(count >>> shift) & 0xF];
+      shift -= 4;
     }
     buf[startByte + (i++)] = '\r';
     buf[startByte + (i++)] = '\n';

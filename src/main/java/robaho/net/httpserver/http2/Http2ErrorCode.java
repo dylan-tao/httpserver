@@ -28,6 +28,22 @@ public enum Http2ErrorCode {
 
   public int getValue() { return value; }
 
+  /** lookup by wire value; index 0 is the NO_ERROR fallback slot */
+  private static final Http2ErrorCode[] BY_VALUE = buildLookup();
+
+  private static Http2ErrorCode[] buildLookup() {
+    // codes0x0..0xd: a 14-slot array indexed by value; slot 0 doubles
+    // as the unknown-value fallback (NO_ERROR), matching the old scan's
+    // default. values() clones an array per call - the old loop paid
+    // that clone on every GOAWAY parse
+    Http2ErrorCode[] table = new Http2ErrorCode[14];
+    for (Http2ErrorCode e : values()) {
+      table[e.value] = e;
+    }
+    table[0] = NO_ERROR;
+    return table;
+  }
+
   /**
    * Returns the constant for {@code value}. Unknown wire values fall back
    * to {@link #NO_ERROR}; callers that must distinguish an unknown code
@@ -35,13 +51,10 @@ public enum Http2ErrorCode {
    * (see GoAwayFrame.parse).
    */
   public static Http2ErrorCode getEnum(int value) {
-    Http2ErrorCode result = Http2ErrorCode.NO_ERROR;
-
-    for (Http2ErrorCode e : Http2ErrorCode.values()) {
-      if (e.getValue() == value)
-        result = e;
+    if (value < 0 || value >= BY_VALUE.length) {
+      return NO_ERROR;
     }
-    return result;
+    return BY_VALUE[value];
   }
 
 }

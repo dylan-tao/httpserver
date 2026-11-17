@@ -75,13 +75,20 @@ class ChunkedInputStream extends LeftOverInputStream {
   }
 
   /*
+   * scratch for the chunk-size digits: an instance field (the stream is
+   * per-request) instead of a fresh char[16] per chunk header; only the
+   * first lenSize entries are read, stale digits from a longer previous
+   * header are never observed
+   */
+  private final char[] lenArr = new char[16];
+
+  /*
    * read the chunk header line and return the chunk length
    * any chunk extensions are ignored
    */
   private int readChunkHeader() throws IOException {
     boolean gotCR = false;
     int c;
-    char[] lenArr = new char[16];
     int lenSize = 0;
     boolean endOfLen = false;
     int read = 0;

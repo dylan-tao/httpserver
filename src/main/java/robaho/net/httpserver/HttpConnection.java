@@ -520,12 +520,23 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
       // holding that lock, or the buf swap races a concurrent write
       http2Connection.shrinkConnectionOutputBuffer();
       http2Connection.shrinkBuffers();
+      // an h2c connection may have served h1 responses before the
+      // upgrade: the head-assembly scratch is only touched by this
+      // connection's single VT, so it is releasable on the h2 branch
+      // too (ALPN h2 never allocates it - the null store is free)
+      headerScratch = null;
     } else if (os instanceof NoSyncBufferedOutputStream nos) {
       nos.shrinkBuffers();
       // the response-head assembly scratch: only touched by this
       // connection's single VT during request processing, so it is
       // safe to release here (same argument as the output buffer)
       headerScratch = null;
+      // the chunked-staging buffer is only held while lent out to a
+      // chunked exchange (the holder returns it at close), and the
+      // name-encoding table is single-VT like the scratch: both are
+      // idle here and re-allocate on demand on the next response
+      chunkBuffer = null;
+      headerNameBytes = null;
     }
   }
 
