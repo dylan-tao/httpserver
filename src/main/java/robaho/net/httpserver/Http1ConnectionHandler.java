@@ -40,6 +40,20 @@ class Http1ConnectionHandler implements Runnable {
 
   HttpContextImpl ctx;
 
+  /**
+   * request-boundary output-shrink threshold: a connection whose previous
+   * request started more than this long ago is treated as a polling
+   * client, and the output-side buffer set (16KB output buffer, head
+   * scratch, chunk staging, name table) is released at the request
+   * boundary - the cleaner's shrink (quiet >= IDLE/4 = 7.5s) can never
+   * fire for a client polled faster than that (lastActivityTime keeps
+   * refreshing), so the whole set stayed resident between polls. below
+   * the threshold a steady fast poller keeps its buffers: shrinking
+   * per-request would reintroduce exactly the per-request buffer churn
+   * the IDLE_READ_BUFFER_SIZE work removed
+   */
+  private static final long QUIET_OUTPUT_SHRINK_MS = 2000;
+
   Http1ConnectionHandler(ServerImpl server, HttpConnection conn) throws IOException {
     this.server = server;
     this.connection = conn;
@@ -55,6 +69,7 @@ class Http1ConnectionHandler implements Runnable {
       server.logger().log(Level.TRACE, "exchange started " + connection);
     }
 
+    long lastRequestStart = System.currentTimeMillis();
     while (!connection.closed) {
       try {
         // between requests: the reader thread owns the input buffer
@@ -63,6 +78,15 @@ class Http1ConnectionHandler implements Runnable {
         if (rawin instanceof NoSyncBufferedInputStream nis) {
           nis.shrinkForNextRequest();
         }
+        // polling-client output shrink (see QUIET_OUTPUT_SHRINK_MS): this
+        // boundary is the connection VT's own safe point (the previous
+        // response fully flushed before runPerRequest returned), the
+        // same single-ownership argument the cleaner's shrink relies on
+        long now = System.currentTimeMillis();
+        if (now - lastRequestStart > QUIET_OUTPUT_SHRINK_MS) {
+          connection.shrinkBuffers();
+        }
+        lastRequestStart = now;
         runPerRequest();
       } catch (RequestRejectedException e) {
         // a malformed request: reply and close (sendReply's
