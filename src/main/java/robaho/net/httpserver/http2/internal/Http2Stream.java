@@ -869,8 +869,18 @@ public class Http2Stream {
         // recorded at method entry: dataIn.close() unparks this field,
         // and assigning it only before the park opened a lost-unpark
         // window (close between the flag check and the assignment
-        // unparks a stale reader; park() has no timeout to self-heal)
-        reader = Thread.currentThread();
+        // unparks a stale reader; park() has no timeout to self-heal).
+        // compare-then-set instead of an unconditional store: this is
+        // the SOLE consumer thread for the stream's lifetime, so the
+        // field holds it after the first read and every unpark (enqueue,
+        // close, wakeupReader) still targets the live thread - a losing
+        // unpark can only land on this same thread and pre-seeds a
+        // park permit, which the loop re-checks. the unconditional
+        // store paid a storeLoad barrier per read() call (per byte for
+        // single-byte readers)
+        if (reader != Thread.currentThread()) {
+          reader = Thread.currentThread();
+        }
         while (len > 0) {
           byte[] data;
           while ((data = queue.peek()) == null) {

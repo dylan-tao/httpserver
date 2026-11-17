@@ -157,6 +157,30 @@ public class OpenAddressMap<K, V> {
     }
   }
 
+  /**
+   * the next live (non-tombstone) slot at or after {@code from}, or -1:
+   * paired with {@link #keyAt}/{@link #valueAt} this walks the live
+   * entries in plain indexed loops - no lambda captures, no iterator
+   * allocations (the multi-pass response-head assembly). the slot
+   * sequence is stable while the map is not mutated between the passes
+   */
+  public int nextEntry(int from) {
+    for (int i = from; i < keys.length; i++) {
+      if (keys[i] != null && values[i] != null) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  public K keyAt(int slot) {
+    return (K) keys[slot];
+  }
+
+  public V valueAt(int slot) {
+    return (V) values[slot];
+  }
+
   public Iterable<K> keys() {
     return KeyIterator::new;
   }

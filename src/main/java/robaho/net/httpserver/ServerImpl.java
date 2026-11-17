@@ -689,7 +689,10 @@ class ServerImpl {
 
     @Override
     public void handleStream(Http2Stream stream, InputStream in, OutputStream out) throws IOException {
-      connection.requestCount.incrementAndGet();
+      // the connection's requestCount was already counted once at HEADERS
+      // dispatch (Http2Stream.performRequest, on the reader thread - its
+      // single writer): counting here too double-counted every h2 request
+      // (a refactor leftover). only the server-level stat counts here
       if (ServerStats.ENABLED)
         stats.requestCount.incrementAndGet();
 

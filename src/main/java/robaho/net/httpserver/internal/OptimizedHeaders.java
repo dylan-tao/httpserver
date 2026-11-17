@@ -583,6 +583,26 @@ public class OptimizedHeaders extends Headers {
   }
 
   /**
+   * slot-based raw iteration for allocation-free MULTI-pass scans (the
+   * response head is validated, sized, then written): nextEntry returns
+   * the next live slot at or after the argument (-1 at the end), keyAt /
+   * rawValueAt read it. the raw value shapes are exactly forEachRaw's
+   * (String, NULL_VALUE marker, List). the slot sequence is stable while
+   * this map is not mutated between the passes
+   */
+  public int nextEntry(int from) {
+    return map.nextEntry(from);
+  }
+
+  public String keyAt(int slot) {
+    return map.keyAt(slot);
+  }
+
+  public Object rawValueAt(int slot) {
+    return map.valueAt(slot);
+  }
+
+  /**
    * copy entries into a JDK Headers without the entrySet()/forEach()
    * wrapper allocations: putAll() iterated wrappers (SimpleEntry +
    * ArrayList + List.of per single-valued header), ~5-6 allocations per

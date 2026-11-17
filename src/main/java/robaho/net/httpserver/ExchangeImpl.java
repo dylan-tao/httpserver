@@ -522,22 +522,22 @@ class ExchangeImpl {
     System.arraycopy(statusLine, 0, buf, pos, statusLine.length);
     pos += statusLine.length;
     if (map instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
-      // fast path: raw scan of the parallel arrays, no entrySet
-      // wrappers. values were validated by getTotal's validation pass
-      final int[] posRef = {pos};
-      optimized.forEachRaw((key, raw) -> {
+      // fast path: raw slot scan of the parallel arrays, no entrySet
+      // wrappers and no lambda captures. values were validated by
+      // getTotal's validation pass
+      for (int slot = optimized.nextEntry(0); slot >= 0; slot = optimized.nextEntry(slot + 1)) {
+        String key = optimized.keyAt(slot);
+        Object raw = optimized.rawValueAt(slot);
         if (raw instanceof String single) {
-          posRef[0] = writeHeaderLine(buf, posRef[0], key, single);
+          pos = writeHeaderLine(buf, pos, key, single);
         } else if (raw instanceof List<?> list) {
           // indexed loop: an enhanced-for would allocate an
           // Iterator per multi-valued header per response pass
-          // (this loop runs twice - validation and write)
           for (int li = 0; li < list.size(); li++) {
-            posRef[0] = writeHeaderLine(buf, posRef[0], key, (String) list.get(li));
+            pos = writeHeaderLine(buf, pos, key, (String) list.get(li));
           }
         }
-      });
-      pos = posRef[0];
+      }
     } else {
       for (Map.Entry<String, List<String>> entry : map.entrySet()) {
         String key = entry.getKey();
@@ -584,80 +584,54 @@ class ExchangeImpl {
   }
 
   private static int getTotal(byte[] statusLine, Headers map) throws IOException {
+    int total = statusLine.length + 2; // trailing CRLF
     if (map instanceof robaho.net.httpserver.internal.OptimizedHeaders optimized) {
-      // fast path: raw scan of the parallel arrays, no entrySet
-      // wrapper allocations (SimpleEntry + ArrayList per header).
-      // validation first (BiConsumers cannot throw checked
-      // exceptions), then a pure counting pass
-      validateResponseHeaderValues(optimized);
-      final int[] totalRef = {statusLine.length + 2}; // trailing CRLF
-      optimized.forEachRaw((key, raw) -> {
-        int keyLen = key.length();
+      // fast path: raw slot scan of the parallel arrays, no entrySet
+      // wrappers (SimpleEntry + ArrayList per header), no lambda
+      // captures. an indexed loop can throw the checked IOException
+      // directly, so validation and sizing share ONE pass instead of
+      // a separate collector pass
+      for (int slot = optimized.nextEntry(0); slot >= 0; slot = optimized.nextEntry(slot + 1)) {
+        String key = optimized.keyAt(slot);
+        Object raw = optimized.rawValueAt(slot);
         if (raw instanceof String single) {
-          totalRef[0] += keyLen + 2 + single.length() + 2;
+          total += checkedLineLen(key, single);
         } else if (raw instanceof List<?> list) {
           for (int li = 0; li < list.size(); li++) {
-            // nulls were rejected by validation; toString is the
-            // same value the generic path writes
-            totalRef[0] += keyLen + 2 + ((String) list.get(li)).length() + 2;
+            total += checkedLineLen(key, (String) list.get(li));
           }
+        } else {
+          // the NULL_VALUE marker: a null stored through the lenient
+          // mutation paths (or merged from a reflectively swapped map
+          // carrying [null]) - illegal as a response header value
+          throw new IOException("illegal response header value for " + key);
         }
-      });
-      return totalRef[0];
+      }
+      return total;
     }
-    int total = statusLine.length + 2; // trailing CRLF
     for (Map.Entry<String, List<String>> entry : map.entrySet()) {
       String key = entry.getKey();
       for (String val : entry.getValue()) {
-        total += checkedValueLen(key, val);
+        // the same per-line shape the optimized pass sizes: the old
+        // fallback counted only the value length and would have
+        // under-sized (then overflowed) the head buffer if a
+        // non-OptimizedHeaders map ever reached it
+        total += checkedLineLen(key, val);
       }
     }
     return total;
   }
 
   /**
-   * reject null / CR / LF values in any stored form (response splitting
-   * and the null-value contract), walking the raw storage directly
+   * validated "Key: value CRLF" line length: a null or a CR/LF in a
+   * response header value would split the response (response
+   * splitting); refuse rather than write it through
    */
-  private static void validateResponseHeaderValues(robaho.net.httpserver.internal.OptimizedHeaders headers) throws IOException {
-    // a lambda cannot throw a checked exception, so the scan collects the
-    // first violation and this method throws after the pass
-    var violation = new String[2];
-    headers.forEachRaw((key, raw) -> {
-      if (violation[0] != null) {
-        return;
-      }
-      if (raw instanceof String single) {
-        if (single.indexOf('\r') >= 0 || single.indexOf('\n') >= 0) {
-          violation[0] = key;
-        }
-      } else if (raw instanceof List<?> list) {
-        for (int li = 0; li < list.size(); li++) {
-          String v = (String) list.get(li);
-          if (v == null || v.indexOf('\r') >= 0 || v.indexOf('\n') >= 0) {
-            violation[0] = key;
-            break;
-          }
-        }
-      } else {
-        // the NULL_VALUE marker: a null stored through the lenient
-        // mutation paths (or merged from a reflectively swapped map
-        // carrying [null]) - illegal as a response header value
-        violation[0] = key;
-      }
-    });
-    if (violation[0] != null) {
-      throw new IOException("illegal response header value for " + violation[0]);
-    }
-  }
-
-  private static int checkedValueLen(String key, String val) throws IOException {
-    // a CR/LF in a response header value would split the response
-    // (response splitting); refuse rather than write it through
+  private static int checkedLineLen(String key, String val) throws IOException {
     if (val == null || val.indexOf('\r') >= 0 || val.indexOf('\n') >= 0) {
       throw new IOException("illegal response header value for " + key);
     }
-    return val.length();
+    return key.length() + 2 + val.length() + 2;
   }
 
   public InetSocketAddress getRemoteAddress() { return connection.getRemoteAddress(); }

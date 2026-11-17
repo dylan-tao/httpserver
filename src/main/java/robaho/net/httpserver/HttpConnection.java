@@ -176,6 +176,16 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
   // h1 buffer shrink against concurrent h2 frame writes
   volatile robaho.net.httpserver.http2.internal.Http2Connection http2Connection;
 
+  /**
+   * requests served on this connection. AtomicLong: increments are
+   * single-writer in practice (the h1 connection VT, or the h2 reader
+   * thread at HEADERS dispatch; an h2c upgrade hands the SAME thread
+   * between the roles), but a volatile long increment is a non-atomic
+   * read-modify-write that SpotBugs rightly flags
+   * (VO_VOLATILE_INCREMENT) and the saving was nanoseconds per request -
+   * the RMW stays (a volatile-long downgrade was attempted and reverted
+   * by the static gate)
+   */
   final AtomicLong requestCount = new AtomicLong();
 
   /**
