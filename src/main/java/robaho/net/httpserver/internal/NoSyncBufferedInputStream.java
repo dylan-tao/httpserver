@@ -111,8 +111,30 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
   }
 
   /**
+   * set by the idle cleaner to request a shrink of the read buffer ON THE
+   * READER THREAD. the h2 reader never passes a request boundary (it
+   * parks inside processFrames for the connection's lifetime), so the
+   * h1-only shrinkForNextRequest() safe point never runs for it and the
+   * 16KB read buffer stayed resident on every idle h2 connection. the
+   * cleaner only sets this FLAG (one volatile store); the swap itself
+   * happens in fill(), the one point where the reader thread is between
+   * buffers (pos/count already reset by fill's drained contract, no
+   * other read in flight) - the byte[] field store publishes the swap
+   * atomically. functionally safe for h2: full-frame bodies bypass this
+   * buffer (the len >= bufferSize direct-read path), it only stages
+   * 9-byte frame headers, and traffic resumes through fill()'s
+   * small-buffer reallocation (then growBuffer on demand)
+   */
+  private volatile boolean shrinkRequested;
+
+  /** cleaner thread: request the fill() safe-point shrink (see above) */
+  public void requestInputShrink() {
+    shrinkRequested = true;
+  }
+
+  /**
    * Fills the buffer with more data.
-   * This method also assumes that all data has already been read in,
+   * This method also assumes that all data has been read in,
    * hence pos > count.
    */
   private void fill() throws IOException {
@@ -127,6 +149,20 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
       // the old eager 16KB grow cost 18KB of churn per request
       buffer = new byte[IDLE_READ_BUFFER_SIZE];
       buf = buffer;
+    } else if (shrinkRequested) {
+      // the idle cleaner asked for a shrink (requestInputShrink). fill
+      // runs on the reader thread with the buffer drained (pos >= count
+      // is this method's contract), so swapping the buffer HERE is the
+      // same safe-point argument shrinkForNextRequest() makes at the h1
+      // request boundary - no other read can be in flight. the new
+      // buffer must be the SMALL one (not EMPTY): the read at the
+      // bottom of this method needs a slot to land bytes in. one-shot:
+      // the flag clears whether or not the buffer was already small
+      shrinkRequested = false;
+      if (buffer.length > IDLE_READ_BUFFER_SIZE) {
+        buffer = new byte[IDLE_READ_BUFFER_SIZE];
+        buf = buffer;
+      }
     }
     Runnable flushHook = preReadFlush;
     if (flushHook != null) {

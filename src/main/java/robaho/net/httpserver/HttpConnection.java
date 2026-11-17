@@ -535,6 +535,13 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
       // connection's single VT, so it is releasable on the h2 branch
       // too (ALPN h2 never allocates it - the null store is free)
       headerScratch = null;
+      // the h2 reader parks inside processFrames and never passes the
+      // h1 request-boundary safe point, so the 16KB input buffer
+      // cannot be swapped here: only REQUEST the shrink - the reader
+      // performs it at its next fill() (the ping keepalive wakes it
+      // within ~1s; with pings disabled the buffer survives until the
+      // 30s idle close)
+      is.requestInputShrink();
     } else if (os instanceof NoSyncBufferedOutputStream nos) {
       nos.shrinkBuffers();
       // the response-head assembly scratch: only touched by this
