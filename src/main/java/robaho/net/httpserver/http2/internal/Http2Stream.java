@@ -48,12 +48,23 @@ public class Http2Stream {
   /**
    * auto-tuned stream-window target: starts at the advertised initial window
    * and doubles (bounded by {@link ServerConfig#http2AutoTuneMaxWindow()}) as
-   * the client keeps sending. reader-thread-confined like the growth counter
+   * the client keeps sending. reader-thread-confined like the growth counter.
+   * frozen while {@link #windowGated} is set: growth is driven by ARRIVAL
+   * bytes, so an unbounded slow-handler queue would feed its own doubling
    */
   private int streamWindowTarget;
 
-  /** DATA payload bytes received on this stream since the last growth; reader-thread-confined */
+  /** DATA payload bytes received since the last growth; reader-thread-confined */
   private long streamBytesSinceGrowth;
+
+  /**
+   * set by the reader when it withheld stream-window credit because the
+   * handler was not keeping up (DataIn holding more than the gate). cleared
+   * by the handler's consumption-side recovery path when it drains back
+   * below the low watermark. volatile: read on the reader fast path and by
+   * the handler thread, written by both
+   */
+  private volatile boolean windowGated;
 
   private final Http2Connection connection;
 
@@ -94,6 +105,19 @@ public class Http2Stream {
   private volatile Thread writerThread;
 
   private long dataInSize = 0;
+
+  /**
+   * arrival minus consumption for this stream's DataIn, the parse-side
+   * credit's OOM vector: with credit returned at the parse site the client's
+   * window never runs out, so a handler slower than the wire can accumulate
+   * an unbounded arrived-but-unconsumed queue. this counter is that backlog
+   * in bytes. RMW'd by the reader (enqueue) and the handler (release), hence
+   * atomic; a transient one-frame over/under-count from the two sides'
+   * independent arithmetic is harmless against the 2x-window GATE (the gate
+   * is a heuristic bound, not exact accounting). reader by the gates on both
+   * threads
+   */
+  final AtomicLong dataInBacklog = new AtomicLong();
 
   public Http2Stream(int streamId, Http2Connection connection, Headers requestHeaders, Http2Connection.StreamHandler handler)
       throws IOException {
@@ -176,6 +200,10 @@ public class Http2Stream {
     if (connection.http2Streams.remove(streamId) == null) {
       return;
     }
+    // this stream's DataIn backlog just left the connection total: when
+    // the connection window is gated, re-check the recovery condition now
+    // (a closed/reset stream never runs the consumption-side release)
+    onUnregister();
 
     if (rstReceived) {
       // the peer reset the stream: do NOT flush the stream buffer.
@@ -350,10 +378,13 @@ public class Http2Stream {
         // a full window's worth received since the last growth doubles the
         // target. with parse-side credit the growth flows to the client in
         // the SAME replenishment (the target bump IS the credit), so a
-        // window-cycling client's bursts stop paying a round trip per window
+        // window-cycling client's bursts stop paying a round trip per window.
+        // frozen while gated: arrival-driven growth would let a slow
+        // handler's backlog feed its own doubling
         int autoTuneCap = ServerConfig.http2AutoTuneMaxWindow();
         streamBytesSinceGrowth += frame.getHeader().length();
-        if (autoTuneCap > 0 && streamWindowTarget < autoTuneCap && streamBytesSinceGrowth >= streamWindowTarget) {
+        if (autoTuneCap > 0 && !windowGated && streamWindowTarget < autoTuneCap
+            && streamBytesSinceGrowth >= streamWindowTarget) {
           streamWindowTarget = (int) Math.min(streamWindowTarget * 2L, autoTuneCap);
           streamBytesSinceGrowth = 0;
         }
@@ -376,10 +407,16 @@ public class Http2Stream {
         // containers a JDK-poller wake costs ~1.4ms, which throttled a
         // 256KB single-stream upload to ~22ms. replenishing from the parse
         // site keeps the client's window open while the reader is hot, so
-        // uploads pipeline like h1 bulk bodies. memory stays bounded by
-        // the SAME streamWindowTarget the auto-tune already granted: the
-        // credit only ever tops the window back up to its target, and a
-        // slow handler's queue is bounded by exactly that window
+        // uploads pipeline like h1 bulk bodies.
+        // memory bound: the original claim that the queue was "bounded by
+        // exactly that window" was wrong - returning credit at ARRIVAL
+        // means the client's window never runs out, so a handler slower
+        // than the wire accumulates arrived-minus-consumed without limit.
+        // the gate below withholds replenishment while the backlog is
+        // above 2x the window target; the handler's recovery path
+        // (DataIn.releaseBuffer) returns the window once it drains below
+        // half the target, so a fast handler never touches the slow path
+        // while a slow handler's queue is bounded at the gate
         replenishStreamWindow();
         if (dataFrame.getHeader().flags().contains(FrameFlag.END_STREAM)) {
           long expected = expectedSize();
@@ -432,21 +469,58 @@ public class Http2Stream {
    * increment). the flush after the frame write is load-bearing: the peer
    * may be parked with an exhausted window waiting for exactly this update.
    * padding credit folds in for free: the increment is target-relative, so
-   * discarded padding octets no longer need their own accounting
+   * discarded padding octets no longer need their own accounting.
+   * <p>
+   * the watermark gate is the memory bound for slow handlers: when DataIn
+   * holds more than 2x the target the replenishment is WITHHELD and
+   * {@link #windowGated} is set - the client's stream window then runs dry
+   * on its own and the backlog stops growing at the gate (plus one in-flight
+   * window). consumption-side recovery (DataIn buffer release) clears the
+   * gate and returns the window once the backlog drains below half the
+   * target. fast handlers keep 1-2 frames buffered and never trip the gate,
+   * so their replenishment timing and increments are byte-identical to the
+   * un-gated policy.
+   * <p>
+   * the lock-free pre-check (threshold + backlog gate) keeps the reader's
+   * per-frame cost unchanged when no replenishment is due - taking the
+   * connection lock on EVERY DATA frame would tax the fast path the parse-
+   * side credit exists to keep hot. the accounting (the addAndGet + WU
+   * frame write) then runs under the connection lock with a re-check: the
+   * handler-side recovery can race this method, and a double credit would
+   * over-authorize the client beyond the target
    */
   private void replenishStreamWindow() throws IOException {
     int threshold = Math.min(Math.max(streamWindowTarget / 2, ServerConfig.http2MaxFrameSize()), streamWindowTarget);
     int current = (int) receiveWindow.get(); // bounded: window values fit int
-    int increment = streamWindowTarget - current;
-    if (current >= threshold || increment <= 0) {
-      // nothing to replenish, or the configured window is below the RFC
-      // 7540 initial the counter started from (a zero/negative increment
-      // is a protocol error for the peer)
+    if (current >= threshold) {
+      // nothing to replenish - the common per-frame case, lock-free
       return;
     }
-    receiveWindow.addAndGet(increment);
+    if (dataInBacklog.get() > 2L * streamWindowTarget) {
+      // the handler is not keeping up: withhold the credit and let the
+      // client's window drain. the recovery path re-opens it. no lock
+      // needed to SET the flag - it is a hint, and the recovery re-checks
+      // everything under the lock
+      windowGated = true;
+      if (logger.isLoggable(Level.TRACE)) {
+        logger.log(Level.TRACE, "stream " + streamId + " gated: backlog " + dataInBacklog.get() + " vs 2x target "
+            + (2L * streamWindowTarget) + ", receive window " + receiveWindow.get());
+      }
+      return;
+    }
     connection.lock();
     try {
+      // re-check under the lock: the recovery path may have already topped
+      // the window up, or a concurrent growth may have changed the target
+      current = (int) receiveWindow.get();
+      int increment = streamWindowTarget - current;
+      if (increment <= 0) {
+        // the configured window may also be below the RFC 7540 initial the
+        // counter started from (a zero/negative increment is a protocol
+        // error for the peer)
+        return;
+      }
+      receiveWindow.addAndGet(increment);
       WindowUpdateFrame frame = new WindowUpdateFrame(streamId, increment);
       frame.writeTo(connection.outputStream);
       connection.outputStream.flush();
@@ -454,6 +528,79 @@ public class Http2Stream {
           + " on stream " + streamId);
     } finally {
       connection.unlock();
+    }
+  }
+
+  /**
+   * consumption-side recovery for a gated stream: called by DataIn when the
+   * handler released a buffer and the backlog is below the low watermark
+   * (half the target). re-opens the stream window to its target with the
+   * same increment math as the reader path and clears the gate (which also
+   * unfreezes the auto-tune). runs on the HANDLER thread - the only
+   * cross-thread credit left, deliberately confined to the slow-path
+   * recovery branch so fast handlers never pay for it
+   */
+  private void recoverStreamWindow() throws IOException {
+    connection.lock();
+    try {
+      int current = (int) receiveWindow.get(); // bounded: window values fit int
+      int increment = streamWindowTarget - current;
+      if (increment > 0) {
+        receiveWindow.addAndGet(increment);
+        WindowUpdateFrame frame = new WindowUpdateFrame(streamId, increment);
+        frame.writeTo(connection.outputStream);
+        connection.outputStream.flush();
+        logger.log(Level.TRACE, () -> "recovery stream window update " + increment + " on stream " + streamId);
+      }
+      windowGated = false;
+    } finally {
+      connection.unlock();
+    }
+  }
+
+  /**
+   * consumption-side recovery for the connection window: called by DataIn's
+   * release path when the connection gate is set (any stream's handler
+   * released a buffer - the connection total, not this stream's share,
+   * decides). re-checks the combined backlog under the connection lock and
+   * tops the connection window back up when the total is back below the
+   * gate. also the re-check point when a stream CLOSES: a gated stream that
+   * is unregistered takes its backlog out of the sum, and without this hook
+   * the remaining parked senders would wait for a recovery that no running
+   * handler ever triggers
+   */
+  void recoverConnectionWindow() throws IOException {
+    connection.lock();
+    try {
+      if (!connection.connectionWindowGated) {
+        return;
+      }
+      if (connection.totalDataInBacklog() > 2L * connection.windowTarget) {
+        return;
+      }
+      connection.replenishGatedConnectionWindow();
+      connection.connectionWindowGated = false;
+    } finally {
+      connection.unlock();
+    }
+  }
+
+  /**
+   * unregister hook: the stream is leaving the registry, so its DataIn
+   * backlog leaves the connection total. when the connection window is
+   * gated, re-check the total now - a reset/closed stream never runs the
+   * consumption-side recovery, and without this re-check the client could
+   * sit on a drained connection window while every remaining handler is
+   * already parked (their next release would recover it, but a stream whose
+   * handler finished without reading the body has no releases left)
+   */
+  void onUnregister() {
+    try {
+      if (connection.connectionWindowGated) {
+        recoverConnectionWindow();
+      }
+    } catch (IOException e) {
+      logger.log(Level.DEBUG, () -> "connection window recovery on unregister failed for stream " + streamId, e);
     }
   }
 
@@ -836,12 +983,41 @@ public class Http2Stream {
     public DataIn() {}
 
     void enqueue(byte[] data) {
+      dataInBacklog.addAndGet(data.length);
       queue.add(data);
       LockSupport.unpark(reader);
     }
 
     void wakeupReader() {
       LockSupport.unpark(reader);
+    }
+
+    /**
+     * the handler consumed the last byte of a queue buffer: update the
+     * backlog and run the gated-window recovery checks. the stream-gate
+     * check is guarded by the low watermark (half the target) so a fast
+     * handler's releases almost always short-circuit on the plain volatile
+     * read of windowGated; the connection-gate check runs on every release
+     * because the connection total, not this stream's share, decides. both
+     * recoveries take the connection lock and verify under it, so races
+     * between this handler thread and other handlers' recoveries cannot
+     * double-credit. per released buffer (~16KB), not per byte
+     */
+    private void releaseBuffer(byte[] data) throws IOException {
+      dataInBacklog.addAndGet(-data.length);
+      if (!rstReceived && streamOpen) {
+        // WINDOW_UPDATE is legal on open and half-closed streams, but not
+        // on a stream the peer (or we) reset: an RST can land between the
+        // peek-consume and this release, and a recovery WU on a closed
+        // stream is a protocol violation the client may escalate to a
+        // connection error (RFC 7540 5.1)
+        if (windowGated && dataInBacklog.get() < streamWindowTarget / 2) {
+          recoverStreamWindow();
+        }
+        if (connection.connectionWindowGated) {
+          recoverConnectionWindow();
+        }
+      }
     }
 
     @Override
@@ -915,17 +1091,20 @@ public class Http2Stream {
             // the sole owner (this thread) just consumed the last
             // byte: full-size DATA bodies go back to the pool,
             // everything else is GC'd
-            DataFrameBodyPool.release(queue.poll());
+            byte[] released = queue.poll();
+            DataFrameBodyPool.release(released);
             offset = 0;
+            // gated-window recovery check (no-op on the fast path)
+            releaseBuffer(released);
           }
         }
         return read;
       } finally {
         // stream flow-control credit moved to the parse site (see the DATA
-        // case in processFrame): consumption no longer returns the window,
-        // so this handler thread holds no flow-control accounting at all.
-        // the window is replenished on the connection reader thread while
-        // it is hot, bounded by the SAME auto-tune target as before
+        // case in processFrame): consumption no longer returns the window.
+        // the ONE consumption-side exception is the gated-stream recovery
+        // (releaseBuffer), which exists purely to re-open a window that the
+        // watermark gate withheld from a slow handler
       }
     }
 

@@ -263,12 +263,27 @@ public class Http2Connection {
    * auto-tuned replenish target: starts at the configured window and doubles
    * (bounded by {@link ServerConfig#http2AutoTuneMaxWindow()}) as the client
    * keeps sending. reader-thread-confined: mutated only in the DATA case and
-   * read by {@link #sendWindowUpdate()} - both run on the connection reader
+   * read by {@link #sendWindowUpdate()} - both run on the connection reader.
+   * frozen while any stream's DataIn is above the connection watermark gate
+   * (see the DATA case): arrival-driven growth would let a slow handler's
+   * backlog feed its own doubling
    */
-  private int windowTarget;
+  int windowTarget;
 
   /** DATA payload bytes received since the last window growth; reader-thread-confined */
   private long bytesSinceGrowth;
+
+  /**
+   * set by the reader when it withheld connection-window credit because the
+   * streams' combined DataIn backlog exceeded the gate (2x the connection
+   * window target). cleared by the consumption-side recovery
+   * (Http2Stream.recoverConnectionWindow, also run from the stream
+   * unregister hook) once the total drains below the gate. volatile: read
+   * by the reader fast path and by handler threads' release paths, written
+   * by reader and handler threads (the writes are lock-protected; the flag
+   * itself is only a hint that gates the expensive re-check)
+   */
+  volatile boolean connectionWindowGated;
 
   private int maxConcurrentStreams = -1;
 
@@ -582,10 +597,12 @@ public class Http2Connection {
           // window's worth since the last growth is window-cycling - double
           // the target so its bursts stop paying a WINDOW_UPDATE round trip
           // per window. idle or trickle senders never reach the trigger.
-          // bounded by http2AutoTuneMaxWindow (0 disables)
+          // bounded by http2AutoTuneMaxWindow (0 disables). frozen while
+          // the connection window is gated: arrival-driven growth would
+          // let a slow handler's backlog feed its own doubling
           int autoTuneCap = ServerConfig.http2AutoTuneMaxWindow();
           bytesSinceGrowth += frame.getHeader().length();
-          if (autoTuneCap > 0 && windowTarget < autoTuneCap && bytesSinceGrowth >= windowTarget) {
+          if (autoTuneCap > 0 && !connectionWindowGated && windowTarget < autoTuneCap && bytesSinceGrowth >= windowTarget) {
             windowTarget = (int) Math.min(windowTarget * 2L, autoTuneCap);
             bytesSinceGrowth = 0;
           }
@@ -599,11 +616,27 @@ public class Http2Connection {
           // policy (DataIn flushes at initialWindowSize/2).
           // the threshold is clamped to the target window: a
           // threshold above it (maxFrameSize > windowTarget)
-          // would trigger replenishment with the window already at
-          // the target and send a zero/negative increment
+          // would trigger replenishment with the window already at the
+          // target and send a zero/negative increment.
+          // the watermark gate: parse-side credit keeps the client's
+          // connection window open, so without this check a connection
+          // full of slow handlers accumulates an unbounded combined
+          // DataIn backlog (the stream-level gate alone bounds each
+          // stream, but auto-tuned stream windows grow to the same cap
+          // as the connection window, so N streams can still hold
+          // N x cap). when the combined backlog is above 2x the
+          // connection window target the replenishment is withheld and
+          // the client's connection window drains on its own; the
+          // handlers' recovery paths re-open it once the total drops
+          // below the gate. fast connections keep a few frames buffered
+          // and never trip this
           int replenishThreshold = Math.min(Math.max(windowTarget / 2, ServerConfig.http2MaxFrameSize()), windowTarget);
           if (receiveWindow.get() < replenishThreshold) {
-            sendWindowUpdate();
+            if (connectionWindowGated || totalDataInBacklog() > 2L * windowTarget) {
+              connectionWindowGated = true;
+            } else {
+              sendWindowUpdate();
+            }
           }
           if (inHeaders) {
             throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "DATA frame received while headers being received");
@@ -849,6 +882,46 @@ public class Http2Connection {
         targetStream.receiveTrailer(true);
         pendingEndStream = false;
       }
+    }
+  }
+
+  /**
+   * sum of every registered stream's DataIn backlog (arrived minus
+   * consumed). called from the reader's DATA gate and from the handler-side
+   * recovery (both sides tolerate the documented one-frame transient error
+   * on the per-stream counters). O(streams) but only on the replenish path
+   * where the receive window is already below its threshold - a few times
+   * per window's worth of data, not per frame
+   */
+  long totalDataInBacklog() {
+    long total = 0;
+    for (var stream : http2Streams.values()) {
+      total += stream.dataInBacklog.get();
+    }
+    return total;
+  }
+
+  /**
+   * consumption-side connection-window recovery (called by
+   * Http2Stream.recoverConnectionWindow with the connection lock held and
+   * the combined backlog verified below the gate): top the connection
+   * window back up to its target. the caller holds the lock, so this cannot
+   * race the reader's sendWindowUpdate into double-crediting
+   */
+  void replenishGatedConnectionWindow() throws IOException {
+    int current = receiveWindow.get();
+    int increment = windowTarget - current;
+    if (increment <= 0) {
+      // already at or above the target (the window can exceed the target
+      // only transiently via a SETTINGS delta): nothing to return
+      return;
+    }
+    receiveWindow.addAndGet(increment);
+    WindowUpdateFrame frame = new WindowUpdateFrame(0, increment);
+    frame.writeTo(outputStream);
+    outputStream.flush();
+    if (logger.isLoggable(Level.DEBUG)) {
+      logger.log(Level.DEBUG, () -> "recovery connection window update " + increment);
     }
   }
 

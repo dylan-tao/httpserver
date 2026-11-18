@@ -77,6 +77,15 @@ class H2Client implements AutoCloseable {
    */
   long connSendWindow = 65535;
 
+  /**
+   * the client's view of the send window of the stream it is currently
+   * uploading on, for tests that track stream-level flow control by hand:
+   * starts at the server's advertised initial window (65535 by default) and
+   * is credited by the stream-id WINDOW_UPDATEs the test reads back. a
+   * single stream at a time - the tests that use this never multiplex
+   */
+  long streamSendWindow = 65535;
+
   private int nextStreamId = 1;
 
   H2Client(int port) throws IOException {
@@ -346,6 +355,54 @@ class H2Client implements AutoCloseable {
             // response frames of streams that already completed:
             // hold them back (re-queueing straight into pending
             // would make readFrame() re-poll them forever)
+            heldBack.add(f);
+            break;
+        }
+      }
+    } finally {
+      requeueHeldBack(heldBack);
+    }
+  }
+
+  /**
+   * timed variant for gate probes: returns null when no WINDOW_UPDATE
+   * arrives within {@code timeoutMillis} of wall-clock waiting (keepalive
+   * frames keep the socket read from timing out, so the deadline is
+   * tracked here, not by the socket). a null return is the probe's
+   * observable: the server is withholding credit (the watermark gate)
+   */
+  int[] readWindowUpdate(long timeoutMillis) throws IOException {
+    long deadline = System.currentTimeMillis() + timeoutMillis;
+    List<Frame> heldBack = new ArrayList<>();
+    try {
+      while (true) {
+        Frame f;
+        try {
+          f = readFrame();
+        } catch (SocketTimeoutException e) {
+          if (System.currentTimeMillis() > deadline) {
+            return null;
+          }
+          continue;
+        }
+        switch (f.type) {
+          case TYPE_SETTINGS:
+          case TYPE_PING:
+            answerKeepalive(f);
+            if (System.currentTimeMillis() > deadline) {
+              return null;
+            }
+            break;
+          case TYPE_WINDOW_UPDATE:
+            int windowInc = readInt32(f.payload, 0);
+            if (f.streamId == 0) {
+              connSendWindow += windowInc;
+            }
+            return new int[] {f.streamId, windowInc};
+          case TYPE_GOAWAY:
+            recordGoaway(f);
+            throw new IOException("GOAWAY received: error " + goawayErrorCode);
+          default:
             heldBack.add(f);
             break;
         }
