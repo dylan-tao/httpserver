@@ -262,13 +262,14 @@ public class Http2Connection {
   /**
    * auto-tuned replenish target: starts at the configured window and doubles
    * (bounded by {@link ServerConfig#http2AutoTuneMaxWindow()}) as the client
-   * keeps sending. reader-thread-confined: mutated only in the DATA case and
-   * read by {@link #sendWindowUpdate()} - both run on the connection reader.
-   * frozen while any stream's DataIn is above the connection watermark gate
-   * (see the DATA case): arrival-driven growth would let a slow handler's
-   * backlog feed its own doubling
+   * keeps sending. written only by the reader (the DATA-case growth), but
+   * READ cross-thread by the handler-side recovery
+   * (Http2Stream.recoverConnectionWindow), hence volatile: a stale read is
+   * still safe (the target only grows and is frozen while gated, so stale =
+   * smaller = a conservative gate), but the race would be unbounded without
+   * the happens-before edge
    */
-  int windowTarget;
+  volatile int windowTarget;
 
   /** DATA payload bytes received since the last window growth; reader-thread-confined */
   private long bytesSinceGrowth;

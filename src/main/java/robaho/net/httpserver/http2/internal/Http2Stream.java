@@ -48,11 +48,16 @@ public class Http2Stream {
   /**
    * auto-tuned stream-window target: starts at the advertised initial window
    * and doubles (bounded by {@link ServerConfig#http2AutoTuneMaxWindow()}) as
-   * the client keeps sending. reader-thread-confined like the growth counter.
-   * frozen while {@link #windowGated} is set: growth is driven by ARRIVAL
-   * bytes, so an unbounded slow-handler queue would feed its own doubling
+   * the client keeps sending. written only by the reader (the growth is
+   * arrival-driven), but READ cross-thread by the handler's recovery path
+   * (releaseBuffer's low-watermark check), hence volatile: a stale read is
+   * still safe (the target only grows and is frozen while gated, so stale =
+   * smaller = earlier recovery), but the race would be unbounded without
+   * the happens-before edge. frozen while {@link #windowGated} is set:
+   * growth driven by ARRIVAL bytes would let an unbounded slow-handler
+   * queue feed its own doubling
    */
-  private int streamWindowTarget;
+  private volatile int streamWindowTarget;
 
   /** DATA payload bytes received since the last growth; reader-thread-confined */
   private long streamBytesSinceGrowth;
