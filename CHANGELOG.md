@@ -26,6 +26,18 @@ scratch reuse, frame header pooling), and structural cleanup of the God class.
 ### Changed
 - FrameParser's FRAME_SIZE_ERROR now reports the raw 9 header bytes hex
   (was an empty message that hid the diagnosis of stream corruption).
+- The default h2 keepalive ping interval is 5000ms (was 1000ms): each
+  idle h2 connection cost ~2-4 syscalls plus a reader wake per second;
+  5s cuts that idle traffic 80% while dead-peer detection stays within
+  ~10s. Restore the old cadence with
+  `-Drobaho.net.httpserver.http2PingIntervalMillis=1000` (<=0 disables).
+- Quiet websocket/CONNECT tunnel connections now count toward
+  `maxIdleConnections` (default 200) once quiet for idleInterval/2:
+  their permanent "busy" mark (inRequest stays true for the tunnel's
+  lifetime) previously exempted them from the idle cap, making the
+  retained population unbounded. Active tunnels (any traffic within
+  the window) never count; the deliberate idle-close exemption for
+  websockets (a quiet session is legal) is unchanged.
 
 ### Performance
 - h1 bulk64k +15% (writev: header + direct body chunk in one gathering

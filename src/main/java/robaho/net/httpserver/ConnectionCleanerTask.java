@@ -66,7 +66,7 @@ class ConnectionCleanerTask extends TimerTask {
               // long-lived idle connections
               c.shrinkBuffers();
             }
-            if (idle != null && !busy && now - c.lastActivityTime() >= ServerImpl.IDLE_INTERVAL / 2) {
+            if (idle != null && (!busy || c.streamsHandedOff) && now - c.lastActivityTime() >= ServerImpl.IDLE_INTERVAL / 2) {
               // candidate for the idle-count cap. recency of
               // lastActivityTime is the additional signal that an h2
               // connection is still serving: without it the cap would
@@ -76,6 +76,19 @@ class ConnectionCleanerTask extends TimerTask {
               // streams (a handler mid-DB-query sorted as the "oldest
               // idle" and was closed preferentially once the cap was
               // exceeded)
+              //
+              // handed-off connections (websocket 101 / CONNECT tunnels)
+              // are ALWAYS busy - inRequest stays true for the tunnel's
+              // whole lifetime - yet they are deliberately exempt from
+              // the idle-close above (a quiet websocket session is
+              // legal). the idle CAP is different: without counting
+              // quiet tunnels, maxIdleConnections was unbounded for
+              // websockets (N quiet sessions = N retained buffers and
+              // stacks, forever). their activity clock still runs (WS
+              // reads/writes flow through the activity-tracking stream
+              // chain), so a tunnel counts toward the cap only after
+              // IDLE_INTERVAL/2 with no traffic in either direction -
+              // an actively-pushing or chattering websocket never counts
               idle.add(c);
             }
           }
@@ -89,6 +102,11 @@ class ConnectionCleanerTask extends TimerTask {
       for (int i = 0; i < idle.size() - ServerImpl.MAX_IDLE_CONNECTIONS; i++) {
         server.logger().log(java.lang.System.Logger.Level.DEBUG, "closing idle connection (over max idle limit)");
         server.stats().idleCloseCount.incrementAndGet();
+        // for a handed-off tunnel (websocket/CONNECT) this close is an
+        // abnormal shutdown from the peer's perspective: the tunnel's
+        // read blocks in the socket read and surfaces the close as EOF,
+        // which the websocket close chain handles (its close path is
+        // hardened by WebSocketDoubleCloseTest)
         server.closeConnection(idle.get(i), false);
       }
     }

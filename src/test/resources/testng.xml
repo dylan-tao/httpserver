@@ -33,6 +33,7 @@
       <class name="robaho.net.httpserver.http2.RequestBodyCapTest"/>
       <class name="robaho.net.httpserver.http2.H2ConnectionLevelRegressionTest"/>
       <class name="robaho.net.httpserver.http2.SlowHandlerWindowGateTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketIdleCapTest"/>
       <class name="robaho.net.httpserver.http2.H2InterimResponseTest"/>
       <class name="robaho.net.httpserver.http2.H2SemanticsGapTest"/>
       <class name="robaho.net.httpserver.http2.MultiConnectionH2Test"/>

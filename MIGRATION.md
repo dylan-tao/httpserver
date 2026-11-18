@@ -103,6 +103,14 @@ module users:
   drains). Handlers that relied on an immediate per-response flush still
   work - a pre-read flush hook guarantees delivery before the next
   blocking read.
+- **h2 keepalive ping default 5s** (was 1s). Dead idle h2 connections are
+  now detected within ~10s instead of ~2s; restore the old cadence with
+  `-Drobaho.net.httpserver.http2PingIntervalMillis=1000`.
+- **Quiet websocket/CONNECT tunnels count toward `maxIdleConnections`**
+  (default 200, quiet for idleInterval/2 = 15s). Deployments holding
+  more than 200 silent tunnels will see the oldest closed; active
+  tunnels (any traffic within the window) are never capped, and quiet
+  websockets are still never idle-closed (only the count cap applies).
 
 ## Configuration notes
 
