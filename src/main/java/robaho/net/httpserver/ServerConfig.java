@@ -82,7 +82,11 @@ public final class ServerConfig {
   // maximum total size of a received HTTP/2 header block (HEADERS + CONTINUATIONs)
   private static final int DEFAULT_HTTP2_MAX_HEADER_BLOCK_SIZE = 128 * 1024;
 
-  private static final long DEFAULT_HTTP2_PING_INTERVAL_MILLIS = 1000;
+  // 5s (was 1s): the keepalive ping costs ~2-4 syscalls plus a reader
+  // wake per idle h2 connection per interval, which scales with the idle
+  // connection population; 5s keeps dead-peer detection within ~10s while
+  // cutting that idle wake traffic 80% (2026-11-18 audit, batch 4)
+  private static final long DEFAULT_HTTP2_PING_INTERVAL_MILLIS = 5000;
 
   // receive-window auto-tune cap: 512KB is 8x the RFC 65535 default and
   // bounds the worst-case in-flight bytes per starving stream (100
@@ -598,7 +602,7 @@ public final class ServerConfig {
    *         milliseconds; the ping also doubles as liveness detection (a
    *         failed ping closes the connection). configured via
    *         {@code robaho.net.httpserver.http2PingIntervalMillis} (default
-   *         1000); {@code <=} 0 disables the ping, leaving dead-connection
+   *         5000); {@code <=} 0 disables the ping, leaving dead-connection
    *         detection to the idle cleaner (h1 behavior)
    */
   public static long http2PingIntervalMillis() {
