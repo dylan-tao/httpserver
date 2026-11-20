@@ -122,11 +122,13 @@ public class MultipartFormParser {
 
     try {
       return parseBody(charset, boundary, is, results, created, storage, maxParts);
-    } catch (Throwable t) {
+    } catch (IOException | RuntimeException | Error t) {
       // an aborted parse (truncation, the part-count cap, the total-bytes
       // cap, an IO error) must not leave its already-created files on disk
       // for the shutdown hook - repeated abuse piled them up until disk
-      // exhaustion (the E4 audit finding)
+      // exhaustion (the E4 audit finding). the multicatch rethrows the
+      // original (precise rethrow keeps the declared IOException-only
+      // signature while preserving the exception and its stack trace)
       for (Path p : created) {
         try {
           java.nio.file.Files.deleteIfExists(p);
@@ -134,16 +136,7 @@ public class MultipartFormParser {
           // best effort: a locked file stays for the exit hook
         }
       }
-      if (t instanceof IOException io) {
-        throw io;
-      }
-      if (t instanceof RuntimeException rte) {
-        throw rte;
-      }
-      if (t instanceof Error err) {
-        throw err;
-      }
-      throw new AssertionError(t);
+      throw t;
     }
   }
 
