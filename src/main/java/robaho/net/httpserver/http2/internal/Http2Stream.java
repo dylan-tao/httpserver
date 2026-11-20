@@ -132,6 +132,10 @@ public class Http2Stream {
     this.requestHeaders = requestHeaders;
     this.handler = handler;
     this.dataIn = new DataIn();
+    // snapshot before the stream is published: see the field comment - the
+    // handler thread mutates requestHeaders ("Host"), the reader must not
+    // read it after dispatch
+    this.expectedSize = parseExpectedSize(requestHeaders);
     // the stream level buffer bounds the DATA frame size: use 16KB (the
     // default max frame size) so small writes coalesce into full frames
     // instead of 1KB frames with per frame header overhead
@@ -166,7 +170,7 @@ public class Http2Stream {
   public void debug() {
     logger.log(Level.INFO, connection.toString() + ", stream " + streamId + " open " + streamOpen + " half closed " + halfClosed
         + ", streamOutputClosed " + streamOutputClosed + ", thread " + thread);
-    logger.log(Level.INFO, connection + ", stream " + streamId + " data in size " + dataInSize + " expected " + expectedSize());
+    logger.log(Level.INFO, connection + ", stream " + streamId + " data in size " + dataInSize + " expected " + expectedSize);
     // thread is assigned inside the executor lambda: a stream reset
     // before dispatch (or registered-but-not-yet-dispatched) has null
     // here, and an NPE would abort the whole /debug dump
@@ -181,15 +185,29 @@ public class Http2Stream {
 
   public SSLSession getSSLSession() { return connection.httpConnection.getSSLSession(); }
 
-  private long expectedSize() {
-    String value = requestHeaders.getFirst("Content-length");
+  /**
+   * the request's declared Content-Length, snapshotted ONCE at construction
+   * (audit W5, 2026-11-20): the old per-call read raced the handler
+   * thread's {@code request.set("Host", authority)} (ServerImpl.handleStream)
+   * - the two touch the same OptimizedHeaders/OpenAddressMap from two
+   * threads with no synchronization, so the END_STREAM check could see a
+   * torn resize (an error tearing down the connection) or miss the entry
+   * and silently skip the RFC 7540 8.1.2.6 content-length consistency check
+   * (a request-smuggling gap). the constructor runs on the reader thread
+   * before the stream is published, so the snapshot is race-free; the
+   * framework no longer reads the table from the reader after dispatch
+   */
+  private final long expectedSize;
+
+  /** -1 = none declared, -2 = unparsable (forces a mismatch on END_STREAM) */
+  private static long parseExpectedSize(Headers headers) {
+    String value = headers.getFirst("Content-length");
     if (value != null) {
       try {
         return Long.parseLong(value);
       } catch (NumberFormatException e) {
-        // an invalid length forces a mismatch on END_STREAM so the
-        // stream is reset, instead of an uncaught NumberFormatException
-        logger.log(Level.DEBUG, "invalid content-length {0} on stream {1}", value, streamId);
+        // an invalid length forces a mismatch on END_STREAM so the stream
+        // is reset, instead of an uncaught NumberFormatException
         return -2;
       }
     }
@@ -282,7 +300,7 @@ public class Http2Stream {
    */
   void receiveTrailer(boolean endStream) {
     if (endStream) {
-      long expected = expectedSize();
+      long expected = expectedSize;
       if (expected != -1 && dataInSize != expected) {
         // RFC 7540 8.1.2.6: a content-length mismatch is a stream
         // error regardless of which frame carries END_STREAM - the
@@ -424,7 +442,7 @@ public class Http2Stream {
         // while a slow handler's queue is bounded at the gate
         replenishStreamWindow();
         if (dataFrame.getHeader().flags().contains(FrameFlag.END_STREAM)) {
-          long expected = expectedSize();
+          long expected = expectedSize;
           if (expected != -1 && dataInSize != expected) {
             resetAndClose(Http2ErrorCode.PROTOCOL_ERROR);
             break;
