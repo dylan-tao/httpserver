@@ -10,6 +10,7 @@ import java.util.List;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertThrows;
+import static org.testng.Assert.fail;
 import static org.testng.Assert.assertTrue;
 
 public class RequestHeadersTest {
@@ -224,11 +225,18 @@ public class RequestHeadersTest {
 
   @Test
   public void TestEofDropsPendingHeader() throws IOException {
-    // headers without the terminating blank line are dropped at EOF
+    // a header line parsed but unflushed at EOF is an incomplete header
+    // block: rejected (RFC 9112 3, audit W2) - the old behavior dropped
+    // the trailing header silently and dispatched the truncated request
     String request = "GET blah\r\nKEY:VAL\r\n";
     var r = new Request(new ByteArrayInputStream(request.getBytes()), new ByteArrayOutputStream());
     assertEquals("GET blah", r.requestLine());
-    assertNull(r.headers().getFirst("KEY"));
+    try {
+      r.headers();
+      fail("an EOF-truncated header block must be rejected, not parsed as complete");
+    } catch (java.io.IOException expected) {
+      // incomplete header block: EOF mid-header-line
+    }
   }
 
   @Test
