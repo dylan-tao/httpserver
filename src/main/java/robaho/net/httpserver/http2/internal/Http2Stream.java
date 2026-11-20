@@ -902,6 +902,16 @@ public class Http2Stream {
             if (Http2Stats.ENABLED)
               connection.stats.flushes.incrementAndGet();
           }
+        } catch (IOException e) {
+          // refund the connection-window credit reserved for this frame
+          // (audit W6): the write failed mid-frame, the credit was spent
+          // on bytes that never went out. the reservation itself stays
+          // BEFORE the write - it is what keeps two concurrent writers
+          // from over-sending the window; only the failure path refunds
+          // it (the connection dies with the exception either way - this
+          // is accounting hygiene, not recovery)
+          connection.sendWindow.addAndGet(_len);
+          throw e;
         } finally {
           connection.unlock();
         }
