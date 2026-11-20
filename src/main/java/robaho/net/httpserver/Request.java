@@ -281,8 +281,16 @@ class Request {
     while (true) {
       int len = is.readLine(lineLimit);
       if (len < 0) {
-        // EOF: a pending unterminated header is dropped, exactly as
-        // the old loop dropped its builders at EOF
+        // EOF with a parsed-but-unflushed header line pending: the old
+        // loop dropped it silently and dispatched the request with the
+        // trailing header MISSING (e.g. a Content-Length read as 0) -
+        // an incomplete header block must be rejected (RFC 9112 3:
+        // 400), not dispatched (a request-smuggling differential
+        // against strict front proxies). a clean EOF (no pending line)
+        // still just ends the header block
+        if (!key.isEmpty() || !value.isEmpty()) {
+          throw new IOException("incomplete header block: EOF mid-header-line");
+        }
         break;
       }
       consumed += len + 2L;
