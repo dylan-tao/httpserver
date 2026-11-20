@@ -46,6 +46,7 @@
       <class name="robaho.net.httpserver.Jdk25ParityTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketHandshakeErrorTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketFrameValidationTest"/>
+      <class name="robaho.net.httpserver.websockets.WebSocketMaskRoundTripTest"/>
       <class name="robaho.net.httpserver.extras.FormParserTest"/>
       <class name="robaho.net.httpserver.extras.QueryParametersTest"/>
       <class name="robaho.net.httpserver.extras.ConnectDefaultDenyTest"/>
