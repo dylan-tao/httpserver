@@ -74,15 +74,20 @@ public abstract class WebSocketHandler implements HttpHandler {
 
     exchange.sendResponseHeaders(HttpStatus.HTTP_SWITCHING_PROTOCOLS, 0);
 
-    // construct the user websocket only after the 101: the handshake
-    // result (accepted subprotocol etc.) is known at this point, and a
-    // handshake failure above never creates a half-initialized socket
+    // construct the user websocket only after the 101: the raw-stream
+    // handoff (getRequestBody/getResponseBody) switches to the tunnel
+    // streams only once the 101 ran (ExchangeImpl sets connectionUpgraded
+    // there) - constructing EARLIER would hand the websocket the framed
+    // request stream instead of the raw tunnel
     WebSocket webSocket = openWebSocket(exchange);
     if (webSocket == null) {
-      // a user handler returning null: the 101 already went out, so
-      // the best available outcome is a clean connection close - the
-      // old NPE logged a stack trace as "unexpected exception"
-      WebSocketHandshake.sendResponseHeaders(exchange, HttpStatus.HTTP_INTERNAL_ERROR, "openWebSocket returned null");
+      // a user handler rejecting the handshake with null: the 101 is
+      // already on the wire, so no second status line can be sent (the
+      // old late-500 attempt died on the "headers already sent"
+      // IOException - audit W15). close the exchange: the raw-stream
+      // teardown ends the connection right after the 101, through the
+      // normal no-leak close path
+      exchange.close();
       return;
     }
 
