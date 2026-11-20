@@ -423,7 +423,11 @@ class ServerImpl {
    */
   private boolean noConnectionBusy() {
     for (var c : allConnections) {
-      if (c.inRequest || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0)) {
+      // hasPartialLine: the h1 request-line read window between endRequest()
+      // and beginRequest() is in-flight parse work stop() must wait for -
+      // before the signal it looked idle and the sweep abandoned the
+      // half-received request immediately
+      if (c.inRequest || c.hasPartialLine() || (c.http2Connection != null && c.http2Connection.requestsInProgress.get() > 0)) {
         return false;
       }
     }

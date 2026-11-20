@@ -60,6 +60,13 @@ public class StopPartialRequestLineTest {
       // parked inside the request-line read, inRequest still false
       out.write("GET / HTT".getBytes(StandardCharsets.ISO_8859_1));
       out.flush();
+      // let the server consume the bytes: the connection VT must wake from
+      // its parked read, accumulate the partial line into the line buffer
+      // and park again - only then is the mid-line state observable to
+      // stop()'s busy check. without this settle window the test can race
+      // ahead of the VT (checking before the partial line was consumed)
+      // and fail on fixed code
+      Thread.sleep(500);
 
       long start = System.currentTimeMillis();
       server.stop(2);

@@ -295,6 +295,16 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     peerDoneSending = true;
   }
 
+  /**
+   * true when a partially received (unterminated) request or header line is
+   * pending: in-flight parse work for stop(delay)'s busy check only, NOT the
+   * idle cleaner's - a slowloris partial line must stay reclaimable by the
+   * idle interval, only stop() must wait out its delay for it
+   */
+  boolean hasPartialLine() {
+    return is.hasPartialLine();
+  }
+
   /** start the close-drain window (peer asked to close). */
   void markDraining() {
     drainingAt = System.currentTimeMillis();

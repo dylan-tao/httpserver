@@ -133,6 +133,29 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
   }
 
   /**
+   * true while the reader is parked mid-line: bytes of an unterminated
+   * line (request line or header line) have been consumed from the stream
+   * buffer into {@link #lineBuf} but no LF has arrived yet. volatile:
+   * written only by the reader thread inside readLine, read by the stop()
+   * thread through the connection's busy check - a stop() that ignores it
+   * abandons the half-received request at the sweep (the E2 audit
+   * finding: stop(5) returned in 9ms while a connection sat on
+   * "GET / HTT"). NOT consulted by the idle cleaner: a slowloris
+   * connection must still be reclaimed by the 30s idle interval
+   */
+  private volatile boolean partialLine;
+
+  /** true when a readLine consumed bytes of a still-unterminated line */
+  public boolean hasPartialLine() {
+    return partialLine;
+  }
+
+  /** clear the partial-line mark (line complete, EOF, or stream reset) */
+  private void clearPartialLine() {
+    partialLine = false;
+  }
+
+  /**
    * Fills the buffer with more data.
    * This method also assumes that all data has been read in,
    * hence pos > count.
@@ -292,17 +315,20 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
       if (lf >= 0 && lineLen == 0) {
         int len = lf - pos;
         if (len > maxLen) {
+          clearPartialLine();
           throw new IOException("line too long (limit " + maxLen + " bytes)");
         }
         viewBuf = b;
         viewOffset = pos;
         pos = lf + 1;
+        clearPartialLine();
         return len;
       }
       int chunkEnd = lf >= 0 ? lf : count;
       int avail = chunkEnd - pos;
       if (avail > 0) {
         if (lineLen + avail > maxLen) {
+          clearPartialLine();
           throw new IOException("line too long (limit " + maxLen + " bytes)");
         }
         if (lineBuf.length < lineLen + avail) {
@@ -314,19 +340,33 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
       }
       if (lf >= 0) {
         pos = lf + 1;
+        clearPartialLine();
         return lineLen;
+      }
+      // no LF yet and line bytes are already consumed from the stream
+      // buffer: mark the connection as mid-line BEFORE the blocking
+      // fill below - stop(delay)'s busy check must see this state the
+      // moment the reader parks (the E2 audit finding: the request-line
+      // read window between endRequest() and beginRequest() was invisible
+      // to stop(), which returned immediately and abandoned the
+      // half-received request). cleared on line completion, EOF, and the
+      // too-long exception. zero-cost when lines complete on the first
+      // fill (the common case: the flag store never executes)
+      if (lineLen > 0) {
+        partialLine = true;
       }
       // no LF buffered. if part of a line is already accumulated the
       // line spans the whole small buffer (a long request line or
       // header): switch to the full size. lineLen == 0 means the
       // buffer is simply drained (e.g. waiting for the next request)
-      // - the small buffer is correct there, growing would restore
-      // the per-request 16KB churn this scheme exists to remove
+      // - the small buffer is correct there, growing would restore the
+      // per-request 16KB churn this scheme exists to remove
       if (lineLen > 0 && getBufIfOpen().length < bufferSize) {
         growBuffer();
       }
       fill();
       if (count <= 0) {
+        clearPartialLine();
         return -1;
       }
     }
