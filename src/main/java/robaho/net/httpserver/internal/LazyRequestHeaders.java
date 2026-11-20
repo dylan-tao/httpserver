@@ -134,8 +134,17 @@ public final class LazyRequestHeaders extends Headers {
       materializing = true;
       try {
         OptimizedHeaders s = source;
-        s.detach(this);
+        // detach AFTER the copy, never before (the E6 audit finding): a
+        // detach placed here makes OptimizedHeaders.clear() read a null
+        // pendingView, SKIP this view's force-materialize, and clear the
+        // map WHILE this copyInto iterates it - the racing reader then
+        // saw an empty or half-populated header map (an auth header
+        // vanishing). keeping the view attached until the copy completes
+        // means clear() either sees the view and waits on this monitor
+        // for the copy, or sees null only after source was nulled -
+        // both orderings are safe
         s.copyInto(this);
+        s.detach(this);
       } finally {
         materializing = false;
         // publish AFTER the copy: a reader that sees null is
