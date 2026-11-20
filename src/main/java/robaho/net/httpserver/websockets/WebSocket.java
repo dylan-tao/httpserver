@@ -71,6 +71,16 @@ public abstract class WebSocket {
    */
   private long continuousBytes;
 
+  /**
+   * cap on the number of fragments aggregated into one message (audit W13,
+   * 2026-11-20): the byte cap alone bounded the payload but not the object
+   * count - a 1-byte x 4M-fragment flood stayed under the 4MB byte cap
+   * while retaining ~330MB of WebSocketFrame objects on one connection.
+   * 1024 is far above any legitimate sender's fragmenting (browsers
+   * fragment at 128KB+, so a capped 4MB message is ~32 fragments)
+   */
+  private static final int MAX_FRAGMENTS = 1024;
+
   /** package-private: BufferedWebSocket's send guard reads it */
   volatile WebSocketLifecycle state = WebSocketLifecycle.UNCONNECTED;
 
@@ -370,6 +380,7 @@ public abstract class WebSocket {
       if (this.continuousOpCode == null) {
         throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence was not started.");
       }
+      checkFragmentCount();
       checkMessageSize(frame);
       this.continuousBytes += frame.getBinaryPayload().length;
       this.continuousFrames.add(frame);
@@ -393,9 +404,17 @@ public abstract class WebSocket {
       throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence was not started.");
     } else {
       // Intermediate
+      checkFragmentCount();
       checkMessageSize(frame);
       this.continuousBytes += frame.getBinaryPayload().length;
       this.continuousFrames.add(frame);
+    }
+  }
+
+  /** reject a fragment flood: see MAX_FRAGMENTS */
+  private void checkFragmentCount() throws WebSocketException {
+    if (continuousFrames.size() >= MAX_FRAGMENTS) {
+      throw new WebSocketException(CloseCode.MessageTooBig, "fragmented message exceeds " + MAX_FRAGMENTS + " fragments");
     }
   }
 
@@ -420,6 +439,11 @@ public abstract class WebSocket {
     } else if (this.continuousOpCode != null) {
       throw new WebSocketException(CloseCode.ProtocolError, "Continuous frame sequence not completed.");
     } else if (frame.getOpCode() == OpCode.Text || frame.getOpCode() == OpCode.Binary) {
+      // a single unfragmented frame skips handleFrameFragment entirely, so
+      // its message-size check must be repeated here: with a configured
+      // message cap below the frame cap, one big frame bypassed the
+      // message-size enforcement (audit W13)
+      checkMessageSize(frame);
       onMessage(frame);
     } else {
       throw new WebSocketException(CloseCode.ProtocolError, "Non control or continuous frame expected.");
