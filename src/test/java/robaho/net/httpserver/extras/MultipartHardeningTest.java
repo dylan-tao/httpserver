@@ -116,4 +116,50 @@ public class MultipartHardeningTest {
     }
   }
 
+  /**
+   * an aborted parse must not leave its already-created files on disk (audit
+   * E4): a body that creates a file part, then hits the truncation, throws -
+   * and the file must be deleted on the way out, not pile up until the JVM
+   * exits (repeated abuse piled files until disk exhaustion). red before the
+   * fix: the file survived with only the shutdown hook as a backstop
+   */
+  @Test
+  public void testAbortedParseDeletesCreatedFiles() throws IOException {
+    // a file part whose data is cut off mid-stream: no closing boundary
+    byte[] body = ("--b\r\n" + "Content-Disposition: form-data; name=\"f\"; filename=\"aborted.txt\"\r\n"
+        + "Content-Type: text/plain\r\n\r\n" + "partial-content-without-closing-boundary").getBytes(StandardCharsets.UTF_8);
+    try {
+      MultipartFormParser.parse("UTF-8", "multipart/form-data; boundary=b", new ByteArrayInputStream(body), storage);
+      Assert.fail("the truncated body must be rejected");
+    } catch (IOException expected) {
+      // truncated multipart body - but the file was already created
+    }
+    try (var left = Files.list(storage)) {
+      var leftovers = left.toList();
+      Assert.assertTrue(leftovers.isEmpty(), "an aborted parse must delete its already-created files: " + leftovers);
+    }
+  }
+
+  /**
+   * the total cap covers EVERY byte of the body, not just part data (audit
+   * E4): a boundary-less preamble larger than max_form_bytes must trip the
+   * total cap. red before the fix: the preamble streamed uncounted, and only
+   * the EOF at the end rejected the body (a different error) - leaving the
+   * door open to unbounded streaming under the old data-only accounting
+   */
+  @Test
+  public void testPreambleCountsTowardTotalCap() {
+    // 10MB + 1 of preamble garbage, no boundary anywhere
+    byte[] preamble = new byte[10 * 1024 * 1024 + 1];
+    java.util.Arrays.fill(preamble, (byte) 'x');
+    try {
+      MultipartFormParser.parse("UTF-8", "multipart/form-data; boundary=never-found", new ByteArrayInputStream(preamble),
+          storage);
+      Assert.fail("a preamble above the total cap must be rejected");
+    } catch (IOException e) {
+      Assert.assertTrue(e.getMessage().contains("exceeds the configured maximum"),
+          "the total-bytes cap must trip during the preamble, not the EOF at the end: " + e.getMessage());
+    }
+  }
+
 }

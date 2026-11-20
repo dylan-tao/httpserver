@@ -104,15 +104,52 @@ public class MultipartFormParser {
     // the LeftOver lock across single-byte reads, so it follows the same
     // sizing knob as the connection buffers
     is = new NoSyncBufferedInputStream(is, robaho.net.httpserver.ServerConfig.bufferSize());
+    // every byte of the body - the preamble scan, part headers, and part
+    // data - counts against the total cap (audit E4): the old accounting
+    // covered only part DATA, so a boundary-less or header-heavy body
+    // streamed unbounded preamble/header bytes while never tripping the cap
+    is = new BoundedInputStream(is, MAX_TOTAL_BYTES);
 
     Map<String, List<Part>> results = new HashMap<>();
-    // part count and total data caps: the per-field cap was bypassable
-    // by splitting into many parts (100 x 1MB fields OOM'd a 64MB heap)
+    // files this parse already created: an aborted parse never returns
+    // results, so its files are nobody's responsibility - they are deleted
+    // on the way out (the exit-hook tracking stays as a backstop for
+    // files created before the cleanup existed, and for crashes)
+    java.util.List<Path> created = new java.util.ArrayList<>();
+    // part count cap: the per-field cap was bypassable by splitting into
+    // many parts (100 x 1MB fields OOM'd a 64MB heap)
     int maxParts = MAX_PARTS;
-    long maxTotal = MAX_TOTAL_BYTES;
-    long totalBytes = 0;
-    int partCount = 0;
 
+    try {
+      return parseBody(charset, boundary, is, results, created, storage, maxParts);
+    } catch (Throwable t) {
+      // an aborted parse (truncation, the part-count cap, the total-bytes
+      // cap, an IO error) must not leave its already-created files on disk
+      // for the shutdown hook - repeated abuse piled them up until disk
+      // exhaustion (the E4 audit finding)
+      for (Path p : created) {
+        try {
+          java.nio.file.Files.deleteIfExists(p);
+        } catch (IOException ignored) {
+          // best effort: a locked file stays for the exit hook
+        }
+      }
+      if (t instanceof IOException io) {
+        throw io;
+      }
+      if (t instanceof RuntimeException rte) {
+        throw rte;
+      }
+      if (t instanceof Error err) {
+        throw err;
+      }
+      throw new AssertionError(t);
+    }
+  }
+
+  private static Map<String, List<Part>> parseBody(Charset charset, String boundary, InputStream is,
+      Map<String, List<Part>> results, java.util.List<Path> created, Path storage, int maxParts) throws IOException {
+    int partCount = 0;
     // the CRLF is considered part of the boundary
     byte[] boundaryCheck = ("\r\n--" + boundary).getBytes(charset);
 
@@ -194,6 +231,7 @@ public class MultipartFormParser {
             .add(new Part(meta.contentType, null, bos.toString(charset), null));
       } else {
         File file = uniqueTarget(storage, meta.filename);
+        created.add(file.toPath());
         trackForExitCleanup(file);
         os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
         addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>())
@@ -209,9 +247,8 @@ public class MultipartFormParser {
           if (c == -1) {
             throw new IOException("truncated multipart body: EOF in part data");
           }
-          if (maxTotal != 0 && ++totalBytes > maxTotal) {
-            throw new IOException("multipart body exceeds the configured maximum of " + maxTotal + " bytes");
-          }
+          // the total-bytes cap lives in BoundedInputStream: preamble,
+          // part headers, and part data all count against it
           if (c == boundaryCheck[matchCount]) {
             matchCount++;
             if (matchCount == boundaryCheck.length) {
@@ -399,6 +436,53 @@ public class MultipartFormParser {
       }
     }
     return new PartMetadata(contentType, name, filename);
+  }
+
+  /**
+   * an InputStream that fails once more than {@code maxTotal} bytes have been
+   * read: the total cap covers EVERY byte of the body (the preamble scan,
+   * part headers, and part data), not just the part-data bytes (audit E4 -
+   * a boundary-less body streamed unbounded preamble bytes under the old
+   * data-only accounting). {@code maxTotal} of 0 disables the cap
+   */
+  private static final class BoundedInputStream extends InputStream {
+
+    private final InputStream delegate;
+
+    private final long maxTotal;
+
+    private long total;
+
+    BoundedInputStream(InputStream delegate, long maxTotal) {
+      this.delegate = delegate;
+      this.maxTotal = maxTotal;
+    }
+
+    @Override
+    public int read() throws IOException {
+      int c = delegate.read();
+      if (c >= 0) {
+        count(1);
+      }
+      return c;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws IOException {
+      int n = delegate.read(b, off, len);
+      if (n > 0) {
+        count(n);
+      }
+      return n;
+    }
+
+    private void count(int n) throws IOException {
+      total += n;
+      if (maxTotal != 0 && total > maxTotal) {
+        throw new IOException("multipart body exceeds the configured maximum of " + maxTotal + " bytes");
+      }
+    }
+
   }
 
   /** an OutputStream that fails once more than limit bytes have been written */
