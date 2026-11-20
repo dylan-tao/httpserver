@@ -65,7 +65,7 @@ public class ProxyHandler implements HttpHandler {
 
   private ProxyHandler(Optional<HostPort> defaultProxy) {
     this.defaultProxy = defaultProxy;
-    proxyClient = HttpClient.newBuilder().proxy(new ProxySelector() {
+    proxyClient = HttpClient.newBuilder().connectTimeout(UPSTREAM_CONNECT_TIMEOUT).proxy(new ProxySelector() {
 
       @Override
       public List<Proxy> select(URI uri) {
@@ -185,7 +185,7 @@ public class ProxyHandler implements HttpHandler {
       // whole forwarding so the selector sees CURRENT_PROXY on the
       // calling (virtual) thread, and unbinds automatically afterwards
       ScopedValue.where(CURRENT_PROXY, proxy).call(() -> {
-        var requestBuilder = HttpRequest.newBuilder(target);
+        var requestBuilder = HttpRequest.newBuilder(target).timeout(UPSTREAM_REQUEST_TIMEOUT);
         String[] forwardedHeaders = headers(exchange.getRequestHeaders());
         // HttpRequest.Builder.headers() rejects an empty array: a request
         // whose headers were all restricted (e.g. only Host and Connection)
@@ -201,13 +201,18 @@ public class ProxyHandler implements HttpHandler {
         exchange.getResponseHeaders().putAll(response.headers().map());
         // strip hop-by-hop and framing headers: this server performs its own
         // chunked framing, so forwarding them would emit both
-        // Content-length and Transfer-encoding (RFC 7230 6.1)
-        for (String h : HOP_BY_HOP_HEADERS) {
+        // Content-length and Transfer-encoding (RFC 7230 6.1). the union
+        // also honors the upstream's own Connection header (the header
+        // names it lists are hop-by-hop too) - the request side always
+        // did, the response side dropped them before (audit W12)
+        for (String h : hopByHopUnion(exchange.getResponseHeaders())) {
           exchange.getResponseHeaders().remove(h);
         }
         exchange.sendResponseHeaders(response.statusCode(), 0);
-        try (var os = exchange.getResponseBody()) {
-          transfer(response.body(), os);
+        // the response body stream is closed explicitly too: an aborted
+        // transfer left the upstream subscription uncancelled
+        try (var in = response.body(); var os = exchange.getResponseBody()) {
+          transfer(in, os);
         }
         return null;
       });
@@ -241,6 +246,16 @@ public class ProxyHandler implements HttpHandler {
   private static final int DEFAULT_BUFFER_SIZE = 16384;
 
   private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
+
+  /** connect bound for the forwarding client: an unresponsive upstream must not hold the exchange thread (audit W12) */
+  private static final java.time.Duration UPSTREAM_CONNECT_TIMEOUT = java.time.Duration.ofSeconds(30);
+
+  /**
+   * response-arrival bound for a forwarded request. the body stream itself is
+   * unbounded (the exchange's own timeouts apply); this bounds the wait for
+   * the upstream's response head
+   */
+  private static final java.time.Duration UPSTREAM_REQUEST_TIMEOUT = java.time.Duration.ofSeconds(60);
 
   /**
    * drive both tunnel directions to completion (audit E3, 2026-11-20): the
@@ -330,28 +345,38 @@ public class ProxyHandler implements HttpHandler {
       "EXPECT");
 
   private static String[] headers(Headers headers) {
-    // headers NAMED IN the Connection header are hop-by-hop too (RFC
-    // 7230 6.1) and must be stripped alongside the static set
-    Set<String> connectionListed = new java.util.HashSet<>();
-    for (String v : headers.getOrDefault("Connection", List.of())) {
-      for (String token : v.split(",")) {
-        String t = token.trim();
-        if (!t.isEmpty()) {
-          connectionListed.add(t.toUpperCase(java.util.Locale.ROOT));
-        }
-      }
-    }
+    // hop-by-hop: the static set plus the headers the request's own
+    // Connection header named - they must not be forwarded (RFC 7230 6.1)
+    Set<String> hopByHop = hopByHopUnion(headers);
     List<String> copy = new ArrayList<>();
     // Locale.ROOT: the default locale maps i -> İ in tr/az, which would
     // break the restricted-header match and fail every proxied request
     headers.entrySet().stream().filter(e -> {
       String upper = e.getKey().toUpperCase(java.util.Locale.ROOT);
-      return !restrictedHeaders.contains(upper) && !connectionListed.contains(upper);
+      return !restrictedHeaders.contains(upper) && !hopByHop.contains(upper);
     }).forEach(e -> e.getValue().forEach(v -> {
       copy.add(e.getKey());
       copy.add(v);
     }));
     return copy.toArray(String[]::new);
+  }
+
+  /**
+   * the static hop-by-hop set plus the headers NAMED IN the Connection
+   * header (RFC 7230 6.1: those are hop-by-hop too). shared by the request
+   * filter and the response strip so the two sides cannot drift
+   */
+  private static Set<String> hopByHopUnion(Headers headers) {
+    Set<String> union = new java.util.HashSet<>(HOP_BY_HOP_HEADERS);
+    for (String v : headers.getOrDefault("Connection", List.of())) {
+      for (String token : v.split(",")) {
+        String t = token.trim();
+        if (!t.isEmpty()) {
+          union.add(t.toUpperCase(java.util.Locale.ROOT));
+        }
+      }
+    }
+    return union;
   }
 
   protected Optional<HostPort> proxyTo(HttpExchange exchange) {

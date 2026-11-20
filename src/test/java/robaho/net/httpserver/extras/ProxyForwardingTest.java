@@ -71,6 +71,26 @@ public class ProxyForwardingTest {
   }
 
   /**
+   * header names listed in the UPSTREAM's Connection header are hop-by-hop
+   * too (RFC 7230 6.1) and must not be forwarded to the client - the
+   * request side always stripped them, the response side dropped them
+   * before (audit W12). red pre-fix: X-Upstream-Hop arrived forwarded.
+   */
+  @Test
+  public void testUpstreamConnectionListedHeadersStripped() throws Exception {
+    // an upstream that names a custom header in its Connection header
+    backend.createContext("/hop", exchange -> {
+      exchange.getResponseHeaders().set("Connection", "X-Upstream-Hop");
+      exchange.getResponseHeaders().set("X-Upstream-Hop", "leak");
+      exchange.sendResponseHeaders(200, 0);
+      exchange.getResponseBody().close();
+    });
+    String response = proxyGet("User-Agent: proxy-test\r\n", "/hop");
+    Assert.assertFalse(response.toLowerCase().contains("x-upstream-hop"),
+        "a header listed in the upstream Connection list must not be forwarded: " + headOf(response));
+  }
+
+  /**
    * a completed CONNECT tunnel must not fall through into the forwarding
    * path (an earlier cleanup removed the old finally-return): the tunnel
    * itself must round-trip bytes in both directions
@@ -137,7 +157,11 @@ public class ProxyForwardingTest {
 
   /** send an absolute-form GET through the proxy and return the raw response */
   private String proxyGet(String extraHeaders) throws IOException {
-    String request = "GET http://127.0.0.1:" + backend.getAddress().getPort() + "/ HTTP/1.1\r\n" + "Host: 127.0.0.1:"
+    return proxyGet(extraHeaders, "/");
+  }
+
+  private String proxyGet(String extraHeaders, String path) throws IOException {
+    String request = "GET http://127.0.0.1:" + backend.getAddress().getPort() + path + " HTTP/1.1\r\n" + "Host: 127.0.0.1:"
         + backend.getAddress().getPort() + "\r\n" + extraHeaders + "Connection: close\r\n\r\n";
     try (Socket socket = new Socket("127.0.0.1", front.getAddress().getPort())) {
       socket.setSoTimeout(10_000);
