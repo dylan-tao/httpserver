@@ -144,25 +144,7 @@ public class ProxyHandler implements HttpHandler {
           // than failing with an NPE
           executor = java.util.concurrent.ForkJoinPool.commonPool();
         }
-        // when either direction reaches EOF the remote socket is closed,
-        // which unblocks the other direction's transfer
-        executor.execute(() -> {
-          try {
-            transfer(s.getInputStream(), exchange.getResponseBody());
-          } catch (IOException ex) {
-            logger.fine("tunnel upstream->client ended: " + ex);
-          } finally {
-            closeQuietly(s);
-          }
-        });
-        try {
-          transfer(exchange.getRequestBody(), s.getOutputStream());
-        } catch (IOException ex) {
-          logger.fine("tunnel client->upstream ended: " + ex);
-        } finally {
-          // closing the remote socket unblocks the upstream->client transfer
-          closeQuietly(s);
-        }
+        pumpBothDirections(exchange, s, executor);
         logger.fine("proxy connection to " + s.getRemoteSocketAddress() + " ended");
       }
       // the CONNECT exchange is complete: return instead of falling
@@ -259,6 +241,61 @@ public class ProxyHandler implements HttpHandler {
   private static final int DEFAULT_BUFFER_SIZE = 16384;
 
   private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
+
+  /**
+   * drive both tunnel directions to completion (audit E3, 2026-11-20): the
+   * old shape closed the whole remote socket on EITHER direction's EOF, so
+   * a client half-close (TLS-over-CONNECT close_notify flows, HTTP/1.0-style
+   * clients) truncated the upstream response still in flight, and handle()
+   * returned as soon as the client-to-upstream direction ended - the
+   * connection loop's post-exchange close then killed the still-streaming
+   * upstream-to-client pump.
+   * <p>
+   * the client-to-upstream direction runs inline and mirrors the client's
+   * (half-)close with a {@code shutdownOutput} toward the upstream instead
+   * of a full close; the upstream-to-client direction runs on the executor.
+   * handle() blocks here until BOTH directions ended, so the connection
+   * loop's close (with its RST-prevention input drain) is the one that
+   * delivers EOF to the client - closing the response body from the pump
+   * would bypass that drain and could purge undelivered bytes with an RST.
+   * the unbounded await is the tunnel's lifetime: a quiet tunnel is bounded
+   * by the idle-connection cap (quiet CONNECT tunnels count toward it) and
+   * by stop()'s sweep
+   */
+  private void pumpBothDirections(com.sun.net.httpserver.HttpExchange exchange, Socket s,
+      java.util.concurrent.Executor executor) {
+    var done = new java.util.concurrent.CountDownLatch(2);
+    executor.execute(() -> {
+      try {
+        transfer(s.getInputStream(), exchange.getResponseBody());
+      } catch (IOException ex) {
+        logger.fine("tunnel upstream->client ended: " + ex);
+      } finally {
+        done.countDown();
+      }
+    });
+    try {
+      transfer(exchange.getRequestBody(), s.getOutputStream());
+    } catch (IOException ex) {
+      logger.fine("tunnel client->upstream ended: " + ex);
+    } finally {
+      // the client finished sending: mirror the half-close toward the
+      // upstream - a full close here RSTs the still-streaming response
+      // direction
+      try {
+        s.shutdownOutput();
+      } catch (IOException ignored) {
+        // the upstream socket already failed: nothing to mirror
+      }
+      done.countDown();
+    }
+    try {
+      done.await();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    closeQuietly(s);
+  }
 
   private static void closeQuietly(Socket s) {
     try {

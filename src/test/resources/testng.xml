@@ -43,6 +43,7 @@
       <class name="robaho.net.httpserver.http2.MultiFrameTrailerTest"/>
       <class name="robaho.net.httpserver.http2.Review3Test"/>
       <class name="robaho.net.httpserver.extras.ProxyForwardingTest"/>
+      <class name="robaho.net.httpserver.extras.ConnectTunnelTest"/>
       <class name="robaho.net.httpserver.Http1RegressionTest"/>
       <class name="robaho.net.httpserver.StopPartialRequestLineTest"/>
       <class name="robaho.net.httpserver.ContextListCacheTest"/>
