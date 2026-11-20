@@ -358,17 +358,20 @@ public class HPackContext {
    * so steady-state responses (same shape) stop allocating entirely
    */
   public static EncodedHeaderBlock encodeHeaderBlock(Headers headers, EncodedHeaderBlock scratch) throws IOException {
+    // ':status' is required and the only allowed outbound pseudo header.
+    // checked BEFORE borrowing the scratch (audit W11/M5): a throw after a
+    // successful tryBorrow() never released it, permanently locking the
+    // connection's scratch - every later response on that connection
+    // allocated a fresh block for its remaining lifetime
+    String status = headers.getFirst(":status");
+    if (status == null) {
+      throw new IOException("response is missing the required :status pseudo header");
+    }
     // sized from the header count: the old fixed 256 started ~2 growth
     // copies behind for a typical response (average block ~800 bytes)
     EncodedHeaderBlock fields =
         scratch != null && scratch.tryBorrow() ? scratch : new EncodedHeaderBlock(Math.max(256, headers.size() * 64 + 64));
     fields.reset();
-
-    // ':status' is required and the only allowed outbound pseudo headers
-    String status = headers.getFirst(":status");
-    if (status == null) {
-      throw new IOException("response is missing the required :status pseudo header");
-    }
     fields.appendField(":status", status);
 
     // raw iteration when possible: forEach() wraps every single-valued
@@ -437,15 +440,29 @@ public class HPackContext {
     }
 
     /** try to claim this block for reuse; false when already in flight */
-    boolean tryBorrow() {
+    public boolean tryBorrow() {
       return borrowed.compareAndSet(false, true);
     }
 
     /** release after writeFrames consumed the block; same thread that borrowed */
     public void release() {
       reset();
+      if (buf.length > RETAIN_CAPACITY_LIMIT) {
+        // a 1MB response head must not pin 1MB per idle connection for the
+        // connection's remaining lifetime (audit W11/M5: 200 such
+        // connections = 200MB). one oversized response pays one re-grow;
+        // steady-state shapes (a few KB) stay under the limit untouched
+        buf = new byte[512];
+      }
       borrowed.set(false);
     }
+
+    /**
+     * released blocks above this capacity shrink back to the initial size:
+     * typical response heads are under 8KB; anything above is an outlier
+     * whose capacity must not be retained
+     */
+    private static final int RETAIN_CAPACITY_LIMIT = 64 * 1024;
 
     /**
      * drop the length, keep the capacity: called by encodeHeaderBlock on

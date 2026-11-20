@@ -202,6 +202,20 @@ public class Http2Connection {
   }
 
   /**
+   * shrink the response-head encode scratch if oversized (the audit W11/M5
+   * blind spot: nothing ever shrank it, so one huge response head pinned
+   * its peak capacity for the connection's remaining lifetime). the
+   * CAS-borrow guard makes it safe from the idle cleaner: a concurrent
+   * encoder is mid-flight with its own block, this one only shrinks when
+   * idle
+   */
+  public void shrinkHeaderBlockScratch() {
+    if (headerBlockScratch.tryBorrow()) {
+      headerBlockScratch.release();
+    }
+  }
+
+  /**
    * shrink the connection-level output buffer (the shared HttpConnection
    * os) while holding the connection lock: every h2 frame write goes
    * through that buffer under this lock, so an unlocked shrink from the

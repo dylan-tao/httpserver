@@ -140,7 +140,9 @@ class Http1ConnectionHandler implements Runnable {
     Request req;
     final String requestLine;
     try {
-      req = new Request(rawin, rawout);
+      // the connection's parse buffers: reused across its requests (the
+      // per-connection state the static ThreadLocals used to hold)
+      req = new Request(rawin, rawout, connection.parseBuffers());
       requestLine = req.requestLine();
     } catch (IOException e) {
       // mark in-request before the 400 write: with inRequest false

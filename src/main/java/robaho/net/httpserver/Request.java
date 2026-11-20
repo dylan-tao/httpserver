@@ -71,17 +71,40 @@ class Request {
   private final String protocol;
 
   Request(InputStream rawInputStream, OutputStream rawout) throws IOException {
+    this(rawInputStream, rawout, new ParseBuffers());
+  }
+
+  Request(InputStream rawInputStream, OutputStream rawout, ParseBuffers buffers) throws IOException {
     // the bulk line reader needs the internal buffer access; production
     // always passes the connection's NoSyncBufferedInputStream, other
     // callers (unit tests) get wrapped
     this.is =
         rawInputStream instanceof NoSyncBufferedInputStream buffered ? buffered : new NoSyncBufferedInputStream(rawInputStream);
-    os = rawout;
+    this.os = rawout;
+    this.buffers = buffers;
 
     requestLine = readRequestLine();
     int lastSpace = requestLine.lastIndexOf(' ');
     protocol = lastSpace >= 0 ? requestLine.substring(lastSpace + 1) : "";
   }
+
+  /**
+   * per-connection parse state (moved from the static ThreadLocals, audit
+   * 3.3): the h1 model is one VT per connection, so the ThreadLocal gave
+   * each connection its own set anyway - but pinned on the parked VT, the
+   * idle cleaner could never reclaim it (~430B per idle connection, 100k
+   * connections = 43MB). as a connection field the cleaner's shrink
+   * nullability applies, and the next request re-creates it on demand
+   */
+  static final class ParseBuffers {
+
+    OptimizedHeaders headerTable = new OptimizedHeaders(16);
+
+    final BufferedBuilder[] builders = {new BufferedBuilder(64), new BufferedBuilder(32), new BufferedBuilder(128)};
+
+  }
+
+  private final ParseBuffers buffers;
 
   public InputStream inputStream() {
     return is;
@@ -104,7 +127,7 @@ class Request {
    * then terminated the line bare); interior CRs are content.
    */
   private String readRequestLine() throws IOException {
-    final BufferedBuilder bb = PARSE_BUILDERS.get()[0];
+    final BufferedBuilder bb = buffers.builders[0];
     bb.reset();
     int emptyLines = 0;
     while (true) {
@@ -149,34 +172,11 @@ class Request {
   Headers hdrs = null;
 
   /**
-   * per-connection header table, reused across the connection's requests
-   * (same ThreadLocal model as PARSE_BUILDERS below: one VT per h1
-   * connection, so no sharing, and the table dies with the connection).
-   * reuse is invisible to handlers: ExchangeImpl's constructor copies the
-   * parsed entries into a fresh JDK Headers (reqHdrs) before any handler
-   * sees them, so this table never escapes the parse path and clearing it
-   * for the next request cannot corrupt a retained view. keys and values
-   * are non-null parse products, so the OpenAddressMap null-tombstone
-   * convention is never hit here
-   */
-  private static final ThreadLocal<OptimizedHeaders> HEADER_TABLE = ThreadLocal.withInitial(() -> new OptimizedHeaders(16));
-
-  /**
    * a request with an extraordinary header count grows the table well
    * past the common size; do not pin that capacity for the connection's
    * lifetime (the same policy the parse builders apply)
    */
   private static final int HEADER_TABLE_RETAIN_LIMIT = 64;
-
-  /**
-   * per-connection parse builders (request line, header key, header
-   * value), reused across the connection's requests: the h1 model is one
-   * virtual thread per connection, so a ThreadLocal hands each connection
-   * its own set with no sharing, and the buffers die with the connection.
-   * each use resets the content; the grown capacity is retained
-   */
-  private static final ThreadLocal<BufferedBuilder[]> PARSE_BUILDERS = ThreadLocal
-      .withInitial(() -> new BufferedBuilder[] {new BufferedBuilder(64), new BufferedBuilder(32), new BufferedBuilder(128)});
 
   private static final class BufferedBuilder {
 
@@ -250,16 +250,16 @@ class Request {
     if (hdrs != null) {
       return hdrs;
     }
-    OptimizedHeaders table = HEADER_TABLE.get();
+    OptimizedHeaders table = buffers.headerTable;
     if (table.size() > HEADER_TABLE_RETAIN_LIMIT) {
       table = new OptimizedHeaders(16);
-      HEADER_TABLE.set(table);
+      buffers.headerTable = table;
     } else {
       table.clear();
     }
     hdrs = table;
 
-    BufferedBuilder[] builders = PARSE_BUILDERS.get();
+    BufferedBuilder[] builders = buffers.builders;
     BufferedBuilder key = builders[1];
     BufferedBuilder value = builders[2];
     key.reset();

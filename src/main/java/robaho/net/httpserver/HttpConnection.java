@@ -305,6 +305,25 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     return is.hasPartialLine();
   }
 
+  /**
+   * the h1 parse state (header table + line builders), handed to each
+   * Request. moved from Request's static ThreadLocals (audit 3.3): the
+   * ThreadLocals died only with the parked VT, so the idle cleaner could
+   * never reclaim them (~430B per idle connection). null while shrunk -
+   * re-created on demand at the next request
+   */
+  private Request.ParseBuffers parseBuffers;
+
+  /** the connection's parse buffers, lazily (re-)created */
+  Request.ParseBuffers parseBuffers() {
+    var b = parseBuffers;
+    if (b == null) {
+      b = new Request.ParseBuffers();
+      parseBuffers = b;
+    }
+    return b;
+  }
+
   /** start the close-drain window (peer asked to close). */
   void markDraining() {
     drainingAt = System.currentTimeMillis();
@@ -534,12 +553,18 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
    * is idle (not in a request) and no write is in progress.
    */
   void shrinkBuffers() {
+    // the h1 parse state: h1-only, but an h2c connection may have parsed
+    // h1 requests before the upgrade, so drop it on both branches
+    parseBuffers = null;
     if (http2Connection != null) {
       // h2 frame writes go through this connection's output buffer from
       // handler threads under the h2 connection lock: shrink it while
       // holding that lock, or the buf swap races a concurrent write
       http2Connection.shrinkConnectionOutputBuffer();
       http2Connection.shrinkBuffers();
+      // the response-head encode scratch (peak-capacity retention was the
+      // W11/M5 idle-memory blind spot: nothing else ever shrank it)
+      http2Connection.shrinkHeaderBlockScratch();
       // an h2c connection may have served h1 responses before the
       // upgrade: the head-assembly scratch is only touched by this
       // connection's single VT, so it is releasable on the h2 branch
