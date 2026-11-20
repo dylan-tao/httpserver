@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, '3.*' ]
   pull_request:
 
 jobs:
@@ -16,6 +16,17 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
-      - name: Build and test
-        # package (not just test) so the sources/javadoc jars are validated too
-        run: mvn -B -ntp package
+      - name: Set up Maven 3.9.10
+        # ubuntu-latest ships Maven 3.8.x, below the 3.8.9 the
+        # spotbugs-maven-plugin requires - without this pin `mvn verify`
+        # aborts in the gate plugins. pin the version the project is
+        # locally validated with
+        run: |
+          curl -sSL -o /tmp/maven.tgz https://archive.apache.org/dist/maven/maven-3/3.9.10/binaries/apache-maven-3.9.10-bin.tar.gz
+          tar xzf /tmp/maven.tgz -C /tmp
+          echo "/tmp/apache-maven-3.9.10/bin" >> $GITHUB_PATH
+      - name: Build, test and quality gates
+        # verify (not just package): the PMD/SpotBugs check executions
+        # bind to the verify phase - a package-only CI never ran the
+        # quality gates at all
+        run: mvn -B -ntp verify
