@@ -81,9 +81,13 @@ class Http1ConnectionHandler implements Runnable {
         // polling-client output shrink (see QUIET_OUTPUT_SHRINK_MS): this
         // boundary is the connection VT's own safe point (the previous
         // response fully flushed before runPerRequest returned), the
-        // same single-ownership argument the cleaner's shrink relies on
+        // same single-ownership argument the cleaner's shrink relies on.
+        // the cleaner's shrink request also lands here (W9): its unlocked
+        // h1 buffer swap raced the VT's writes, so the cleaner only sets
+        // the flag and the VT owns the execution
         long now = System.currentTimeMillis();
-        if (now - lastRequestStart > QUIET_OUTPUT_SHRINK_MS) {
+        if (now - lastRequestStart > QUIET_OUTPUT_SHRINK_MS || connection.outputShrinkRequested) {
+          connection.outputShrinkRequested = false;
           connection.shrinkBuffers();
         }
         lastRequestStart = now;

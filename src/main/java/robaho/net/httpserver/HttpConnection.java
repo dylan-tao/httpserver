@@ -329,6 +329,21 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
     drainingAt = System.currentTimeMillis();
   }
 
+  /**
+   * the idle cleaner's h1 shrink request, executed by the connection's own
+   * VT at its next request boundary (the M2 requestInputShrink pattern):
+   * the cleaner must not swap the h1 output buffers itself - its unlocked
+   * buf/count store races the VT's writes (a torn shrink could drop
+   * buffered response bytes). volatile: written by the cleaner thread, read
+   * and cleared at the boundary
+   */
+  volatile boolean outputShrinkRequested;
+
+  /** request the boundary shrink (idle cleaner thread) */
+  void requestOutputShrink() {
+    outputShrinkRequested = true;
+  }
+
   /** clear the close-drain window (drain completed). */
   void clearDraining() {
     drainingAt = 0;

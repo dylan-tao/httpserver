@@ -103,115 +103,136 @@ class Dispatcher implements Runnable {
       server.logger().log(Level.TRACE, "accepted connection: " + s.toString());
     }
     server.stats().connectionCount.incrementAndGet();
-    if (ServerImpl.MAX_CONNECTIONS > 0 && server.connectionCount().get() >= ServerImpl.MAX_CONNECTIONS) {
+    // ATOMIC reservation against the connection limit (audit W4): the old
+    // check-then-increment window straddled the TLS handshake - a burst of
+    // concurrent handshakes all passed the limit check before any of them
+    // incremented, so the limit was only enforced one handshake-duration
+    // late. the reservation counts the slot from accept; the registration
+    // below no longer increments, and every path that fails before
+    // registration releases its reservation
+    if (ServerImpl.MAX_CONNECTIONS > 0 && server.connectionCount().incrementAndGet() > ServerImpl.MAX_CONNECTIONS) {
       // we've hit max limit of current open connections, so we go
       // ahead and close this connection without processing it
+      server.connectionCount().decrementAndGet();
+      server.stats().maxConnectionsExceededCount.incrementAndGet();
+      server.logger().log(Level.WARNING, "closing accepted connection due to too many connections");
       try {
-        server.stats().maxConnectionsExceededCount.incrementAndGet();
-        server.logger().log(Level.WARNING, "closing accepted connection due to too many connections");
         s.close();
       } catch (IOException ignore) {}
       return;
     }
-
-    if (ServerConfig.noDelay()) {
-      s.setTcpNoDelay(true);
-    }
-
-    boolean http2 = false;
-
-    if (server.isHttps()) {
-      // for some reason, creating an SSLServerSocket and setting the default parameters would
-      // not work, so upgrade to a SSLSocket after connection
-      SSLSocketFactory ssf = server.httpsConfig().getSSLContext().getSocketFactory();
-      // autoClose=true: with false, closing the layered SSLSocket
-      // never closes the underlying accepted socket (JDK
-      // SSLSocketImpl.closeSocket only calls super.close() when
-      // autoClose || !isLayered()) - every HTTPS connection leaked
-      // its raw socket fd (CLOSE_WAIT accumulation until EMFILE)
-      SSLSocket sslSocket = (SSLSocket) ssf.createSocket(s, null, true);
-      SSLConfigurator.configure(sslSocket, server.httpsConfig());
-
-      sslSocket.setHandshakeApplicationProtocolSelector((_sslSocket, protocols) -> {
-        if (protocols.contains("h2") && ServerConfig.http2OverSSL()) {
-          return "h2";
-        }
-        if (protocols.contains("http/1.1")) {
-          return "http/1.1";
-        }
-        // RFC 7301: never answer with a protocol the client did
-        // not offer (a gRPC client offering only "h2" against
-        // http2OverSSL=false used to get "http/1.1" - strict
-        // OpenSSL peers abort the handshake on the mismatch).
-        // "" (NOT null) omits the ALPN extension from the reply:
-        // the JDK selector contract treats null as "no agreement"
-        // and answers with a fatal no_application_protocol alert,
-        // hard-failing the TLS handshake for every h2-only client
-        return "";
-      });
-      // the following forces the SSL handshake to complete in order to determine the negotiated protocol.
-      // the handshake is bounded so a stalled client cannot hold the connection thread indefinitely
-      // clamp before the int cast: a huge configured timeout
-      // overflowed to negative and made every https accept throw
-      sslSocket.setSoTimeout((int) Math.min(Math.max(ServerConfig.getSslHandshakeTimeoutMillis(), 1), Integer.MAX_VALUE));
-      try {
-        // getSession() SWALLOWS IOExceptions and returns a dummy
-        // invalid session on handshake failure (the JDK closes the
-        // socket in that case): without the validity check a dead
-        // socket proceeded into connection registration, and the
-        // finally's setSoTimeout(0) on the closed socket threw
-        // SocketException - misclassified as client noise at
-        // DEBUG, hiding every real handshake failure from the logs
-        if (!sslSocket.getSession().isValid()) {
-          throw new java.net.SocketException("SSL handshake failed");
-        }
-      } finally {
-        try {
-          sslSocket.setSoTimeout(0);
-        } catch (java.net.SocketException closedDuringHandshake) {
-          // socket already closed by the failed handshake
-        }
-      }
-      if ("h2".equals(sslSocket.getApplicationProtocol())) {
-        server.logger().log(Level.DEBUG, () -> "http2 connection " + sslSocket);
-        http2 = true;
-        // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
-        sslSocket.setTcpNoDelay(ServerConfig.http2NoDelay());
-      } else {
-        server.logger().log(Level.DEBUG, () -> "http/1.1 connection " + sslSocket);
-      }
-      s = sslSocket;
-    }
-
-    HttpConnection c = new HttpConnection(s);
+    // the reservation is owned by the connection's close path once
+    // registered; until then this method's failure paths must release it
+    boolean registered = false;
     try {
-      server.allConnections().add(c);
-      server.connectionCount().incrementAndGet();
-      server.connectionRegistered();
-      if (server.isFinishing()) {
-        // stop()'s sweep may have completed between the entry
-        // check and this registration (the SSL handshake can
-        // stretch the window by seconds): nothing would ever
-        // close this connection - the sweep is done and the
-        // cleaner timer is cancelled. close it here
-        server.closeConnection(c);
-        return;
+
+      if (ServerConfig.noDelay()) {
+        s.setTcpNoDelay(true);
       }
 
-      if (http2) {
-        if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
-          nis.growBuffer();
+      boolean http2 = false;
+
+      if (server.isHttps()) {
+        // for some reason, creating an SSLServerSocket and setting the default parameters would
+        // not work, so upgrade to a SSLSocket after connection
+        SSLSocketFactory ssf = server.httpsConfig().getSSLContext().getSocketFactory();
+        // autoClose=true: with false, closing the layered SSLSocket
+        // never closes the underlying accepted socket (JDK
+        // SSLSocketImpl.closeSocket only calls super.close() when
+        // autoClose || !isLayered()) - every HTTPS connection leaked
+        // its raw socket fd (CLOSE_WAIT accumulation until EMFILE)
+        SSLSocket sslSocket = (SSLSocket) ssf.createSocket(s, null, true);
+        SSLConfigurator.configure(sslSocket, server.httpsConfig());
+
+        sslSocket.setHandshakeApplicationProtocolSelector((_sslSocket, protocols) -> {
+          if (protocols.contains("h2") && ServerConfig.http2OverSSL()) {
+            return "h2";
+          }
+          if (protocols.contains("http/1.1")) {
+            return "http/1.1";
+          }
+          // RFC 7301: never answer with a protocol the client did
+          // not offer (a gRPC client offering only "h2" against
+          // http2OverSSL=false used to get "http/1.1" - strict
+          // OpenSSL peers abort the handshake on the mismatch).
+          // "" (NOT null) omits the ALPN extension from the reply:
+          // the JDK selector contract treats null as "no agreement"
+          // and answers with a fatal no_application_protocol alert,
+          // hard-failing the TLS handshake for every h2-only client
+          return "";
+        });
+        // the following forces the SSL handshake to complete in order to determine the negotiated protocol.
+        // the handshake is bounded so a stalled client cannot hold the connection thread indefinitely
+        // clamp before the int cast: a huge configured timeout
+        // overflowed to negative and made every https accept throw
+        sslSocket.setSoTimeout((int) Math.min(Math.max(ServerConfig.getSslHandshakeTimeoutMillis(), 1), Integer.MAX_VALUE));
+        try {
+          // getSession() SWALLOWS IOExceptions and returns a dummy
+          // invalid session on handshake failure (the JDK closes the
+          // socket in that case): without the validity check a dead
+          // socket proceeded into connection registration, and the
+          // finally's setSoTimeout(0) on the closed socket threw
+          // SocketException - misclassified as client noise at
+          // DEBUG, hiding every real handshake failure from the logs
+          if (!sslSocket.getSession().isValid()) {
+            throw new java.net.SocketException("SSL handshake failed");
+          }
+        } finally {
+          try {
+            sslSocket.setSoTimeout(0);
+          } catch (java.net.SocketException closedDuringHandshake) {
+            // socket already closed by the failed handshake
+          }
         }
-        ServerImpl.Http2ConnectionHandler t = server.newHttp2Handler(c);
-        t.run();
-      } else {
-        Http1ConnectionHandler t = new Http1ConnectionHandler(server, c);
-        t.run();
+        if ("h2".equals(sslSocket.getApplicationProtocol())) {
+          server.logger().log(Level.DEBUG, () -> "http2 connection " + sslSocket);
+          http2 = true;
+          // protocol-specific TCP_NODELAY (see ServerConfig.http2NoDelay)
+          sslSocket.setTcpNoDelay(ServerConfig.http2NoDelay());
+        } else {
+          server.logger().log(Level.DEBUG, () -> "http/1.1 connection " + sslSocket);
+        }
+        s = sslSocket;
       }
-    } catch (Throwable t) {
-      server.logger().log(Level.WARNING, "Dispatcher Exception", t);
-      server.stats().handleExceptionCount.incrementAndGet();
-      server.closeConnection(c);
+
+      HttpConnection c = new HttpConnection(s);
+      try {
+        server.allConnections().add(c);
+        // the reservation now belongs to the connection: its close path
+        // (closeConnection) is what releases the slot
+        registered = true;
+        server.connectionRegistered();
+        if (server.isFinishing()) {
+          // stop()'s sweep may have completed between the entry
+          // check and this registration (the SSL handshake can
+          // stretch the window by seconds): nothing would ever
+          // close this connection - the sweep is done and the
+          // cleaner timer is cancelled. close it here
+          server.closeConnection(c);
+          return;
+        }
+
+        if (http2) {
+          if (c.getInputStream() instanceof NoSyncBufferedInputStream nis) {
+            nis.growBuffer();
+          }
+          ServerImpl.Http2ConnectionHandler t = server.newHttp2Handler(c);
+          t.run();
+        } else {
+          Http1ConnectionHandler t = new Http1ConnectionHandler(server, c);
+          t.run();
+        }
+      } catch (Throwable t) {
+        server.logger().log(Level.WARNING, "Dispatcher Exception", t);
+        server.stats().handleExceptionCount.incrementAndGet();
+        server.closeConnection(c);
+      }
+    } finally {
+      if (!registered) {
+        // the setup failed before registration (e.g. the TLS handshake):
+        // the reservation has no owner that would release it
+        server.connectionCount().decrementAndGet();
+      }
     }
   }
 

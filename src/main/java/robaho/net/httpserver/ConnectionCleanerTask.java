@@ -63,8 +63,19 @@ class ConnectionCleanerTask extends TimerTask {
               // buffers and the line buffer. the connection stays alive
               // (keep-alive) and the buffers re-allocate on the next
               // read/write. this is the memory optimization for
-              // long-lived idle connections
-              c.shrinkBuffers();
+              // long-lived idle connections.
+              // h2 shrinks directly (every piece is tryLock- or
+              // reader-confined); the h1 output buffers are VT-owned, so
+              // their shrink only runs on the connection's own VT (via a
+              // request flag consumed at its next request boundary) - the
+              // cleaner's unlocked swap raced the VT's writes (audit W9).
+              // a parked idle h1 connection executes the flag on its next
+              // request (or dies at the idle close, releasing everything)
+              if (c.http2Connection != null) {
+                c.shrinkBuffers();
+              } else {
+                c.requestOutputShrink();
+              }
             }
             if (idle != null && (!busy || c.streamsHandedOff) && now - c.lastActivityTime() >= ServerImpl.IDLE_INTERVAL / 2) {
               // candidate for the idle-count cap. recency of
