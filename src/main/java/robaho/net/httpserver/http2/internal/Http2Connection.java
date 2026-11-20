@@ -798,6 +798,21 @@ public class Http2Connection {
       if (targetStream != null) {
         // found existing stream
       } else if (lastSeenStreamId < streamId) {
+        FrameType frameType = frame.getHeader().type();
+        if (frameType != FrameType.HEADERS && frameType != FrameType.CONTINUATION) {
+          // a DATA or stream-level WINDOW_UPDATE frame on a never-opened
+          // (idle) stream id is a connection error (RFC 7540 5.1: only
+          // HEADERS and PRIORITY may be sent on an idle stream - PRIORITY
+          // is consumed by its own case and never reaches here). the old
+          // path fell through to the stream creation below, whose
+          // HPACK-decode of the EMPTY header-block assembly failed the
+          // ":path" validation - the same GOAWAY outcome, but via a
+          // misleading error message and the phantom-stream machinery
+          // (an empty decode, a registry peak bump, and a path a REFUSED
+          // stream's in-flight frames could also reach - see the
+          // lastSeenStreamId advance in the refusal branches below)
+          throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, frameType + " frame on idle stream " + streamId);
+        }
         if (clientGoawayStreamId >= 0 && streamId > clientGoawayStreamId) {
           // the peer promised (GOAWAY) not to open streams beyond
           // this id: refuse the stream, keep the connection alive
@@ -806,6 +821,14 @@ public class Http2Connection {
           sendResetStream(Http2ErrorCode.REFUSED_STREAM, streamId);
           completeTrailer(null, false);
           inHeaders = false;
+          // the refusal PROCESSED this id: advance lastSeenStreamId so the
+          // refused stream's later in-flight frames (DATA/WU the client sent
+          // before seeing the RST) hit the closed-stream ignore branch below.
+          // without the advance they re-entered this creation branch - and
+          // with the registry back below the limit they fell through into
+          // the phantom path, GOAWAYing every concurrent stream over one
+          // legal in-flight frame
+          lastSeenStreamId = streamId;
           continue;
         }
         int currentSize = http2Streams.size();
@@ -819,6 +842,10 @@ public class Http2Connection {
           // retry (RFC 7540 5.1.2 invites retry after REFUSED_STREAM)
           // hits the inHeaders guard and kills ALL streams with GOAWAY
           inHeaders = false;
+          // same lastSeenStreamId advance as the GOAWAY refusal above: the
+          // refused stream's in-flight frames must not re-enter the creation
+          // branch once the registry dips back below the limit
+          lastSeenStreamId = streamId;
           continue;
         }
         peakConcurrentStreams = Math.max(peakConcurrentStreams, currentSize);
