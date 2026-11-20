@@ -31,6 +31,14 @@ public abstract class BufferedWebSocket extends WebSocket {
   /** bounds the queue so a fast producer cannot exhaust memory */
   private static final int MAX_PENDING_FRAMES = 1024;
 
+  /**
+   * one offer round against a full queue: each expiry re-checks the close
+   * state, so a producer parked on a full queue notices a concurrent close
+   * within one window (the sendFrame comment explains why put() alone
+   * parked it forever)
+   */
+  private static final long OFFER_WINDOW_MILLIS = 100;
+
   /** wakes the drain task so it can exit when the connection closes */
   private static final WebSocketFrame POISON_PILL = new WebSocketFrame(OpCode.Close, true, new byte[0]);
 
@@ -228,18 +236,17 @@ public abstract class BufferedWebSocket extends WebSocket {
   /**
    * enqueue a frame for asynchronous delivery by the drain task instead
    * of writing it synchronously: producers never block on a slow
-   * consumer. the queue is bounded by both frame count (1024, put()
-   * blocks for backpressure) and total bytes (maxBufferedWebSocketBytes,
-   * exceeding it throws MessageTooBig). close() flushes queued frames
-   * before the streams are closed
+   * consumer. the queue is bounded by both frame count (1024) and total
+   * bytes (maxBufferedWebSocketBytes, exceeding it throws MessageTooBig);
+   * a FULL queue parks the producer only for bounded offer windows, and
+   * the park exits as soon as the websocket closes. close() flushes
+   * queued frames before the streams are closed
    */
   @Override
   public void sendFrame(WebSocketFrame frame) throws IOException {
     if (state == WebSocketLifecycle.CLOSED) {
       // after the drain task exited there is no consumer: frames would
-      // be silently lost, and once the queue fills, put() blocks the
-      // producer virtual thread forever (nobody holds the future to
-      // interrupt it). fail fast like the unbuffered sendFrame does
+      // be silently lost. fail fast like the unbuffered sendFrame does
       throw new IOException("websocket is closed");
     }
     var payload = frame.getBinaryPayload();
@@ -263,9 +270,21 @@ public abstract class BufferedWebSocket extends WebSocket {
     }
     pending.incrementAndGet();
     try {
-      // put() blocks when the queue is full, providing backpressure
-      // against a producer that outpaces the consumer
-      queue.put(frame);
+      // offer-with-timeout loop, NOT put(): the CLOSED check above and
+      // the enqueue are not atomic - a close completing between them
+      // left the producer in an unbounded put() on a queue whose drain
+      // task is exiting, parking the producer virtual thread forever
+      // (nobody holds the future to interrupt it; the poison pill never
+      // frees a FULL queue). each failed offer re-checks the state and
+      // exits on CLOSED; a healthy consumer drains a slot within the
+      // window and the loop is a plain put() in practice
+      while (!queue.offer(frame, OFFER_WINDOW_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        if (state == WebSocketLifecycle.CLOSED) {
+          queuedBytes.addAndGet(-frameBytes);
+          pending.decrementAndGet();
+          throw new IOException("websocket is closed");
+        }
+      }
     } catch (InterruptedException ex) {
       queuedBytes.addAndGet(-frameBytes);
       pending.decrementAndGet();
