@@ -1045,11 +1045,32 @@ public class Http2Stream {
 
     @Override
     public void close() throws IOException {
-      // do NOT drain the remaining data here: reading would park forever
+      // do NOT read the remaining data here: reading would park forever
       // when the peer has not sent END_STREAM yet (and the close may be
       // called from the connection reader thread, which would wedge the
-      // whole connection). Just mark closed and wake any blocked reader.
+      // whole connection). just mark closed, wake any blocked reader, and
+      // hand the still-queued buffers back to the pool: on an abandoned
+      // stream (RST, handler early close, peer cancellation) those pooled
+      // arrays were pure garbage before (audit W7 - 100 cancelled uploads
+      // stranded up to ~100MB of pooled 16KB arrays until the GC got to
+      // them, and none returned to the pool).
+      // the drain is GUARDED - only when no other thread can be mid-copy:
+      // the stream's own reader thread calling close (the handler finished,
+      // the output close path) or a stream nobody ever read. a close from
+      // the connection reader (an RST racing a handler mid-copy) skips the
+      // drain and leaves the arrays for the GC: a concurrent poll would
+      // hand the handler's in-flight peeked buffer to a second owner
+      // (tainted body bytes), and the handler's own poll-after-consume
+      // would then see null. a parked reader parks only on an empty queue,
+      // so the skip strands nothing in the common cancel case
       closed = true;
+      if (reader == null || reader == Thread.currentThread()) {
+        byte[] stranded;
+        while ((stranded = queue.poll()) != null) {
+          DataFrameBodyPool.release(stranded);
+          dataInBacklog.addAndGet(-stranded.length);
+        }
+      }
       LockSupport.unpark(reader);
     }
 

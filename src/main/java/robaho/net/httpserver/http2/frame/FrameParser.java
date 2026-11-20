@@ -34,9 +34,14 @@ public class FrameParser {
 
     // DATA is the only frame type whose body is consumed and released via
     // the pool: other bodies may be retained by the header block assembly,
-    // so they get a plain allocation
-    byte[] body =
-        frameHeader.type() == FrameType.DATA ? DataFrameBodyPool.borrow(frameHeader.length()) : new byte[frameHeader.length()];
+    // so they get a plain allocation. a PADDED DATA frame is excluded too
+    // (audit W7): its body is copyOfRange'd to a shorter array and the
+    // borrowed full-size original is dropped - borrowing for it only drains
+    // the pool (256 padded full frames exhaust the 4MB pool; every later
+    // full frame allocates fresh). the PADDED flag is known before the body
+    // is read, so padded bodies allocate directly
+    boolean isUnpaddedData = frameHeader.type() == FrameType.DATA && !frameHeader.flags().contains(FrameFlag.PADDED);
+    byte[] body = isUnpaddedData ? DataFrameBodyPool.borrow(frameHeader.length()) : new byte[frameHeader.length()];
     Http2Connection.readFully(inputStream, body);
 
     switch (frameHeader.type()) {
