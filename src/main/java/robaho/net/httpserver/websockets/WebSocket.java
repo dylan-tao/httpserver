@@ -335,13 +335,19 @@ public abstract class WebSocket {
   private void handleCloseFrame(WebSocketFrame frame) throws IOException {
     CloseCode code = CloseCode.NormalClosure;
     String reason = "";
-    if (frame instanceof CloseFrame) {
-      code = ((CloseFrame) frame).getCloseCode();
-      reason = ((CloseFrame) frame).getCloseReason();
+    int rawCode = -1;
+    if (frame instanceof CloseFrame close) {
+      code = close.getCloseCode();
+      reason = close.getCloseReason();
+      rawCode = close.getRawCode();
     }
-    // a received code that can never legally appear on the wire is a
-    // protocol violation: answer with 1002, not an echo (RFC 6455 7.4.1)
-    if (code != null && sanitizeCloseCode(code) == null) {
+    // a received code that can never legally appear on the wire (RFC 6455
+    // 7.4.1: 1005/1006/1015 and the unassigned 1016-2999) is a protocol
+    // violation: answer with 1002, not a codeless close. the RAW wire
+    // value decides - the enum mapping is null for every unmapped value,
+    // which cannot distinguish an illegal code from a legal private-use
+    // one (3000-4999, which surface codeless by the tested design)
+    if (rawCode == 1005 || rawCode == 1006 || rawCode == 1015 || (rawCode >= 1016 && rawCode < 3000)) {
       code = CloseCode.ProtocolError;
       reason = "invalid close code in close frame";
     }

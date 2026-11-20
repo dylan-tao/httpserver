@@ -82,6 +82,15 @@ public class CloseFrame extends WebSocketFrame {
   private String _closeReason;
 
   /**
+   * the raw 2-byte wire code, or -1 when the payload carried none: the enum
+   * mapping is null for every unmapped value, which cannot distinguish an
+   * ILLEGAL code (1005/1006/1015, the unassigned 1016-2999) from a legal
+   * private-use one (3000-4999) - the receiver-side validation needs the
+   * raw value (audit W16)
+   */
+  private int rawCode = -1;
+
+  /**
    * build a Close frame to send: code and reason are encoded into the
    * payload, the reason truncated to 123 bytes at a UTF-8 boundary
    */
@@ -95,6 +104,7 @@ public class CloseFrame extends WebSocketFrame {
     assert wrap.getOpCode() == OpCode.Close;
     if (wrap.getBinaryPayload().length >= 2) {
       int codeValue = (wrap.getBinaryPayload()[0] & 0xFF) << 8 | wrap.getBinaryPayload()[1] & 0xFF;
+      this.rawCode = codeValue;
       this._closeCode = CloseCode.find(codeValue);
       this._closeReason = binary2Text(getBinaryPayload(), 2, getBinaryPayload().length - 2);
     }
@@ -104,6 +114,9 @@ public class CloseFrame extends WebSocketFrame {
   public CloseCode getCloseCode() {
     return this._closeCode;
   }
+
+  /** the raw wire close code (unmapped values included), or -1 when none */
+  public int getRawCode() { return this.rawCode; }
 
   /** the received close reason, or null */
   public String getCloseReason() { return this._closeReason; }
