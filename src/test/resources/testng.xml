@@ -35,6 +35,7 @@
       <class name="robaho.net.httpserver.http2.H2ConnectionLevelRegressionTest"/>
       <class name="robaho.net.httpserver.http2.SlowHandlerWindowGateTest"/>
       <class name="robaho.net.httpserver.http2.H2PhantomStreamTest"/>
+      <class name="robaho.net.httpserver.http2.H2StreamZeroFrameTest"/>
       <class name="robaho.net.httpserver.http2.H2DataInPoolDrainTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketIdleCapTest"/>
       <class name="robaho.net.httpserver.http2.H2InterimResponseTest"/>

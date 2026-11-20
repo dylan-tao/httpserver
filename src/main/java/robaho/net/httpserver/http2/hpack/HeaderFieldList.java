@@ -16,7 +16,7 @@ import java.util.List;
  */
 public class HeaderFieldList implements Iterable<Http2HeaderField> {
 
-  private static final BloomSet prohibitedHeaderFields = BloomSet.of("connection");
+  private static final BloomSet prohibitedHeaderFields = BloomSet.of("connection", "keep-alive", "proxy-connection", "upgrade");
 
   private static final BloomSet requiredHeaderFields = BloomSet.of(":path", ":method", ":scheme");
 

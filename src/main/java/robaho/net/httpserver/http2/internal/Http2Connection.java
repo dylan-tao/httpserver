@@ -497,6 +497,19 @@ public class Http2Connection {
         throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,
             "invalid stream id " + streamId + " on type " + frame.getHeader().type());
       }
+      if (streamId == 0) {
+        FrameType frameType = frame.getHeader().type();
+        if (frameType == FrameType.DATA || frameType == FrameType.HEADERS || frameType == FrameType.CONTINUATION
+            || frameType == FrameType.RST_STREAM) {
+          // frames that address a single stream must never carry stream 0
+          // (RFC 7540 6.1/6.2/6.4/6.10; stream 0 is the connection itself).
+          // the old code silently swallowed stream-0 DATA through the
+          // closed-stream ignore branch - after debiting the connection
+          // flow-control window for it - and decoded+discarded stream-0
+          // HEADERS as a stale block (audit W19)
+          throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, frameType + " frame on stream 0");
+        }
+      }
 
       // rfc7540 (section 6.5): SETTINGS frames always apply to a
       // connection, never a single stream.
@@ -555,11 +568,13 @@ public class Http2Connection {
           }
           continue;
         case WINDOW_UPDATE:
-          if (inHeaders && streamId != 0) {
+          if (inHeaders) {
             // RFC 7540 6.2: only CONTINUATION may follow an incomplete
             // header block. letting a stream-level WINDOW_UPDATE fall
             // through to the common path would dispatch a request from
-            // the PARTIAL header block and wedge the state machine
+            // the PARTIAL header block and wedge the state machine; a
+            // connection-level one (stream 0) during the block is equally
+            // illegal (audit W19: it used to slip through)
             throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE frame received during headers receive");
           }
           if (streamId == 0) {
