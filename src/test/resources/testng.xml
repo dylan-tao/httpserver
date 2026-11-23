@@ -62,6 +62,7 @@
       <class name="robaho.net.httpserver.extras.FormParserTest"/>
       <class name="robaho.net.httpserver.extras.QueryParametersTest"/>
       <class name="robaho.net.httpserver.extras.ConnectDefaultDenyTest"/>
+      <class name="robaho.net.httpserver.extras.ProxyTunnelEndToEndTest"/>
       <class name="robaho.net.httpserver.extras.MultipartHardeningTest"/>
       <class name="robaho.net.httpserver.websockets.BufferedWebSocketTest"/>
       <class name="robaho.net.httpserver.websockets.WebSocketLifecycleHardeningTest"/>
