@@ -741,12 +741,15 @@ class ServerImpl {
         throw new IOException("Invalid HTTP/2 headers: missing :method");
       }
 
-      // Validate Transfer-Encoding headers for HTTP/2
+      // Validate Transfer-Encoding headers for HTTP/2: it is a
+      // connection-specific header in h2 (RFC 9113 8.1.2.1 - the framing
+      // is the transport's own, a hop-by-hop TE is a CL/TE parsing
+      // differential against strict front proxies). the re-audit W19
+      // residual: the old code let a lone 'TE: chunked' through to the
+      // handler
       List<String> transferEncoding = request.get("Transfer-encoding");
       if (transferEncoding != null && !transferEncoding.isEmpty()) {
-        if (transferEncoding.size() > 1 || !transferEncoding.get(0).equalsIgnoreCase("chunked")) {
-          throw new IOException("Unsupported Transfer-Encoding value");
-        }
+        throw new IOException("Transfer-Encoding is prohibited in HTTP/2");
       }
 
       // opt-in request body cap: reject a declared Content-Length up

@@ -509,6 +509,16 @@ public class Http2Connection {
           // HEADERS as a stale block (audit W19)
           throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, frameType + " frame on stream 0");
         }
+      } else {
+        // the re-audit W19 residual: the guard was one-directional. the
+        // connection-scoped frames must never carry a NON-zero stream id
+        // (RFC 7540 6.5/6.7/6.8) - a stream-N SETTINGS used to walk the
+        // whole stream registry and mutate every window
+        FrameType frameType = frame.getHeader().type();
+        if (frameType == FrameType.SETTINGS || frameType == FrameType.PING || frameType == FrameType.GOAWAY) {
+          throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR,
+              frameType + " frame on stream " + streamId + " (connection frames carry stream 0)");
+        }
       }
 
       // rfc7540 (section 6.5): SETTINGS frames always apply to a
@@ -797,6 +807,12 @@ public class Http2Connection {
           // stream priority is ignore for now
           continue;
         case RST_STREAM:
+          // RFC 7540 6.2: only CONTINUATION may follow an incomplete
+          // header block (the re-audit W19 residual: every other case
+          // guards, this one did not)
+          if (inHeaders) {
+            throw new Http2Exception(Http2ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame during incomplete header block");
+          }
           // any RST_STREAM (including NO_ERROR and codes the enum
           // does not know) must close the stream: the peer considers
           // it cancelled
