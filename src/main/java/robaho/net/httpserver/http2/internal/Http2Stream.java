@@ -1013,6 +1013,19 @@ public class Http2Stream {
     /** set when the stream is closed; blocked and future reads return -1 */
     private volatile boolean closed = false;
 
+    /**
+     * exclusive queue ownership (re-audit N4, 2026-11-23): null = unclaimed,
+     * the consuming reader thread = claimed, {@link #CLOSE_DRAIN} = the close
+     * side claimed and drained. a reader claims before its FIRST peek; the
+     * close() drain may only run while the queue is UNclaimed, so a
+     * close-side poll can never race a reader's in-flight peeked buffer (the
+     * old reader==null check-then-act raced a reader ENTERING read())
+     */
+    private final java.util.concurrent.atomic.AtomicReference<Object> queueClaim =
+        new java.util.concurrent.atomic.AtomicReference<>();
+
+    private static final Object CLOSE_DRAIN = new Object();
+
     public DataIn() {}
 
     void enqueue(byte[] data) {
@@ -1074,14 +1087,34 @@ public class Http2Stream {
       // would then see null. a parked reader parks only on an empty queue,
       // so the skip strands nothing in the common cancel case
       closed = true;
-      if (reader == null || reader == Thread.currentThread()) {
-        byte[] stranded;
-        while ((stranded = queue.poll()) != null) {
-          DataFrameBodyPool.release(stranded);
-          dataInBacklog.addAndGet(-stranded.length);
-        }
+      // claim the queue atomically (re-audit N4): the old reader==null
+      // check-then-act raced a reader ENTERING read() - the close-side
+      // drain polled the very buffer the reader had peeked and was
+      // copying from (tainted body bytes once the pool re-lent it; the
+      // reader's own subsequent poll then saw null and NPE'd release).
+      // unclaimed queue: drain here. claimed by the CURRENT thread (the
+      // reader closing its own stream - it cannot be mid-copy while
+      // running close): drain here too. claimed by another live reader:
+      // that reader drains at its -1 exit instead
+      if (queueClaim.compareAndSet(null, CLOSE_DRAIN) || queueClaim.get() == Thread.currentThread()) {
+        drainAtEof();
       }
       LockSupport.unpark(reader);
+    }
+
+    /**
+     * the consumer is done (EOF, failure, or the reader's own close):
+     * return the still-queued buffers to the pool and hand the queue claim
+     * back. each element goes to exactly one poller, so this is race-free
+     * against any other poller
+     */
+    private void drainAtEof() {
+      byte[] stranded;
+      while ((stranded = queue.poll()) != null) {
+        DataFrameBodyPool.release(stranded);
+        dataInBacklog.addAndGet(-stranded.length);
+      }
+      queueClaim.compareAndSet(Thread.currentThread(), null);
     }
 
     private final byte[] single = new byte[1];
@@ -1111,6 +1144,16 @@ public class Http2Stream {
         if (reader != Thread.currentThread()) {
           reader = Thread.currentThread();
         }
+        // claim exclusive queue ownership BEFORE the first peek (re-audit
+        // N4): see the queueClaim javadoc. the first read pays the CAS;
+        // later reads already hold their own claim. a lost CAS means the
+        // close side drained (the sentinel) or another consumer holds it -
+        // both mean this reader owns nothing to drain at its exit, and the
+        // closed check below returns -1 without ever copying from a queue
+        // that belongs to the closer
+        if (queueClaim.get() != Thread.currentThread()) {
+          queueClaim.compareAndSet(null, Thread.currentThread());
+        }
         while (len > 0) {
           byte[] data;
           while ((data = queue.peek()) == null) {
@@ -1126,6 +1169,9 @@ public class Http2Stream {
               if (data != null) {
                 break;
               }
+              // this consumer is done: return the remainder (usually
+              // empty - the close-side drain already ran)
+              drainAtEof();
               return -1;
             }
             LockSupport.park();
@@ -1144,15 +1190,26 @@ public class Http2Stream {
           if (available == 0) { // remove top buffer from queue
             // the sole owner (this thread) just consumed the last
             // byte: full-size DATA bodies go back to the pool,
-            // everything else is GC'd
+            // everything else is GC'd. null is belt-only - with the
+            // queue claimed no other poller exists - but a future
+            // double-poll must not NPE (re-audit N4 asked for the guard)
             byte[] released = queue.poll();
-            DataFrameBodyPool.release(released);
             offset = 0;
-            // gated-window recovery check (no-op on the fast path)
-            releaseBuffer(released);
+            if (released != null) {
+              DataFrameBodyPool.release(released);
+              // gated-window recovery check (no-op on the fast path)
+              releaseBuffer(released);
+            }
           }
         }
         return read;
+      } catch (IOException | RuntimeException e) {
+        // the consumer failed (interrupted by an RST close, tainted
+        // stream): this reader is done - return the remainder (re-audit
+        // N4: a claimed queue must not wait for a closer that lost the
+        // claim to the failed reader)
+        drainAtEof();
+        throw e;
       } finally {
         // stream flow-control credit moved to the parse site (see the DATA
         // case in processFrame): consumption no longer returns the window.
