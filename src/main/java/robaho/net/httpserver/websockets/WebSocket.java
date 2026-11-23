@@ -73,13 +73,26 @@ public abstract class WebSocket {
 
   /**
    * cap on the number of fragments aggregated into one message (audit W13,
-   * 2026-11-20): the byte cap alone bounded the payload but not the object
-   * count - a 1-byte x 4M-fragment flood stayed under the 4MB byte cap
-   * while retaining ~330MB of WebSocketFrame objects on one connection.
-   * 1024 is far above any legitimate sender's fragmenting (browsers
-   * fragment at 128KB+, so a capped 4MB message is ~32 fragments)
+   * 2026-11-20, residual2026-11-23): the byte cap alone bounded the payload
+   * but not the object count - a 1-byte x 4M-fragment flood stayed under the
+   * 4MB byte cap while retaining ~330MB of WebSocketFrame objects on one
+   * connection. the count cap is DERIVED, not fixed: a fixed 1024 rejected
+   * legitimate fine-grained fragmenting (a 4MB message in 2KB fragments is
+   * 2048 frames and tripped at ~2MB). the flood bound only needs the
+   * product of count x minimum-fragment-size to exceed the byte cap, so
+   * the count cap is {@code maxMessageSize / MIN_FRAGMENT_BYTES} (a
+   * fragment smaller than this is 99% overhead - the flood shape itself),
+   * floored at 1024 and capped at 1M
    */
-  private static final int MAX_FRAGMENTS = 1024;
+  private static final int MIN_FRAGMENT_BYTES = 64;
+
+  private static final int ABS_MAX_FRAGMENTS = 1024 * 1024;
+
+  /** package-private: the fragment-limit regression test sends exactly this many frames */
+  static int maxFragments() {
+    long derived = (long) Math.ceil(ServerConfig.getMaxWebSocketMessageSize() / (double) MIN_FRAGMENT_BYTES);
+    return (int) Math.max(1024, Math.min(derived, ABS_MAX_FRAGMENTS));
+  }
 
   /** package-private: BufferedWebSocket's send guard reads it */
   volatile WebSocketLifecycle state = WebSocketLifecycle.UNCONNECTED;
@@ -417,10 +430,10 @@ public abstract class WebSocket {
     }
   }
 
-  /** reject a fragment flood: see MAX_FRAGMENTS */
+  /** reject a fragment flood: see maxFragments() */
   private void checkFragmentCount() throws WebSocketException {
-    if (continuousFrames.size() >= MAX_FRAGMENTS) {
-      throw new WebSocketException(CloseCode.MessageTooBig, "fragmented message exceeds " + MAX_FRAGMENTS + " fragments");
+    if (continuousFrames.size() >= maxFragments()) {
+      throw new WebSocketException(CloseCode.MessageTooBig, "fragmented message exceeds " + maxFragments() + " fragments");
     }
   }
 

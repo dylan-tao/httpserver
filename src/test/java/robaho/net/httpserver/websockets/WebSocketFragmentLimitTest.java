@@ -16,16 +16,17 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * regression guard for the websocket fragment-count cap (audit W13,
- * 2026-11-20): the byte cap alone bounded the aggregated payload but not
- * the object count - a 1-byte x 4M-fragment flood stayed under the 4MB byte
- * cap while retaining ~330MB of frame objects on a single connection.
- * beyond MAX_FRAGMENTS (1024) fragments the connection must close with
- * MessageTooBig. the client is a raw socket with hand-built masked frames
- * (the JDK client's partial-send semantics made the flood unobservable);
- * the close code is asserted server-side via onClose, the same contract
- * WebSocketFrameValidationTest pins for the error-path close (which sends
- * no Close frame on the wire). red before the fix: the flood was accepted,
- * no close ever arrived.
+ * 2026-11-20, residual 2026-11-23): the byte cap alone bounded the
+ * aggregated payload but not the object count - a 1-byte x 4M-fragment
+ * flood stayed under the 4MB byte cap while retaining ~330MB of frame
+ * objects on a single connection. the count cap is DERIVED from the
+ * message cap (maxFragments(): messageSize /64B, floored 1024) - the
+ * fixed 1024 rejected legitimate fine-grained fragmenting (a 4MB message
+ * in 2KB fragments is 2048 frames). the client is a raw socket with
+ * hand-built masked frames (the JDK client's partial-send semantics made
+ * the flood unobservable); the close code is asserted server-side via
+ * onClose, the same contract WebSocketFrameValidationTest pins for the
+ * error-path close (which sends no Close frame on the wire).
  */
 public class WebSocketFragmentLimitTest {
 
@@ -87,16 +88,19 @@ public class WebSocketFragmentLimitTest {
       Assert.assertTrue(readResponseHead(socket).startsWith("HTTP/1.1 101"), "the websocket handshake must succeed");
 
       // frame 1: Text, fin=false; then continuation fragments. EXACTLY
-      // 1025 frames total: the 1025th trips the cap (1024 already held),
+      // cap+1 frames total: the last trips the cap (cap already held),
       // and nothing may remain unread inbound when the server closes -
       // extra fragments in the server's receive buffer would turn the
-      // close into an RST
+      // close into an RST. the cap is DERIVED from the message size (the
+      // W13 residual: the fixed 1024 rejected legitimate fine-grained
+      // fragmenting - a 4MB message in 2KB fragments is 2048 frames)
+      int cap = WebSocket.maxFragments();
       byte[] key = {1, 2, 3, 4};
       byte[] payload = {'x'};
       WebSocketFrame first = new WebSocketFrame(OpCode.Text, false, payload);
       first.setMaskingKey(key);
       first.write(out);
-      for (int i = 1; i <= 1024; i++) {
+      for (int i = 1; i <= cap; i++) {
         WebSocketFrame fragment = new WebSocketFrame(OpCode.Continuation, false, payload);
         fragment.setMaskingKey(key);
         fragment.write(out);
