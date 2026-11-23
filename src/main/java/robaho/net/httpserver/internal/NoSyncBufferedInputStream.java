@@ -396,7 +396,14 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
       if (lineLen > 0 && getBufIfOpen().length < bufferSize) {
         growBuffer();
       }
-      fill();
+      try {
+        fill();
+      } catch (IOException e) {
+        // the connection is failing: the partial-line mark would leak a
+        // busy signal on a dying connection (the re-audit's opt note)
+        clearPartialLine();
+        throw e;
+      }
       if (count <= 0) {
         clearPartialLine();
         return -1;
