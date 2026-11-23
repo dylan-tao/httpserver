@@ -281,17 +281,36 @@ class Http1ConnectionHandler implements Runnable {
       throw new RequestRejectedException(HttpStatus.HTTP_INTERNAL_ERROR, requestLine, "No handler for context");
     }
     tx = new ExchangeImpl(method, uri, req, clen, connection);
-    String chdr = headers.getFirst("Connection");
     Headers rheaders = tx.getResponseHeaders();
 
-    if (chdr != null && chdr.equalsIgnoreCase("close")) {
+    // the Connection header is a comma-separated token list and may span
+    // several header lines (RFC 9112 7.6.1): a 'close' (or, for 1.0, a
+    // 'keep-alive') token ANYWHERE in the list decides the connection's
+    // fate. the old whole-value comparison only saw the FIRST line's
+    // exact string, so "keep-alive, close" kept the connection alive and
+    // the response carried no 'Connection: close' - the client waited out
+    // the idle timeout on a connection it had closed (audit W1)
+    boolean connectionClose = false;
+    boolean connectionKeepAlive = false;
+    for (String value : headers.getOrDefault("Connection", java.util.List.of())) {
+      for (String token : value.split(",")) {
+        String t = token.trim();
+        if (t.equalsIgnoreCase("close")) {
+          connectionClose = true;
+        } else if (t.equalsIgnoreCase("keep-alive")) {
+          connectionKeepAlive = true;
+        }
+      }
+    }
+
+    if (connectionClose) {
       tx.close = true;
     }
     if (version.equalsIgnoreCase("http/1.0")) {
       tx.http10 = true;
-      if (chdr == null) {
+      if (!connectionClose && !connectionKeepAlive) {
         tx.close = true;
-      } else if (chdr.equalsIgnoreCase("keep-alive")) {
+      } else if (connectionKeepAlive) {
         rheaders.set("Connection", "keep-alive");
         int idleSeconds = (int) (ServerConfig.getIdleIntervalMillis() / 1000);
         String val = "timeout=" + idleSeconds;
