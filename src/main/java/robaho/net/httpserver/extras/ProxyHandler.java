@@ -260,6 +260,16 @@ public class ProxyHandler implements HttpHandler {
 
   private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
 
+  /**
+   * read-silence bound for the tunnel drain after the client half-closed
+   * (re-audit N2): one idle interval - the response direction gets this
+   * long per read to make progress before its pump fails. bounds silence,
+   * not duration: a slowly streaming response resets the clock on every
+   * read. package-private and non-final so the regression tests can shrink
+   * it
+   */
+  static int tunnelDrainSilenceMillis = 30_000;
+
   /** connect bound for the forwarding client: an unresponsive upstream must not hold the exchange thread (audit W12) */
   private static final java.time.Duration UPSTREAM_CONNECT_TIMEOUT = java.time.Duration.ofSeconds(30);
 
@@ -289,16 +299,30 @@ public class ProxyHandler implements HttpHandler {
    * loop's close (with its RST-prevention input drain) is the one that
    * delivers EOF to the client - closing the response body from the pump
    * would bypass that drain and could purge undelivered bytes with an RST.
-   * the unbounded await is the tunnel's lifetime: a quiet tunnel is bounded
-   * by the idle-connection cap (quiet CONNECT tunnels count toward it) and
-   * by stop()'s sweep
+   * <p>
+   * bounded drain (re-audit N2, 2026-11-23): the unbounded await let a
+   * silent upstream park the tunnel forever - the client half-closed, the
+   * upstream neither answered nor closed, and the handler VT + executor VT
+   * + fd sat there permanently (the idle cleaner exempts handed-off
+   * tunnels, so nothing else reclaimed them). once the CLIENT direction
+   * ends, a watchdog bounds the remaining drain: after a full silent
+   * interval with no tunnel progress the upstream socket is closed (the
+   * close unblocks a pump already parked in a read - a mid-read
+   * setSoTimeout is NOT picked up by the JDK's NIO socket). the watchdog
+   * bounds SILENCE, not duration: any progress resets the window, so a
+   * slowly streaming response survives. a quiet tunnel BEFORE the client's
+   * half-close stays unbounded by design (the idle-connection cap owns it)
    */
   private void pumpBothDirections(com.sun.net.httpserver.HttpExchange exchange, Socket s,
       java.util.concurrent.Executor executor) {
     var done = new java.util.concurrent.CountDownLatch(2);
+    // the last tunnel progress timestamp: every pump read/write advances it,
+    // the drain watchdog compares against it
+    var lastProgress = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
+    Runnable progress = () -> lastProgress.set(System.currentTimeMillis());
     executor.execute(() -> {
       try {
-        transfer(s.getInputStream(), exchange.getResponseBody());
+        transfer(s.getInputStream(), exchange.getResponseBody(), progress);
       } catch (IOException ex) {
         logger.fine("tunnel upstream->client ended: " + ex);
       } finally {
@@ -306,7 +330,7 @@ public class ProxyHandler implements HttpHandler {
       }
     });
     try {
-      transfer(exchange.getRequestBody(), s.getOutputStream());
+      transfer(exchange.getRequestBody(), s.getOutputStream(), progress);
     } catch (IOException ex) {
       logger.fine("tunnel client->upstream ended: " + ex);
     } finally {
@@ -318,6 +342,8 @@ public class ProxyHandler implements HttpHandler {
       } catch (IOException ignored) {
         // the upstream socket already failed: nothing to mirror
       }
+      // bound the remaining drain (see the method comment)
+      watchDrain(done, lastProgress, s);
       done.countDown();
     }
     try {
@@ -328,6 +354,34 @@ public class ProxyHandler implements HttpHandler {
     closeQuietly(s);
   }
 
+  /** the drain watchdog: one daemon thread, shared by every tunnel */
+  private static final java.util.concurrent.ScheduledExecutorService TUNNEL_WATCHDOG =
+      java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "proxy-tunnel-drain");
+        t.setDaemon(true);
+        return t;
+      });
+
+  /**
+   * wake every silent interval while the drain is still running; if no
+   * progress happened since the last wake, close the upstream socket -
+   * closing is the only reliable way to unblock a pump already parked in a
+   * read. progress (a slowly streaming response) reschedules the check
+   */
+  private void watchDrain(java.util.concurrent.CountDownLatch done, java.util.concurrent.atomic.AtomicLong lastProgress,
+      Socket s) {
+    TUNNEL_WATCHDOG.schedule(() -> {
+      if (done.getCount() == 0) {
+        return; // the drain finished: nothing to bound
+      }
+      if (System.currentTimeMillis() - lastProgress.get() >= tunnelDrainSilenceMillis) {
+        closeQuietly(s);
+        return;
+      }
+      watchDrain(done, lastProgress, s);
+    }, tunnelDrainSilenceMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
+  }
+
   private static void closeQuietly(Socket s) {
     try {
       s.close();
@@ -335,12 +389,20 @@ public class ProxyHandler implements HttpHandler {
   }
 
   private static void transfer(InputStream in, OutputStream out) throws IOException {
+    transfer(in, out, null);
+  }
+
+  /** a tunneled copy; {@code progress} (when non-null) marks each read+write as tunnel progress */
+  private static void transfer(InputStream in, OutputStream out, Runnable progress) throws IOException {
     Objects.requireNonNull(out, "out");
     byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
     int read;
     while ((read = in.read(buffer, 0, DEFAULT_BUFFER_SIZE)) >= 0) {
       out.write(buffer, 0, read);
       out.flush();
+      if (progress != null) {
+        progress.run();
+      }
     }
   }
 

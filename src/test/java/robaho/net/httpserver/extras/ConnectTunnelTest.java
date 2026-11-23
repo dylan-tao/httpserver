@@ -95,6 +95,76 @@ public class ConnectTunnelTest {
     }
   }
 
+  /** read-silence bound for the tunnel drain tests: shrunk from the 30s default */
+  private static final int TEST_DRAIN_SILENCE_MILLIS = 500;
+
+  /**
+   * a SILENT upstream after the client half-closed must not park the tunnel
+   * forever (re-audit N2, 2026-11-23): the unbounded await held the handler
+   * VT + executor VT + upstream fd permanently (the idle cleaner exempts
+   * handed-off tunnels). the drain read timeout (shrunk to 500ms) must fail
+   * the response pump and let handle() return. red pre-fix: the connection
+   * never ended
+   */
+  @Test
+  public void testSilentUpstreamAfterHalfCloseIsBounded() throws Exception {
+    try (ServerSocket upstream = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+      // the upstream reads everything, answers NOTHING, and stays connected
+      // (ignores the mirrored FIN) - the pathological drain case
+      Thread.ofVirtual().start(() -> {
+        try (Socket up = upstream.accept()) {
+          up.getInputStream().readAllBytes();
+          // hold the socket open: neither EOF nor data
+          Thread.sleep(60_000);
+        } catch (IOException | InterruptedException ignored) {
+          // the proxy closed the socket on the drain timeout: exactly the
+          // bound this test pins
+        }
+      });
+
+      HttpServer proxy = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+      proxy.createContext("/", new ProxyHandler(new HostPort("127.0.0.1", upstream.getLocalPort(), "http")) {
+
+        @Override
+        protected boolean authorizeConnect(HttpExchange exchange) {
+          return true;
+        }
+
+      });
+      proxy.start();
+      var previous = ProxyHandler.tunnelDrainSilenceMillis;
+      ProxyHandler.tunnelDrainSilenceMillis = TEST_DRAIN_SILENCE_MILLIS;
+      try (Socket client = new Socket("127.0.0.1", proxy.getAddress().getPort())) {
+        client.setSoTimeout(10_000);
+        OutputStream out = client.getOutputStream();
+        out.write(("CONNECT localhost:" + upstream.getLocalPort() + " HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .getBytes(StandardCharsets.ISO_8859_1));
+        out.flush();
+        Assert.assertTrue(readResponseHead(client).startsWith("HTTP/1.1 200"), "the tunnel must be established");
+
+        out.write("hello-upstream".getBytes(StandardCharsets.ISO_8859_1));
+        out.flush();
+        client.shutdownOutput();
+
+        // the connection must END within the drain bound (plus slack for
+        // the half-close propagation), not hang forever: read to EOF
+        long start = System.currentTimeMillis();
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[4096];
+        int n;
+        while ((n = client.getInputStream().read(buf)) != -1) {
+          bos.write(buf, 0, n);
+        }
+        long elapsed = System.currentTimeMillis() - start;
+        Assert.assertTrue(elapsed < 10_000,
+            "the silent-upstream drain must be bounded by the read timeout, took " + elapsed + "ms");
+      } finally {
+        ProxyHandler.tunnelDrainSilenceMillis = previous;
+        proxy.stop(0);
+      }
+    }
+  }
+
   /** read the response head (status line + headers) up to the empty line */
   private static String readResponseHead(Socket socket) throws IOException {
     ByteArrayOutputStream bos = new ByteArrayOutputStream();
