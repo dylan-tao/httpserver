@@ -5,7 +5,6 @@ import robaho.net.httpserver.internal.NoSyncBufferedOutputStream;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -83,6 +82,18 @@ public class MultipartFormParser {
     }
   }
 
+  /**
+   * release a path the abort cleanup already deleted (re-audit E4 residual):
+   * frees the tracking slot so cumulative aborts cannot exhaust the
+   * shutdown-hook backstop. removes BEFORE decrementing: a path that was
+   * never offered (over the cap at track time) never held a slot
+   */
+  private static void untrackForExitCleanup(Path p) {
+    if (CREATED_FILES.remove(p)) {
+      trackedFileCount.decrementAndGet();
+    }
+  }
+
   private record PartMetadata(String contentType, String name, String filename) {
 
   }
@@ -135,6 +146,11 @@ public class MultipartFormParser {
         } catch (IOException ignored) {
           // best effort: a locked file stays for the exit hook
         }
+        // release the exit-hook tracking too (re-audit E4 residual): the
+        // abort left the path in CREATED_FILES with the count still up, so
+        // 10k cumulative aborts quietly disabled the shutdown-hook
+        // backstop for every later successful parse
+        untrackForExitCleanup(p);
       }
       throw t;
     }
@@ -181,9 +197,9 @@ public class MultipartFormParser {
 
     while (true) {
       if (maxParts != 0 && partCount >= maxParts) {
-        // checked BEFORE the FileOutputStream below: the old
-        // placement threw after opening it, leaking one fd and an
-        // orphan file per abusive request
+        // checked BEFORE the file creation below: the old placement threw
+        // after opening one, leaking an fd and an orphan file per abusive
+        // request
         throw new IOException("multipart part count exceeds the maximum of " + maxParts);
       }
 
@@ -223,10 +239,18 @@ public class MultipartFormParser {
         addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>())
             .add(new Part(meta.contentType, null, bos.toString(charset), null));
       } else {
-        File file = uniqueTarget(storage, meta.filename);
-        created.add(file.toPath());
-        trackForExitCleanup(file);
-        os = new NoSyncBufferedOutputStream(new FileOutputStream(file));
+        // ATOMIC creation + registration AFTER the file exists (re-audit
+        // E4 residual): uniqueTarget's exists() probe + FileOutputStream was
+        // check-then-act - two concurrent parses of the same filename could
+        // open the SAME path (the second truncating the first's upload) and
+        // one abort's deleteIfExists could remove the other's in-use file.
+        // CREATE_NEW makes the create atomic, a collision rolls to the next
+        // suffix, and created/tracking register only a file that exists
+        var opened = openUniqueTarget(storage, meta.filename);
+        created.add(opened.path());
+        trackForExitCleanup(opened.path().toFile());
+        os = opened.out();
+        File file = opened.path().toFile();
         addToResults = () -> results.computeIfAbsent(meta.name, k -> new LinkedList<Part>())
             .add(new Part(meta.contentType, meta.filename, null, file));
       }
@@ -315,19 +339,33 @@ public class MultipartFormParser {
    * the same (sanitized) filename: browsers send duplicate names whenever
    * two file inputs hold same-named files
    */
-  private static File uniqueTarget(Path storage, String filename) {
+  private record OpenedTarget(Path path, OutputStream out) {}
+
+  /**
+   * atomically create the storage target (re-audit E4 residual): the old
+   * uniqueTarget probed exists() then opened a plain FileOutputStream -
+   * check-then-act across parses, so two concurrent uploads of the same
+   * filename could open the SAME path (the second truncating the first's
+   * upload) and one abort's deleteIfExists could remove the other's
+   * in-use file. CREATE_NEW fails the concurrent create instead; a
+   * collision rolls to the next suffix (the same dedup naming as before);
+   * the returned path is guaranteed to exist and be THIS parse's own
+   */
+  private static OpenedTarget openUniqueTarget(Path storage, String filename) throws IOException {
     String safe = sanitizeFilename(filename);
-    File file = Path.of(storage.toString(), safe).toFile();
-    if (!file.exists()) {
-      return file;
-    }
     int dot = safe.lastIndexOf('.');
     String base = dot < 0 ? safe : safe.substring(0, dot);
     String ext = dot < 0 ? "" : safe.substring(dot);
-    for (int i = 1; file.exists(); i++) {
-      file = Path.of(storage.toString(), base + "-" + i + ext).toFile();
+    for (int i = 0;; i++) {
+      Path candidate = storage.resolve(i == 0 ? safe : base + "-" + i + ext);
+      try {
+        OutputStream out = new NoSyncBufferedOutputStream(java.nio.file.Files.newOutputStream(candidate,
+            java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE));
+        return new OpenedTarget(candidate, out);
+      } catch (java.nio.file.FileAlreadyExistsException e) {
+        // a concurrent parse holds this name: the next suffix
+      }
     }
-    return file;
   }
 
   /**
