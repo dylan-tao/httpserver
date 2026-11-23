@@ -127,10 +127,28 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
    */
   private volatile boolean shrinkRequested;
 
+  /**
+   * the idle cleaner's OUTPUT-side shrink request (re-audit N3): consumed by
+   * this stream's owning connection at the fill() safe point below - the
+   * h1 request boundary never reached a parked idle connection, and letting
+   * the flag bypass the boundary's QUIET threshold churned every
+   * low-frequency poller. volatile: written by the cleaner thread, consumed
+   * on the reader thread before the blocking read
+   */
+  private volatile boolean outputShrinkRequested;
+
   /** cleaner thread: request the fill() safe-point shrink (see above) */
   public void requestInputShrink() {
     shrinkRequested = true;
   }
+
+  /** cleaner thread: request the owning connection's output shrink at the fill() safe point */
+  public void requestOutputShrink() {
+    outputShrinkRequested = true;
+  }
+
+  /** the connection's output-shrink hook, executed at the fill() safe point; null = no connection attached */
+  public Runnable outputShrinkHook;
 
   /**
    * true while the reader is parked mid-line: bytes of an unterminated
@@ -192,6 +210,20 @@ public class NoSyncBufferedInputStream extends FilterInputStream {
       // the read below may block: push any deferred response bytes
       // out first (a no-op when the output buffer is empty)
       flushHook.run();
+    }
+    // the cleaner's output-shrink request lands here (re-audit N3): fill
+    // is the same reader-thread safe point as the input shrink above -
+    // no request processing is in flight (pos >= count), so the h1
+    // output buffers are the VT's alone. one-shot; the parked-idle case
+    // consumes it on the next fill (a keep-alive ping or real data
+    // wakes the reader), and a truly silent connection dies at the idle
+    // close which releases everything anyway
+    if (outputShrinkRequested) {
+      outputShrinkRequested = false;
+      Runnable hook = outputShrinkHook;
+      if (hook != null) {
+        hook.run();
+      }
     }
     int n = getInIfOpen().read(buffer);
     if (n > 0)

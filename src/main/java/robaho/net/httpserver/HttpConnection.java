@@ -247,6 +247,15 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
         }
       }
     });
+    // the cleaner's output-shrink request executes here (re-audit N3):
+    // fill()'s pre-read safe point runs on this connection's own VT (the
+    // guard mirrors the cleaner's h1 branch - h2 shrinks directly under
+    // its own locks). see requestOutputShrink
+    this.is.outputShrinkHook = () -> {
+      if (http2Connection == null && !streamsHandedOff) {
+        shrinkBuffers();
+      }
+    };
     connectionId = "[" + socket.getLocalPort() + "." + socket.getPort() + "]";
   }
 
@@ -330,18 +339,17 @@ class HttpConnection implements robaho.net.httpserver.internal.Http2ConnectionHa
   }
 
   /**
-   * the idle cleaner's h1 shrink request, executed by the connection's own
-   * VT at its next request boundary (the M2 requestInputShrink pattern):
-   * the cleaner must not swap the h1 output buffers itself - its unlocked
-   * buf/count store races the VT's writes (a torn shrink could drop
-   * buffered response bytes). volatile: written by the cleaner thread, read
-   * and cleared at the boundary
+   * the idle cleaner's h1 shrink request (re-audit N3): rides the input
+   * stream's shrink-request flag - fill() consumes it at its pre-read safe
+   * point (the M2 requestInputShrink mechanism) together with the input
+   * shrink. the connection's own VT executes the output-side shrink there
+   * (its unlocked buf/count swap from the cleaner raced the VT's writes,
+   * and consuming the old boundary flag never reached a parked idle
+   * connection while churning every low-frequency poller past the QUIET
+   * threshold)
    */
-  volatile boolean outputShrinkRequested;
-
-  /** request the boundary shrink (idle cleaner thread) */
   void requestOutputShrink() {
-    outputShrinkRequested = true;
+    is.requestOutputShrink();
   }
 
   /** clear the close-drain window (drain completed). */
