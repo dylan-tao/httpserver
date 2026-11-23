@@ -340,8 +340,21 @@ public abstract class WebSocket {
       } catch (IOException expected) {}
     }
     this.state = WebSocketLifecycle.CLOSED;
+    // subclass hook AFTER the CLOSED store: BufferedWebSocket's drain task
+    // is on its way out by now, so frames stranded between sendFrame's
+    // CLOSED check and its enqueue have no consumer left - their queue
+    // accounting must be reclaimed here (re-audit E5 residual). runs under
+    // the lock; the default is a no-op
+    afterClosed();
     onClose(code, reason, initiatedByRemote);
   }
+
+  /**
+   * subclass hook invoked under the lock immediately after the once-only
+   * CLOSED transition: last-chance cleanup for resources whose owners may
+   * still be racing with the close. the default is a no-op
+   */
+  void afterClosed() {}
 
   // --------------------------------IO--------------------------------------
 

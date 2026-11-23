@@ -210,14 +210,71 @@ public abstract class BufferedWebSocket extends WebSocket {
     super.doClose(code, reason, initiatedByRemote);
   }
 
+  /** refund the queue accounting of one frame that will never be written */
+  private void refund(WebSocketFrame frame) {
+    pending.decrementAndGet();
+    var payload = frame.getBinaryPayload();
+    if (payload != null) {
+      queuedBytes.addAndGet(-payload.length);
+    }
+  }
+
+  /**
+   * sweep frames the drain task will never write and refund their queue
+   * accounting. called AFTER the CLOSED transition (the afterClosed hook
+   * and the drain task's exit paths): by then every producer that passed
+   * the CLOSED check before enqueueing is gone, so what remains in the
+   * queue besides a live pill is stranded. identity remove() keeps the
+   * pill when the drain task is still running toward it - the pill is
+   * what wakes it out of take()
+   */
+  private void sweepStrandedFrames() {
+    java.util.ArrayList<WebSocketFrame> stranded = null;
+    for (WebSocketFrame f : queue) {
+      if (f != POISON_PILL) {
+        if (stranded == null) {
+          stranded = new java.util.ArrayList<>();
+        }
+        stranded.add(f);
+      }
+    }
+    if (stranded == null) {
+      return;
+    }
+    for (WebSocketFrame f : stranded) {
+      // identity remove: WebSocketFrame has no equals/hashCode, and a
+      // value-equal frame could yank the wrong object out from under a
+      // live producer's just-successful offer
+      queue.remove(f);
+      refund(f);
+    }
+  }
+
+  /**
+   * runs under the websocket lock right after the once-only CLOSED store
+   * (audit E5 residual): a producer that passed sendFrame's CLOSED check
+   * just before the close completed could still land its frame in the
+   * queue - with the drain task exiting, that frame is never written and
+   * its pending/queuedBytes accounting never refunds, pinning up to the
+   * 16MB byte cap worth of dead ledger. sweep the strays (a live pill
+   * stays: the drain task may still be walking toward it)
+   */
+  @Override
+  void afterClosed() {
+    sweepStrandedFrames();
+  }
+
   private void sendFrames() {
+    WebSocketFrame inFlight = null;
     try {
       while (true) {
         var frame = queue.take();
         if (frame == POISON_PILL) {
           return;
         }
+        inFlight = frame;
         super.sendFrame(frame);
+        inFlight = null;
         pending.decrementAndGet();
         var payload = frame.getBinaryPayload();
         if (payload != null) {
@@ -225,11 +282,28 @@ public abstract class BufferedWebSocket extends WebSocket {
         }
       }
     } catch (IOException ex) {
+      // the frame whose write failed is never refunded by the loop's
+      // tail: refund it here (re-audit E5 residual - the accounting leak)
+      if (inFlight != null) {
+        refund(inFlight);
+      }
       onException(ex);
       doClose(CloseCode.AbnormalClosure, ex.toString(), false);
     } catch (InterruptedException ex) {
       // the drain task is cancelled via future.cancel(true) on the
-      // close timeout path - interruption is the expected exit signal
+      // close timeout path - interruption is the expected exit signal.
+      // a cancelled task may still hold a taken-but-unwritten frame: it
+      // left the queue, so no sweep can refund it - do it here
+      if (inFlight != null) {
+        refund(inFlight);
+      }
+    } finally {
+      // every exit path (pill, write failure, cancellation) ends the
+      // consumer: what is still queued is stranded, and the close may
+      // have completed before this task noticed - sweep as the last
+      // resort so the ledger reaches zero no matter which exit won the
+      // race. no-op when afterClosed already swept an empty queue
+      sweepStrandedFrames();
     }
   }
 
@@ -285,6 +359,16 @@ public abstract class BufferedWebSocket extends WebSocket {
           throw new IOException("websocket is closed");
         }
       }
+      // the close may have completed between the CLOSED check above and
+      // this successful offer: the frame is now stranded behind a pill
+      // with nobody left to write it (re-audit E5 residual). identity
+      // remove - a concurrent sweep of the same CLOSED state must not
+      // take a different, value-equal frame
+      if (state == WebSocketLifecycle.CLOSED && queue.remove(frame)) {
+        queuedBytes.addAndGet(-frameBytes);
+        pending.decrementAndGet();
+        throw new IOException("websocket is closed");
+      }
     } catch (InterruptedException ex) {
       queuedBytes.addAndGet(-frameBytes);
       pending.decrementAndGet();
@@ -299,6 +383,15 @@ public abstract class BufferedWebSocket extends WebSocket {
    */
   public int pending() {
     return pending.get();
+  }
+
+  /**
+   * the total bytes of queued (not yet written) frames: the stranded-
+   * accounting regression asserts it reaches zero after a close (a
+   * leaked value here pins up to the 16MB byte cap of dead ledger)
+   */
+  public long queuedBytesLeft() {
+    return queuedBytes.get();
   }
 
 }

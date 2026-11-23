@@ -235,4 +235,56 @@ public class BufferedWebSocketTest {
     // producer's own exit proves no frame is stuck in put() anymore
   }
 
+  /**
+   * regression guard for the stranded-frame accounting leak (re-audit E5
+   * residual, 2026-11-23): a close racing a sendFrame's CLOSED check could
+   * land frames in a queue whose drain task is exiting - never written,
+   * never refunded, pinning pending()/queuedBytes (and up to the 16MB byte
+   * cap worth of dead ledger) on the closed websocket. with a STALLED
+   * drain (blocked output, canceled by the close timeout) the worst case
+   * is deterministic: every queued frame strands. after the close the
+   * ledger must be zero. pre-fix this test fails with pending() == the
+   * full stranded backlog and a re-open against the byte cap impossible
+   * to distinguish from a live queue.
+   */
+  @Test(timeOut = 20_000)
+  public void testCloseReclaimsStrandedFrameAccounting() throws Exception {
+    CountDownLatch closed = new CountDownLatch(1);
+    BufferedWebSocket ws = new BufferedWebSocket(stubExchange()) {
+
+      @Override
+      protected void onClose(CloseCode code, String reason, boolean initiatedByRemote) {
+        closed.countDown();
+      }
+
+      @Override
+      protected void onMessage(WebSocketFrame message) {}
+
+    };
+
+    // park the drain task on frame 1 (blocked output stream): every
+    // further frame stays queued - a stalled-consumer backlog
+    byte[] payload = new byte[2048];
+    for (int i = 0; i < 32; i++) {
+      ws.sendFrame(new WebSocketFrame(OpCode.Binary, true, payload));
+    }
+    Thread.sleep(200); // let the drain take (and strand on) frame 1
+
+    // the concurrent close: the drain write fails on the closed stream,
+    // the drain exits, the close completes - the 31 queued frames are
+    // stranded with no consumer. the sweep must reclaim every one
+    ws.doClose(CloseCode.NormalClosure, "reclaim test", false);
+    Assert.assertTrue(closed.await(10, TimeUnit.SECONDS), "the close must complete");
+
+    // the drain task runs its finally-sweep asynchronously of doClose's
+    // afterClosed hook: both are quick, but give the ledger a moment to
+    // settle before asserting zero
+    long deadline = System.currentTimeMillis() + 5_000;
+    while ((ws.pending() != 0 || ws.queuedBytesLeft() != 0) && System.currentTimeMillis() < deadline) {
+      Thread.sleep(50);
+    }
+    Assert.assertEquals(ws.pending(), 0, "a closed websocket must not carry stranded-frame pending accounting");
+    Assert.assertEquals(ws.queuedBytesLeft(), 0, "a closed websocket must not carry stranded queuedBytes accounting");
+  }
+
 }
