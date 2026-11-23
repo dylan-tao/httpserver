@@ -109,8 +109,14 @@ class Dispatcher implements Runnable {
     // incremented, so the limit was only enforced one handshake-duration
     // late. the reservation counts the slot from accept; the registration
     // below no longer increments, and every path that fails before
-    // registration releases its reservation
-    if (ServerImpl.MAX_CONNECTIONS > 0 && server.connectionCount().incrementAndGet() > ServerImpl.MAX_CONNECTIONS) {
+    // registration releases its reservation.
+    // N1 (2026-11-23 re-audit): the increment runs UNCONDITIONALLY - on the
+    // right side of the && it was short-circuited away whenever the limit
+    // is disabled (default -1), while closeConnection always decrements:
+    // the count drifted one lower per closed connection on every default
+    // deployment
+    int reserved = server.connectionCount().incrementAndGet();
+    if (ServerImpl.MAX_CONNECTIONS > 0 && reserved > ServerImpl.MAX_CONNECTIONS) {
       // we've hit max limit of current open connections, so we go
       // ahead and close this connection without processing it
       server.connectionCount().decrementAndGet();
