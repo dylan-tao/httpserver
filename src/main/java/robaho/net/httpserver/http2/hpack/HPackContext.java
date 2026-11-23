@@ -371,6 +371,22 @@ public class HPackContext {
     // copies behind for a typical response (average block ~800 bytes)
     EncodedHeaderBlock fields =
         scratch != null && scratch.tryBorrow() ? scratch : new EncodedHeaderBlock(Math.max(256, headers.size() * 64 + 64));
+    // release on ANY failure from here on (re-audit W11 residual): the
+    // callers' release() sits in a finally that an encode-phase throw
+    // never reaches - an exception after a successful borrow left the
+    // scratch permanently borrowed (every later response on the
+    // connection allocated fresh)
+    try {
+      encodeInto(fields, status, headers);
+    } catch (Throwable t) {
+      fields.release();
+      throw t;
+    }
+    return fields;
+  }
+
+  /** the append loop shared by the failure-safe wrapper (see above) */
+  private static void encodeInto(EncodedHeaderBlock fields, String status, Headers headers) throws IOException {
     fields.reset();
     fields.appendField(":status", status);
 
@@ -408,8 +424,6 @@ public class HPackContext {
         }
       });
     }
-
-    return fields;
   }
 
   /**
