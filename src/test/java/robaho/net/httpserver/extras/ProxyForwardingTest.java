@@ -91,6 +91,67 @@ public class ProxyForwardingTest {
   }
 
   /**
+   * a BODYFUL forward must not be cut by the response timeout (re-audit W12
+   * residual, 2026-11-23): the JDK HttpRequest timeout spans the request
+   * body upload too, so the old 60s bound cut every slow legitimate upload.
+   * the timeout is shrunk to 300ms against an upstream that answers after
+   * 1s: the upload-carrying forward must still succeed. red pre-fix (the
+   * timeout fired at 300ms and the exchange died).
+   */
+  @Test
+  public void testBodyfulForwardIsNotCutByResponseTimeout() throws Exception {
+    backend.createContext("/slow-upload", exchange -> {
+      exchange.getRequestBody().readAllBytes(); // consume the uploaded body
+      try {
+        Thread.sleep(1000);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      exchange.sendResponseHeaders(200, 2);
+      try (var os = exchange.getResponseBody()) {
+        os.write("ok".getBytes(StandardCharsets.UTF_8));
+      }
+    });
+    var previous = ProxyHandler.upstreamResponseTimeout;
+    ProxyHandler.upstreamResponseTimeout = java.time.Duration.ofMillis(300);
+    try {
+      String response = proxyPost("/slow-upload", "upload-payload");
+      Assert.assertTrue(response.startsWith("HTTP/1.1 200"),
+          "a bodyful forward must not be cut by the response timeout (the JDK timeout spans the upload): " + headOf(response));
+    } finally {
+      ProxyHandler.upstreamResponseTimeout = previous;
+    }
+  }
+
+  /** control: a BODYLESS forward against a slow upstream IS cut by the timeout */
+  @Test
+  public void testBodylessForwardIsBoundedByResponseTimeout() throws Exception {
+    backend.createContext("/slow-get", exchange -> {
+      try {
+        Thread.sleep(1000);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      exchange.sendResponseHeaders(200, 2);
+      try (var os = exchange.getResponseBody()) {
+        os.write("ok".getBytes(StandardCharsets.UTF_8));
+      }
+    });
+    var previous = ProxyHandler.upstreamResponseTimeout;
+    ProxyHandler.upstreamResponseTimeout = java.time.Duration.ofMillis(300);
+    try {
+      long start = System.currentTimeMillis();
+      String response = proxyGet("User-Agent: proxy-test\r\n", "/slow-get");
+      long elapsed = System.currentTimeMillis() - start;
+      Assert.assertFalse(response.startsWith("HTTP/1.1 200"),
+          "a bodyless forward must be cut by the response timeout, got: " + headOf(response));
+      Assert.assertTrue(elapsed < 2000, "the cut must arrive at the timeout, not at the upstream's delay (" + elapsed + "ms)");
+    } finally {
+      ProxyHandler.upstreamResponseTimeout = previous;
+    }
+  }
+
+  /**
    * a completed CONNECT tunnel must not fall through into the forwarding
    * path (an earlier cleanup removed the old finally-return): the tunnel
    * itself must round-trip bytes in both directions
@@ -160,9 +221,21 @@ public class ProxyForwardingTest {
     return proxyGet(extraHeaders, "/");
   }
 
+  /** send an absolute-form POST with a fixed body through the proxy */
+  private String proxyPost(String path, String body) throws IOException {
+    String request = "POST http://127.0.0.1:" + backend.getAddress().getPort() + path + " HTTP/1.1\r\n" + "Host: 127.0.0.1:"
+        + backend.getAddress().getPort() + "\r\n" + "Content-length: " + body.length() + "\r\nConnection: close\r\n\r\n" + body;
+    return rawExchange(request);
+  }
+
   private String proxyGet(String extraHeaders, String path) throws IOException {
     String request = "GET http://127.0.0.1:" + backend.getAddress().getPort() + path + " HTTP/1.1\r\n" + "Host: 127.0.0.1:"
         + backend.getAddress().getPort() + "\r\n" + extraHeaders + "Connection: close\r\n\r\n";
+    return rawExchange(request);
+  }
+
+  /** write the raw request to the proxy and read to EOF */
+  private String rawExchange(String request) throws IOException {
     try (Socket socket = new Socket("127.0.0.1", front.getAddress().getPort())) {
       socket.setSoTimeout(10_000);
       OutputStream out = socket.getOutputStream();

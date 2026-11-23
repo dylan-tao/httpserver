@@ -185,7 +185,20 @@ public class ProxyHandler implements HttpHandler {
       // whole forwarding so the selector sees CURRENT_PROXY on the
       // calling (virtual) thread, and unbinds automatically afterwards
       ScopedValue.where(CURRENT_PROXY, proxy).call(() -> {
-        var requestBuilder = HttpRequest.newBuilder(target).timeout(UPSTREAM_REQUEST_TIMEOUT);
+        var requestBuilder = HttpRequest.newBuilder(target);
+        // only a BODYLESS forward carries the response timeout (the W12
+        // residual of the 2026-11-23 re-audit): the JDK's HttpRequest
+        // timeout spans the WHOLE exchange - the request body upload
+        // included - so a slow legitimate upload (1GB over a slow link,
+        // any forward longer than the bound) was cut with
+        // HttpTimeoutException. a bodyful forward is bounded by its own
+        // upload (client-driven) and the operator's limits instead
+        List<String> contentLength = exchange.getRequestHeaders().get("Content-length");
+        boolean hasRequestBody = exchange.getRequestHeaders().containsKey("Transfer-encoding")
+            || (contentLength != null && !contentLength.isEmpty() && !"0".equals(contentLength.get(0).trim()));
+        if (!hasRequestBody) {
+          requestBuilder = requestBuilder.timeout(upstreamResponseTimeout);
+        }
         String[] forwardedHeaders = headers(exchange.getRequestHeaders());
         // HttpRequest.Builder.headers() rejects an empty array: a request
         // whose headers were all restricted (e.g. only Host and Connection)
@@ -251,11 +264,14 @@ public class ProxyHandler implements HttpHandler {
   private static final java.time.Duration UPSTREAM_CONNECT_TIMEOUT = java.time.Duration.ofSeconds(30);
 
   /**
-   * response-arrival bound for a forwarded request. the body stream itself is
-   * unbounded (the exchange's own timeouts apply); this bounds the wait for
-   * the upstream's response head
+   * response-arrival bound for a BODYLESS forwarded request (an unresponsive
+   * upstream must not hold the exchange thread forever). requests WITH a
+   * body carry no timeout: the JDK's HttpRequest timeout spans the request
+   * body upload too, cutting slow legitimate uploads (the W12 residual of
+   * the 2026-11-23 re-audit). package-private and non-final so the
+   * regression tests can shrink it
    */
-  private static final java.time.Duration UPSTREAM_REQUEST_TIMEOUT = java.time.Duration.ofSeconds(60);
+  static java.time.Duration upstreamResponseTimeout = java.time.Duration.ofSeconds(60);
 
   /**
    * drive both tunnel directions to completion (audit E3, 2026-11-20): the
